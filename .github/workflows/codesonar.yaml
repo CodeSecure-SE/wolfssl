@@ -50,7 +50,7 @@ jobs:
       - name: Create Hub Credentials
         run: echo "$CSONAR_HUB_PASS" > "$CSONAR_HUB_PWFILE"
       - name : configure
-        run: ./autogen.sh ; ./configure --enable-all
+        run: ./autogen.sh ; ./configure --enable-all --enable-static --disable-shared
       - name: Get id of latest analysis on the same branch
         if: ${{ github.event.pull_request }}
         id: compare-aid
