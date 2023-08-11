@@ -118,12 +118,12 @@ jobs:
       - name: Diff results with the target branch
         if: ${{ github.event.pull_request }}
         run: |
-          GETURL=$(urlencode aid:$CURRENT_PROJECT_AID DIFFERENCE aid:$TARGET_PROJECT_AID)
+          GETURL=$(urlencode \(aid:$CURRENT_PROJECT_AID DIFFERENCE aid:$TARGET_PROJECT_AID\))
           "$CODESONAR" get \
           -auth password \
           -hubuser "$CSONAR_HUB_USER" \
           -hubpwfile "$CSONAR_HUB_PWFILE" \
-          $CSONAR_HUB_URL/warning_detail_search.sarif?query=$GETURL\&scope=aid%3A$CURRENT_PROJECT_AID\&swarnings=BJAW -o - > warnings.sarif
+          $CSONAR_HUB_URL/warning_detail_search.sarif?query=$GETURL%20-priority%3DSuppressed\&scope=aid%3A$CURRENT_PROJECT_AID\&swarnings=BJAW -o - > warnings.sarif
       - name: Upload SARIF to GitHub #Use this if you do not have GitHub Enterprise
         if: ${{ github.event.pull_request }}
         uses: actions/upload-artifact@v3
