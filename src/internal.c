@@ -259,7 +259,7 @@ static int SSL_hmac(WOLFSSL* ssl, byte* digest, const byte* in, word32 sz,
 #endif /* !WOLFSSL_NO_TLS12 */
 
 
-#if defined(WOLFSSL_RENESAS_SCEPROTECT) || defined(WOLFSSL_RENESAS_TSIP_TLS)
+#if defined(WOLFSSL_RENESAS_FSPSM_TLS) || defined(WOLFSSL_RENESAS_TSIP_TLS)
 #include <wolfssl/wolfcrypt/port/Renesas/renesas_cmn.h>
 #endif
 
@@ -1926,7 +1926,7 @@ int wolfSSL_session_import_internal(WOLFSSL* ssl, const unsigned char* buf,
     /* set hmac function to use when verifying */
     if (ret == 0 && (ssl->options.tls == 1 || ssl->options.tls1_1 == 1 ||
                      ssl->options.dtls == 1)) {
-    #if !defined(WOLFSSL_RENESAS_SCEPROTECT) && \
+    #if !defined(WOLFSSL_RENESAS_FSPSM_TLS) && \
         !defined(WOLFSSL_RENESAS_TSIP_TLS)
         ssl->hmac = TLS_hmac;
     #else
@@ -4850,7 +4850,7 @@ int RsaVerify(WOLFSSL* ssl, byte* in, word32 inSz, byte** out, int sigAlgo,
         void* ctx = wolfSSL_GetRsaVerifyCtx(ssl);
         ret = ssl->ctx->RsaVerifyCb(ssl, in, inSz, out, keyBuf, keySz, ctx);
     }
-    #if !defined(WOLFSSL_RENESAS_SCEPROTECT) && \
+    #if !defined(WOLFSSL_RENESAS_FSPSM_TLS) && \
         !defined(WOLFSSL_RENESAS_TSIP_TLS)
     else
     #else
@@ -5109,7 +5109,7 @@ int RsaEnc(WOLFSSL* ssl, const byte* in, word32 inSz, byte* out, word32* outSz,
         void* ctx = wolfSSL_GetRsaEncCtx(ssl);
         ret = ssl->ctx->RsaEncCb(ssl, in, inSz, out, outSz, keyBuf, keySz, ctx);
     }
-    #if !defined(WOLFSSL_RENESAS_SCEPROTECT) && \
+    #if !defined(WOLFSSL_RENESAS_FSPSM_TLS) && \
         !defined(WOLFSSL_RENESAS_TSIP_TLS)
     else
     #else
@@ -5237,7 +5237,7 @@ int EccVerify(WOLFSSL* ssl, const byte* in, word32 inSz, const byte* out,
         ret = ssl->ctx->EccVerifyCb(ssl, in, inSz, out, outSz, keyBuf, keySz,
             &ssl->eccVerifyRes, ctx);
     }
-    #if !defined(WOLFSSL_RENESAS_SCEPROTECT) && \
+    #if !defined(WOLFSSL_RENESAS_FSPSM_TLS) && \
         !defined(WOLFSSL_RENESAS_TSIP_TLS) && \
         !defined(WOLFSSL_MAXQ108X)
     else
@@ -7216,7 +7216,7 @@ int InitSSL(WOLFSSL* ssl, WOLFSSL_CTX* ctx, int writeDup)
     #ifndef NO_OLD_TLS
         ssl->hmac = SSL_hmac; /* default to SSLv3 */
     #elif !defined(WOLFSSL_NO_TLS12) && !defined(NO_TLS)
-      #if !defined(WOLFSSL_RENESAS_SCEPROTECT) && \
+      #if !defined(WOLFSSL_RENESAS_FSPSM_TLS) && \
           !defined(WOLFSSL_RENESAS_TSIP_TLS)
         ssl->hmac = TLS_hmac;
       #else
@@ -7974,7 +7974,7 @@ void SSL_ResourceFree(WOLFSSL* ssl)
     FreeKey(ssl, DYNAMIC_TYPE_RSA, (void**)&ssl->peerRsaKey);
     ssl->peerRsaKeyPresent = 0;
 #endif
-#if defined(WOLFSSL_RENESAS_TSIP_TLS) || defined(WOLFSSL_RENESAS_SCEPROTECT)
+#if defined(WOLFSSL_RENESAS_TSIP_TLS) || defined(WOLFSSL_RENESAS_FSPSM_TLS)
     XFREE(ssl->peerSceTsipEncRsaKeyIndex, ssl->heap, DYNAMIC_TYPE_RSA);
     Renesas_cmn_Cleanup(ssl);
 #endif
@@ -11853,8 +11853,11 @@ int MatchDomainName(const char* pattern, int len, const char* str)
         if (p == '*') {
             char s;
 
-            while (--len > 0 &&
-                (p = (char)XTOLOWER((unsigned char)*pattern++)) == '*') {
+            while (--len > 0) {
+                p = (char)XTOLOWER((unsigned char)*pattern);
+                pattern++;
+                if (p != '*')
+                    break;
             }
 
             if (len == 0)
@@ -12695,7 +12698,7 @@ int InitSigPkCb(WOLFSSL* ssl, SignatureCtx* sigCtx)
 
     /* only setup the verify callback if a PK is set */
 #ifdef HAVE_ECC
-    #if defined(WOLFSSL_RENESAS_SCEPROTECT) || defined(WOLFSSL_RENESAS_TSIP_TLS)
+    #if defined(WOLFSSL_RENESAS_FSPSM_TLS) || defined(WOLFSSL_RENESAS_TSIP_TLS)
     sigCtx->pkCbEcc = Renesas_cmn_SigPkCbEccVerify;
     sigCtx->pkCtxEcc = (void*)&sigCtx->CertAtt;
     (void)SigPkCbEccVerify;
@@ -12709,7 +12712,7 @@ int InitSigPkCb(WOLFSSL* ssl, SignatureCtx* sigCtx)
 #endif
 #ifndef NO_RSA
     /* only setup the verify callback if a PK is set */
-    #if defined(WOLFSSL_RENESAS_SCEPROTECT) || defined(WOLFSSL_RENESAS_TSIP_TLS)
+    #if defined(WOLFSSL_RENESAS_FSPSM_TLS) || defined(WOLFSSL_RENESAS_TSIP_TLS)
     sigCtx->pkCbRsa = Renesas_cmn_SigPkCbRsaVerify;
     sigCtx->pkCtxRsa = (void*)&sigCtx->CertAtt;
     (void)SigPkCbRsaVerify;
@@ -14670,7 +14673,7 @@ int ProcessPeerCerts(WOLFSSL* ssl, byte* input, word32* inOutIdx,
                         else {
                             ssl->peerRsaKeyPresent = 1;
                     #if defined(WOLFSSL_RENESAS_TSIP_TLS) || \
-                                             defined(WOLFSSL_RENESAS_SCEPROTECT)
+                                             defined(WOLFSSL_RENESAS_FSPSM_TLS)
                         /* copy encrypted tsip key index into ssl object */
                         if (args->dCert->sce_tsip_encRsaKeyIdx) {
                             if (!ssl->peerSceTsipEncRsaKeyIndex) {
@@ -14735,7 +14738,7 @@ int ProcessPeerCerts(WOLFSSL* ssl, byte* input, word32* inOutIdx,
                     {
                         int keyRet = 0;
                         word32 idx = 0;
-                    #if defined(WOLFSSL_RENESAS_SCEPROTECT) || \
+                    #if defined(WOLFSSL_RENESAS_FSPSM_TLS) || \
                         defined(WOLFSSL_RENESAS_TSIP_TLS)
                         /* copy encrypted tsip/sce key index into ssl object */
                         if (args->dCert->sce_tsip_encRsaKeyIdx) {
@@ -23963,8 +23966,6 @@ const char* wolfSSL_ERR_reason_error_string(unsigned long e)
 #ifdef OPENSSL_EXTRA
     case 0 :
         return "ok";
-    case -WOLFSSL_X509_V_ERR_CERT_REVOKED :
-        return "certificate revoked";
 #endif
 
     case UNSUPPORTED_SUITE :
@@ -24411,10 +24412,36 @@ const char* wolfSSL_ERR_reason_error_string(unsigned long e)
     case HTTP_APPSTR_ERR:
         return "HTTP Application string error";
 #endif
-#ifdef OPENSSL_EXTRA
+#if defined(OPENSSL_EXTRA) || defined(HAVE_WEBSERVER)
+    /* TODO: -WOLFSSL_X509_V_ERR_CERT_SIGNATURE_FAILURE. Conflicts with
+     *       -WOLFSSL_ERROR_WANT_CONNECT. */
+    case -WOLFSSL_X509_V_ERR_CERT_NOT_YET_VALID:
+        return "certificate not yet valid";
+    case -WOLFSSL_X509_V_ERR_CERT_HAS_EXPIRED:
+        return "certificate has expired";
+    case -WOLFSSL_X509_V_ERR_ERROR_IN_CERT_NOT_BEFORE_FIELD:
+        return "certificate signature failure";
+    case -WOLFSSL_X509_V_ERR_ERROR_IN_CERT_NOT_AFTER_FIELD:
+        return "format error in certificate's notAfter field";
+    case -WOLFSSL_X509_V_ERR_DEPTH_ZERO_SELF_SIGNED_CERT:
+        return "self-signed certificate in certificate chain";
     case -WOLFSSL_X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT_LOCALLY:
         return "unable to get local issuer certificate";
-#endif
+    case -WOLFSSL_X509_V_ERR_UNABLE_TO_VERIFY_LEAF_SIGNATURE:
+        return "unable to verify the first certificate";
+    case -WOLFSSL_X509_V_ERR_CERT_CHAIN_TOO_LONG:
+        return "certificate chain too long";
+    case -WOLFSSL_X509_V_ERR_CERT_REVOKED:
+        return "certificate revoked";
+    case -WOLFSSL_X509_V_ERR_INVALID_CA:
+        return "invalid CA certificate";
+    case -WOLFSSL_X509_V_ERR_PATH_LENGTH_EXCEEDED:
+        return "path length constraint exceeded";
+    case -WOLFSSL_X509_V_ERR_CERT_REJECTED:
+        return "certificate rejected";
+    case -WOLFSSL_X509_V_ERR_SUBJECT_ISSUER_MISMATCH:
+        return "subject issuer mismatch";
+#endif /* OPENSSL_EXTRA || OPENSSL_EXTRA_X509_SMALL || HAVE_WEBSERVER */
     case UNSUPPORTED_PROTO_VERSION:
         #ifdef OPENSSL_EXTRA
         return "WRONG_SSL_VERSION";
@@ -29753,8 +29780,8 @@ static int DoServerKeyExchange(WOLFSSL* ssl, const byte* input,
                     #endif
                         case rsa_sa_algo:
                         {
-                            #if (defined(WOLFSSL_RENESAS_SCEPROTECT) && \
-                                defined(WOLFSSL_RENESAS_SCEPROTECT_ECC)) || \
+                            #if (defined(WOLFSSL_RENESAS_FSPSM_TLS) && \
+                                defined(WOLFSSL_RENESAS_FSPSM_ECC)) || \
                                 defined(WOLFSSL_RENESAS_TSIP_TLS)
                             /* already checked signature result by SCE */
                             /* skip the sign checks below              */
