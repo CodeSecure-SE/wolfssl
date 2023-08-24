@@ -259,7 +259,7 @@ static int SSL_hmac(WOLFSSL* ssl, byte* digest, const byte* in, word32 sz,
 #endif /* !WOLFSSL_NO_TLS12 */
 
 
-#if defined(WOLFSSL_RENESAS_SCEPROTECT) || defined(WOLFSSL_RENESAS_TSIP_TLS)
+#if defined(WOLFSSL_RENESAS_FSPSM_TLS) || defined(WOLFSSL_RENESAS_TSIP_TLS)
 #include <wolfssl/wolfcrypt/port/Renesas/renesas_cmn.h>
 #endif
 
@@ -1926,7 +1926,7 @@ int wolfSSL_session_import_internal(WOLFSSL* ssl, const unsigned char* buf,
     /* set hmac function to use when verifying */
     if (ret == 0 && (ssl->options.tls == 1 || ssl->options.tls1_1 == 1 ||
                      ssl->options.dtls == 1)) {
-    #if !defined(WOLFSSL_RENESAS_SCEPROTECT) && \
+    #if !defined(WOLFSSL_RENESAS_FSPSM_TLS) && \
         !defined(WOLFSSL_RENESAS_TSIP_TLS)
         ssl->hmac = TLS_hmac;
     #else
@@ -2278,6 +2278,11 @@ int InitSSL_Ctx(WOLFSSL_CTX* ctx, WOLFSSL_METHOD* method, void* heap)
         #endif
     #endif /* MICRIUM */
 #endif /* WOLFSSL_USER_IO */
+
+#if defined(HAVE_RPK)
+    wolfSSL_CTX_set_client_cert_type(ctx, NULL, 0); /* set to default */
+    wolfSSL_CTX_set_server_cert_type(ctx, NULL, 0); /* set to default */
+#endif /* HAVE_RPK */
 
 #ifdef HAVE_PQC
 #ifdef HAVE_FALCON
@@ -4850,7 +4855,7 @@ int RsaVerify(WOLFSSL* ssl, byte* in, word32 inSz, byte** out, int sigAlgo,
         void* ctx = wolfSSL_GetRsaVerifyCtx(ssl);
         ret = ssl->ctx->RsaVerifyCb(ssl, in, inSz, out, keyBuf, keySz, ctx);
     }
-    #if !defined(WOLFSSL_RENESAS_SCEPROTECT) && \
+    #if !defined(WOLFSSL_RENESAS_FSPSM_TLS) && \
         !defined(WOLFSSL_RENESAS_TSIP_TLS)
     else
     #else
@@ -5109,7 +5114,7 @@ int RsaEnc(WOLFSSL* ssl, const byte* in, word32 inSz, byte* out, word32* outSz,
         void* ctx = wolfSSL_GetRsaEncCtx(ssl);
         ret = ssl->ctx->RsaEncCb(ssl, in, inSz, out, outSz, keyBuf, keySz, ctx);
     }
-    #if !defined(WOLFSSL_RENESAS_SCEPROTECT) && \
+    #if !defined(WOLFSSL_RENESAS_FSPSM_TLS) && \
         !defined(WOLFSSL_RENESAS_TSIP_TLS)
     else
     #else
@@ -5237,7 +5242,7 @@ int EccVerify(WOLFSSL* ssl, const byte* in, word32 inSz, const byte* out,
         ret = ssl->ctx->EccVerifyCb(ssl, in, inSz, out, outSz, keyBuf, keySz,
             &ssl->eccVerifyRes, ctx);
     }
-    #if !defined(WOLFSSL_RENESAS_SCEPROTECT) && \
+    #if !defined(WOLFSSL_RENESAS_FSPSM_TLS) && \
         !defined(WOLFSSL_RENESAS_TSIP_TLS) && \
         !defined(WOLFSSL_MAXQ108X)
     else
@@ -6671,6 +6676,11 @@ int SetSSL_CTX(WOLFSSL* ssl, WOLFSSL_CTX* ctx, int writeDup)
     ssl->buffers.serverDH_G = ctx->serverDH_G;
 #endif
 
+#if defined(HAVE_RPK)
+    ssl->options.rpkConfig  = ctx->rpkConfig;
+    ssl->options.rpkState   = ctx->rpkState;
+#endif /* HAVE_RPK */
+
 #ifndef NO_CERTS
     /* ctx still owns certificate, certChain, key, dh, and cm */
     ssl->buffers.certificate = ctx->certificate;
@@ -7216,7 +7226,7 @@ int InitSSL(WOLFSSL* ssl, WOLFSSL_CTX* ctx, int writeDup)
     #ifndef NO_OLD_TLS
         ssl->hmac = SSL_hmac; /* default to SSLv3 */
     #elif !defined(WOLFSSL_NO_TLS12) && !defined(NO_TLS)
-      #if !defined(WOLFSSL_RENESAS_SCEPROTECT) && \
+      #if !defined(WOLFSSL_RENESAS_FSPSM_TLS) && \
           !defined(WOLFSSL_RENESAS_TSIP_TLS)
         ssl->hmac = TLS_hmac;
       #else
@@ -7492,7 +7502,7 @@ int InitSSL(WOLFSSL* ssl, WOLFSSL_CTX* ctx, int writeDup)
 #endif
 
 #if defined(HAVE_SECRET_CALLBACK) && defined(SHOW_SECRETS) && \
-    defined(WOLFSSL_SSLKEYLOGFILE)
+    defined(WOLFSSL_SSLKEYLOGFILE) && defined(WOLFSSL_TLS13)
     (void)wolfSSL_set_tls13_secret_cb(ssl, tls13ShowSecrets, NULL);
 #endif
 
@@ -7974,7 +7984,7 @@ void SSL_ResourceFree(WOLFSSL* ssl)
     FreeKey(ssl, DYNAMIC_TYPE_RSA, (void**)&ssl->peerRsaKey);
     ssl->peerRsaKeyPresent = 0;
 #endif
-#if defined(WOLFSSL_RENESAS_TSIP_TLS) || defined(WOLFSSL_RENESAS_SCEPROTECT)
+#if defined(WOLFSSL_RENESAS_TSIP_TLS) || defined(WOLFSSL_RENESAS_FSPSM_TLS)
     XFREE(ssl->peerSceTsipEncRsaKeyIndex, ssl->heap, DYNAMIC_TYPE_RSA);
     Renesas_cmn_Cleanup(ssl);
 #endif
@@ -12698,7 +12708,7 @@ int InitSigPkCb(WOLFSSL* ssl, SignatureCtx* sigCtx)
 
     /* only setup the verify callback if a PK is set */
 #ifdef HAVE_ECC
-    #if defined(WOLFSSL_RENESAS_SCEPROTECT) || defined(WOLFSSL_RENESAS_TSIP_TLS)
+    #if defined(WOLFSSL_RENESAS_FSPSM_TLS) || defined(WOLFSSL_RENESAS_TSIP_TLS)
     sigCtx->pkCbEcc = Renesas_cmn_SigPkCbEccVerify;
     sigCtx->pkCtxEcc = (void*)&sigCtx->CertAtt;
     (void)SigPkCbEccVerify;
@@ -12712,7 +12722,7 @@ int InitSigPkCb(WOLFSSL* ssl, SignatureCtx* sigCtx)
 #endif
 #ifndef NO_RSA
     /* only setup the verify callback if a PK is set */
-    #if defined(WOLFSSL_RENESAS_SCEPROTECT) || defined(WOLFSSL_RENESAS_TSIP_TLS)
+    #if defined(WOLFSSL_RENESAS_FSPSM_TLS) || defined(WOLFSSL_RENESAS_TSIP_TLS)
     sigCtx->pkCbRsa = Renesas_cmn_SigPkCbRsaVerify;
     sigCtx->pkCtxRsa = (void*)&sigCtx->CertAtt;
     (void)SigPkCbRsaVerify;
@@ -12754,6 +12764,11 @@ void DoCertFatalAlert(WOLFSSL* ssl, int ret)
         alertWhy = certificate_revoked;
     }
 #endif
+#if defined(HAVE_RPK)
+    else if (ret == UNSUPPORTED_CERTIFICATE) {
+        alertWhy = unsupported_certificate;
+    }
+#endif /* HAVE_RPK */
     else if (ret == NO_PEER_CERT) {
 #ifdef WOLFSSL_TLS13
         if (ssl->options.tls1_3) {
@@ -13344,6 +13359,9 @@ static int ProcessPeerCertParse(WOLFSSL* ssl, ProcPeerCertArgs* args,
     buffer* cert;
     byte* subjectHash = NULL;
     int alreadySigner = 0;
+#if defined(HAVE_RPK)
+    int cType;
+#endif
 #ifdef WOLFSSL_SMALL_CERT_VERIFY
     int sigRet = 0;
 #endif
@@ -13445,6 +13463,37 @@ PRAGMA_GCC_DIAG_POP
 
     /* Parse Certificate */
     ret = ParseCertRelative(args->dCert, certType, verify, SSL_CM(ssl));
+
+#if defined(HAVE_RPK)
+    /* if cert type has negotiated with peer, confirm the cert received has
+     * the same type.
+     */
+    if (ret == 0 ) {
+        if (ssl->options.side ==  WOLFSSL_CLIENT_END) {
+            if (ssl->options.rpkState.received_ServerCertTypeCnt == 1) {
+                cType = ssl->options.rpkState.received_ServerCertTypes[0];
+                if ((cType == WOLFSSL_CERT_TYPE_RPK && !args->dCert->isRPK) ||
+                    (cType == WOLFSSL_CERT_TYPE_X509 && args->dCert->isRPK)) {
+                    /* cert type mismatch */
+                    WOLFSSL_MSG("unsupported certificate type received");
+                    ret = UNSUPPORTED_CERTIFICATE;
+                }
+            }
+        }
+        else if (ssl->options.side == WOLFSSL_SERVER_END) {
+            if (ssl->options.rpkState.received_ClientCertTypeCnt == 1) {
+                cType = ssl->options.rpkState.sending_ClientCertTypes[0];
+                if ((cType == WOLFSSL_CERT_TYPE_RPK && !args->dCert->isRPK) ||
+                    (cType == WOLFSSL_CERT_TYPE_X509 && args->dCert->isRPK)) {
+                    /* cert type mismatch */
+                    WOLFSSL_MSG("unsupported certificate type received");
+                    ret = UNSUPPORTED_CERTIFICATE;
+                }
+            }
+        }
+    }
+#endif /* HAVE_RPK */
+
     /* perform below checks for date failure cases */
     if (ret == 0 || ret == ASN_BEFORE_DATE_E || ret == ASN_AFTER_DATE_E) {
         /* get subject and determine if already loaded */
@@ -14265,6 +14314,20 @@ int ProcessPeerCerts(WOLFSSL* ssl, byte* input, word32* inOutIdx,
                      * OpenSSL doesn't appear to be performing this check.
                      * For TLS 1.3 see RFC8446 Section 4.4.2.3 */
                     if (ssl->options.side == WOLFSSL_SERVER_END) {
+                #if defined(HAVE_RPK)
+                        if (args->dCert->isRPK) {
+                            /* to verify Raw Public Key cert, DANE(RFC6698)
+                             * should be introduced. Without DANE, no
+                             * authentication is performed.
+                             */
+                        #if defined(HAVE_DANE)
+                            if (ssl->useDANE) {
+                                /* DANE authentication should be added */
+                            }
+                        #endif /* HAVE_DANE */
+                        }
+                        else /* skip followingx509 version check */
+                #endif  /* HAVE_RPK */
                         if (args->dCert->version != WOLFSSL_X509_V3) {
                             WOLFSSL_MSG("Peers certificate was not version 3!");
                             args->lastErr = ASN_VERSION_E;
@@ -14673,7 +14736,7 @@ int ProcessPeerCerts(WOLFSSL* ssl, byte* input, word32* inOutIdx,
                         else {
                             ssl->peerRsaKeyPresent = 1;
                     #if defined(WOLFSSL_RENESAS_TSIP_TLS) || \
-                                             defined(WOLFSSL_RENESAS_SCEPROTECT)
+                                             defined(WOLFSSL_RENESAS_FSPSM_TLS)
                         /* copy encrypted tsip key index into ssl object */
                         if (args->dCert->sce_tsip_encRsaKeyIdx) {
                             if (!ssl->peerSceTsipEncRsaKeyIndex) {
@@ -14738,7 +14801,7 @@ int ProcessPeerCerts(WOLFSSL* ssl, byte* input, word32* inOutIdx,
                     {
                         int keyRet = 0;
                         word32 idx = 0;
-                    #if defined(WOLFSSL_RENESAS_SCEPROTECT) || \
+                    #if defined(WOLFSSL_RENESAS_FSPSM_TLS) || \
                         defined(WOLFSSL_RENESAS_TSIP_TLS)
                         /* copy encrypted tsip/sce key index into ssl object */
                         if (args->dCert->sce_tsip_encRsaKeyIdx) {
@@ -17588,7 +17651,7 @@ int ChachaAEADEncrypt(WOLFSSL* ssl, byte* out, const byte* input,
  *
  * Return 0 on success negative values in error case
  */
-static int ChachaAEADDecrypt(WOLFSSL* ssl, byte* plain, const byte* input,
+int ChachaAEADDecrypt(WOLFSSL* ssl, byte* plain, const byte* input,
                            word16 sz)
 {
     byte add[AEAD_AUTH_DATA_SZ];
@@ -24396,6 +24459,9 @@ const char* wolfSSL_ERR_reason_error_string(unsigned long e)
     case SOCKET_FILTERED_E:
         return "Session stopped by network filter";
 
+    case UNSUPPORTED_CERTIFICATE:
+        return "Unsupported certificate type";
+
 #ifdef HAVE_HTTP_CLIENT
     case HTTP_TIMEOUT:
         return "HTTP timeout for OCSP or CRL req";
@@ -29780,8 +29846,8 @@ static int DoServerKeyExchange(WOLFSSL* ssl, const byte* input,
                     #endif
                         case rsa_sa_algo:
                         {
-                            #if (defined(WOLFSSL_RENESAS_SCEPROTECT) && \
-                                defined(WOLFSSL_RENESAS_SCEPROTECT_ECC)) || \
+                            #if (defined(WOLFSSL_RENESAS_FSPSM_TLS) && \
+                                defined(WOLFSSL_RENESAS_FSPSM_ECC)) || \
                                 defined(WOLFSSL_RENESAS_TSIP_TLS)
                             /* already checked signature result by SCE */
                             /* skip the sign checks below              */

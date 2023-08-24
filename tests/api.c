@@ -382,8 +382,7 @@
 #endif
 #include <wolfssl/certs_test.h>
 
-#define WOLFSSL_TEST_UTILS_INCLUDED
-#include "tests/utils.c"
+#include "tests/utils.h"
 
 #ifndef WOLFSSL_HAVE_ECC_KEY_GET_PRIV
     /* FIPS build has replaced ecc.h. */
@@ -20080,7 +20079,7 @@ static int test_wc_DsaExportKeyRaw(void)
 static int test_wc_ed25519_make_key(void)
 {
     EXPECT_DECLS;
-#if defined(HAVE_ED25519)
+#if defined(HAVE_ED25519) && defined(HAVE_ED25519_MAKE_KEY)
     ed25519_key   key;
     WC_RNG        rng;
     unsigned char pubkey[ED25519_PUB_KEY_SIZE];
@@ -20222,7 +20221,9 @@ static int test_wc_ed25519_import_public(void)
 
     ExpectIntEQ(wc_ed25519_init(&pubKey), 0);
     ExpectIntEQ(wc_InitRng(&rng), 0);
+#ifdef HAVE_ED25519_MAKE_KEY
     ExpectIntEQ(wc_ed25519_make_key(&rng, ED25519_KEY_SIZE, &pubKey), 0);
+#endif
 
     ExpectIntEQ(wc_ed25519_import_public_ex(in, inlen, &pubKey, 1), 0);
     ExpectIntEQ(XMEMCMP(in, pubKey.p, inlen), 0);
@@ -20261,7 +20262,9 @@ static int test_wc_ed25519_import_private_key(void)
 
     ExpectIntEQ(wc_ed25519_init(&key), 0);
     ExpectIntEQ(wc_InitRng(&rng), 0);
+#ifdef HAVE_ED25519_MAKE_KEY
     ExpectIntEQ(wc_ed25519_make_key(&rng, ED25519_KEY_SIZE, &key), 0);
+#endif
 
     ExpectIntEQ(wc_ed25519_import_private_key_ex(privKey, privKeySz, pubKey,
         pubKeySz, &key, 1), 0);
@@ -20309,13 +20312,32 @@ static int test_wc_ed25519_export(void)
     byte        pub[ED25519_PUB_KEY_SIZE];
     word32      privSz = sizeof(priv);
     word32      pubSz = sizeof(pub);
+#ifndef HAVE_ED25519_MAKE_KEY
+    const byte  privKey[] = {
+        0xf8, 0x55, 0xb7, 0xb6, 0x49, 0x3f, 0x99, 0x9c,
+        0x88, 0xe3, 0xc5, 0x42, 0x6a, 0xa4, 0x47, 0x4a,
+        0xe4, 0x95, 0xda, 0xdb, 0xbf, 0xf8, 0xa7, 0x42,
+        0x9d, 0x0e, 0xe7, 0xd0, 0x57, 0x8f, 0x16, 0x69
+    };
+    const byte  pubKey[] = {
+        0x42, 0x3b, 0x7a, 0xf9, 0x82, 0xcf, 0xf9, 0xdf,
+        0x19, 0xdd, 0xf3, 0xf0, 0x32, 0x29, 0x6d, 0xfa,
+        0xfd, 0x76, 0x4f, 0x68, 0xc2, 0xc2, 0xe0, 0x6c,
+        0x47, 0xae, 0xc2, 0x55, 0x68, 0xac, 0x0d, 0x4d
+    };
+#endif
 
     XMEMSET(&key, 0, sizeof(ed25519_key));
     XMEMSET(&rng, 0, sizeof(WC_RNG));
 
     ExpectIntEQ(wc_ed25519_init(&key), 0);
     ExpectIntEQ(wc_InitRng(&rng), 0);
+#ifdef HAVE_ED25519_MAKE_KEY
     ExpectIntEQ(wc_ed25519_make_key(&rng, ED25519_KEY_SIZE, &key), 0);
+#else
+    ExpectIntEQ(wc_ed25519_import_private_key_ex(privKey, sizeof(privKey),
+        pubKey, sizeof(pubKey), &key, 1), 0);
+#endif
 
     ExpectIntEQ(wc_ed25519_export_public(&key, pub, &pubSz), 0);
     ExpectIntEQ(pubSz, ED25519_KEY_SIZE);
@@ -20351,13 +20373,32 @@ static int test_wc_ed25519_size(void)
 #if defined(HAVE_ED25519)
     ed25519_key key;
     WC_RNG      rng;
+#ifndef HAVE_ED25519_MAKE_KEY
+    const byte  privKey[] = {
+        0xf8, 0x55, 0xb7, 0xb6, 0x49, 0x3f, 0x99, 0x9c,
+        0x88, 0xe3, 0xc5, 0x42, 0x6a, 0xa4, 0x47, 0x4a,
+        0xe4, 0x95, 0xda, 0xdb, 0xbf, 0xf8, 0xa7, 0x42,
+        0x9d, 0x0e, 0xe7, 0xd0, 0x57, 0x8f, 0x16, 0x69
+    };
+    const byte  pubKey[] = {
+        0x42, 0x3b, 0x7a, 0xf9, 0x82, 0xcf, 0xf9, 0xdf,
+        0x19, 0xdd, 0xf3, 0xf0, 0x32, 0x29, 0x6d, 0xfa,
+        0xfd, 0x76, 0x4f, 0x68, 0xc2, 0xc2, 0xe0, 0x6c,
+        0x47, 0xae, 0xc2, 0x55, 0x68, 0xac, 0x0d, 0x4d
+    };
+#endif
 
     XMEMSET(&key, 0, sizeof(ed25519_key));
     XMEMSET(&rng, 0, sizeof(WC_RNG));
 
     ExpectIntEQ(wc_ed25519_init(&key), 0);
     ExpectIntEQ(wc_InitRng(&rng), 0);
+#ifdef HAVE_ED25519_MAKE_KEY
     ExpectIntEQ(wc_ed25519_make_key(&rng, ED25519_KEY_SIZE, &key), 0);
+#else
+    ExpectIntEQ(wc_ed25519_import_private_key_ex(privKey, sizeof(privKey),
+        pubKey, sizeof(pubKey), &key, 1), 0);
+#endif
 
     ExpectIntEQ(wc_ed25519_size(&key), ED25519_KEY_SIZE);
     /* Test bad args. */
@@ -20396,13 +20437,32 @@ static int test_wc_ed25519_exportKey(void)
     word32      privSz      = sizeof(priv);
     word32      pubSz       = sizeof(pub);
     word32      privOnlySz  = sizeof(privOnly);
+#ifndef HAVE_ED25519_MAKE_KEY
+    const byte  privKey[] = {
+        0xf8, 0x55, 0xb7, 0xb6, 0x49, 0x3f, 0x99, 0x9c,
+        0x88, 0xe3, 0xc5, 0x42, 0x6a, 0xa4, 0x47, 0x4a,
+        0xe4, 0x95, 0xda, 0xdb, 0xbf, 0xf8, 0xa7, 0x42,
+        0x9d, 0x0e, 0xe7, 0xd0, 0x57, 0x8f, 0x16, 0x69
+    };
+    const byte  pubKey[] = {
+        0x42, 0x3b, 0x7a, 0xf9, 0x82, 0xcf, 0xf9, 0xdf,
+        0x19, 0xdd, 0xf3, 0xf0, 0x32, 0x29, 0x6d, 0xfa,
+        0xfd, 0x76, 0x4f, 0x68, 0xc2, 0xc2, 0xe0, 0x6c,
+        0x47, 0xae, 0xc2, 0x55, 0x68, 0xac, 0x0d, 0x4d
+    };
+#endif
 
     XMEMSET(&key, 0, sizeof(ed25519_key));
     XMEMSET(&rng, 0, sizeof(WC_RNG));
 
     ExpectIntEQ(wc_ed25519_init(&key), 0);
     ExpectIntEQ(wc_InitRng(&rng), 0);
+#ifdef HAVE_ED25519_MAKE_KEY
     ExpectIntEQ(wc_ed25519_make_key(&rng, ED25519_KEY_SIZE, &key), 0);
+#else
+    ExpectIntEQ(wc_ed25519_import_private_key_ex(privKey, sizeof(privKey),
+        pubKey, sizeof(pubKey), &key, 1), 0);
+#endif
 
     ExpectIntEQ(wc_ed25519_export_private(&key, privOnly, &privOnlySz), 0);
     /* Test bad args. */
@@ -62643,6 +62703,1019 @@ static int test_override_alt_cert_chain(void)
 }
 #endif
 
+#if defined(HAVE_RPK)
+
+#define svrRpkCertFile     "./certs/rpk/server-cert-rpk.der"
+#define clntRpkCertFile    "./certs/rpk/client-cert-rpk.der"
+
+#if defined(WOLFSSL_ALWAYS_VERIFY_CB)
+static int MyRpkVerifyCb(int mode, WOLFSSL_X509_STORE_CTX* strctx)
+{
+    int ret = WOLFSSL_SUCCESS;
+    (void)mode;
+    (void)strctx;
+    WOLFSSL_ENTER("MyRpkVerifyCb");
+    return ret;
+}
+#endif /* WOLFSSL_ALWAYS_VERIFY_CB */
+
+static WC_INLINE int test_rpk_memio_setup(
+    struct test_memio_ctx *ctx,
+    WOLFSSL_CTX **ctx_c,
+    WOLFSSL_CTX **ctx_s,
+    WOLFSSL **ssl_c,
+    WOLFSSL **ssl_s,
+    method_provider method_c,
+    method_provider method_s,
+    const char* certfile_c, int fmt_cc, /* client cert file path and format */
+    const char* certfile_s, int fmt_cs, /* server cert file path and format */
+    const char* pkey_c,     int fmt_kc, /* client private key and format */
+    const char* pkey_s,     int fmt_ks  /* server private key and format */
+    )
+{
+    int ret;
+    if (ctx_c != NULL && *ctx_c == NULL) {
+        *ctx_c = wolfSSL_CTX_new(method_c());
+        if (*ctx_c == NULL) {
+            return -1;
+        }
+        wolfSSL_CTX_set_verify(*ctx_c, WOLFSSL_VERIFY_PEER, NULL);
+
+        ret = wolfSSL_CTX_load_verify_locations(*ctx_c, caCertFile, 0);
+        if (ret != WOLFSSL_SUCCESS) {
+            return -1;
+        }
+        wolfSSL_SetIORecv(*ctx_c, test_memio_read_cb);
+        wolfSSL_SetIOSend(*ctx_c, test_memio_write_cb);
+
+        ret = wolfSSL_CTX_use_certificate_file(*ctx_c, certfile_c, fmt_cc);
+        if (ret != WOLFSSL_SUCCESS) {
+            return -1;
+        }
+        ret = wolfSSL_CTX_use_PrivateKey_file(*ctx_c, pkey_c, fmt_kc);
+        if (ret != WOLFSSL_SUCCESS) {
+            return -1;
+        }
+    }
+
+    if (ctx_s != NULL && *ctx_s == NULL) {
+        *ctx_s = wolfSSL_CTX_new(method_s());
+        if (*ctx_s == NULL) {
+            return -1;
+        }
+        wolfSSL_CTX_set_verify(*ctx_s, WOLFSSL_VERIFY_PEER, NULL);
+
+        ret = wolfSSL_CTX_load_verify_locations(*ctx_s, cliCertFile, 0);
+        if (ret != WOLFSSL_SUCCESS) {
+            return -1;
+        }
+
+        ret = wolfSSL_CTX_use_PrivateKey_file(*ctx_s, pkey_s, fmt_ks);
+        if (ret != WOLFSSL_SUCCESS) {
+            return -1;
+        }
+        ret = wolfSSL_CTX_use_certificate_file(*ctx_s, certfile_s, fmt_cs);
+        if (ret != WOLFSSL_SUCCESS) {
+            return -1;
+        }
+        wolfSSL_SetIORecv(*ctx_s, test_memio_read_cb);
+        wolfSSL_SetIOSend(*ctx_s, test_memio_write_cb);
+        if (ctx->s_ciphers != NULL) {
+            ret = wolfSSL_CTX_set_cipher_list(*ctx_s, ctx->s_ciphers);
+            if (ret != WOLFSSL_SUCCESS) {
+                return -1;
+            }
+        }
+    }
+
+    if (ctx_c != NULL && ssl_c != NULL) {
+        *ssl_c = wolfSSL_new(*ctx_c);
+        if (*ssl_c == NULL) {
+            return -1;
+        }
+        wolfSSL_SetIOWriteCtx(*ssl_c, ctx);
+        wolfSSL_SetIOReadCtx(*ssl_c, ctx);
+    }
+    if (ctx_s != NULL && ssl_s != NULL) {
+        *ssl_s = wolfSSL_new(*ctx_s);
+        if (*ssl_s == NULL) {
+            return -1;
+        }
+        wolfSSL_SetIOWriteCtx(*ssl_s, ctx);
+        wolfSSL_SetIOReadCtx(*ssl_s, ctx);
+#if !defined(NO_DH)
+        SetDH(*ssl_s);
+#endif
+    }
+
+    return 0;
+}
+#endif /* HAVE_RPK */
+
+static int test_rpk_set_xxx_cert_type(void)
+{
+    EXPECT_DECLS;
+#if defined(HAVE_RPK)
+
+    char ctype[MAX_CLIENT_CERT_TYPE_CNT + 1];   /* prepare bigger buffer */
+    WOLFSSL_CTX* ctx = NULL;
+    WOLFSSL* ssl = NULL;
+    int tp;
+
+    ctx = wolfSSL_CTX_new(wolfTLSv1_3_client_method());
+    ExpectNotNull(ctx);
+
+    ssl = wolfSSL_new(ctx);
+    ExpectNotNull(ssl);
+
+    /*--------------------------------------------*/
+    /* tests for wolfSSL_CTX_set_client_cert_type */
+    /*--------------------------------------------*/
+
+    /* illegal parameter test caces */
+    ExpectIntEQ(wolfSSL_CTX_set_client_cert_type(NULL, ctype,
+                                                MAX_CLIENT_CERT_TYPE_CNT),
+                                                BAD_FUNC_ARG);
+
+    ExpectIntEQ(wolfSSL_CTX_set_client_cert_type(ctx, ctype,
+                                                sizeof(ctype)),
+                                                BAD_FUNC_ARG);
+
+    ctype[0] = WOLFSSL_CERT_TYPE_RPK;  /* set an identical cert type */
+    ctype[1] = WOLFSSL_CERT_TYPE_RPK;
+
+    ExpectIntEQ(wolfSSL_CTX_set_client_cert_type(ctx, ctype,
+                                                MAX_CLIENT_CERT_TYPE_CNT),
+                                                BAD_FUNC_ARG);
+
+    ctype[0] = WOLFSSL_CERT_TYPE_X509;
+    ctype[1] = 10;                      /* set unknown cert type */
+
+    ExpectIntEQ(wolfSSL_CTX_set_client_cert_type(ctx, ctype,
+                                                MAX_CLIENT_CERT_TYPE_CNT),
+                                                BAD_FUNC_ARG);
+    /* pass larger type count */
+    ctype[0] = WOLFSSL_CERT_TYPE_RPK;
+    ctype[1] = WOLFSSL_CERT_TYPE_X509;
+    ctype[2] = 1;                       /* pass unacceptable type count */
+
+    ExpectIntEQ(wolfSSL_CTX_set_client_cert_type(ctx, ctype,
+                                                MAX_CLIENT_CERT_TYPE_CNT + 1),
+                                                BAD_FUNC_ARG);
+
+    /* should accept NULL for type buffer */
+    ExpectIntEQ(wolfSSL_CTX_set_client_cert_type(ctx, NULL,
+                                                MAX_CLIENT_CERT_TYPE_CNT),
+                                                WOLFSSL_SUCCESS);
+
+    /* should accept zero for type count */
+    ExpectIntEQ(wolfSSL_CTX_set_client_cert_type(ctx, ctype,
+                                                0),
+                                                WOLFSSL_SUCCESS);
+
+    ExpectIntEQ(wolfSSL_CTX_set_client_cert_type(ctx, ctype,
+                                                MAX_CLIENT_CERT_TYPE_CNT),
+                                                WOLFSSL_SUCCESS);
+
+    /*--------------------------------------------*/
+    /* tests for wolfSSL_CTX_set_server_cert_type */
+    /*--------------------------------------------*/
+
+    ExpectIntEQ(wolfSSL_CTX_set_server_cert_type(NULL, ctype,
+                                                MAX_SERVER_CERT_TYPE_CNT),
+                                                BAD_FUNC_ARG);
+
+    ExpectIntEQ(wolfSSL_CTX_set_server_cert_type(ctx, ctype,
+                                                sizeof(ctype)),
+                                                BAD_FUNC_ARG);
+
+    ctype[0] = WOLFSSL_CERT_TYPE_RPK;  /* set an identical cert type */
+    ctype[1] = WOLFSSL_CERT_TYPE_RPK;
+
+    ExpectIntEQ(wolfSSL_CTX_set_server_cert_type(ctx, ctype,
+                                                MAX_SERVER_CERT_TYPE_CNT),
+                                                BAD_FUNC_ARG);
+
+    ctype[0] = WOLFSSL_CERT_TYPE_X509;
+    ctype[1] = 10;                      /* set unknown cert type */
+
+    ExpectIntEQ(wolfSSL_CTX_set_server_cert_type(ctx, ctype,
+                                                MAX_SERVER_CERT_TYPE_CNT),
+                                                BAD_FUNC_ARG);
+    /* pass larger type count */
+    ctype[0] = WOLFSSL_CERT_TYPE_RPK;
+    ctype[1] = WOLFSSL_CERT_TYPE_X509;
+    ctype[2] = 1;                       /* pass unacceptable type count */
+
+    ExpectIntEQ(wolfSSL_CTX_set_server_cert_type(ctx, ctype,
+                                                MAX_SERVER_CERT_TYPE_CNT + 1),
+                                                BAD_FUNC_ARG);
+
+    /* should accept NULL for type buffer */
+    ExpectIntEQ(wolfSSL_CTX_set_server_cert_type(ctx, NULL,
+                                                MAX_SERVER_CERT_TYPE_CNT),
+                                                WOLFSSL_SUCCESS);
+
+    /* should accept zero for type count */
+    ExpectIntEQ(wolfSSL_CTX_set_server_cert_type(ctx, ctype,
+                                                0),
+                                                WOLFSSL_SUCCESS);
+
+    ExpectIntEQ(wolfSSL_CTX_set_server_cert_type(ctx, ctype,
+                                                MAX_CLIENT_CERT_TYPE_CNT),
+                                                WOLFSSL_SUCCESS);
+
+    /*--------------------------------------------*/
+    /* tests for wolfSSL_set_client_cert_type */
+    /*--------------------------------------------*/
+
+    ExpectIntEQ(wolfSSL_set_client_cert_type(NULL, ctype,
+                                                MAX_CLIENT_CERT_TYPE_CNT),
+                                                BAD_FUNC_ARG);
+
+    ExpectIntEQ(wolfSSL_set_client_cert_type(ssl, ctype,
+                                                sizeof(ctype)),
+                                                BAD_FUNC_ARG);
+
+    ctype[0] = WOLFSSL_CERT_TYPE_RPK;  /* set an identical cert type */
+    ctype[1] = WOLFSSL_CERT_TYPE_RPK;
+
+    ExpectIntEQ(wolfSSL_set_client_cert_type(ssl, ctype,
+                                                MAX_CLIENT_CERT_TYPE_CNT),
+                                                BAD_FUNC_ARG);
+
+    ctype[0] = WOLFSSL_CERT_TYPE_X509;
+    ctype[1] = 10;                      /* set unknown cert type */
+
+    ExpectIntEQ(wolfSSL_set_client_cert_type(ssl, ctype,
+                                                MAX_CLIENT_CERT_TYPE_CNT),
+                                                BAD_FUNC_ARG);
+    /* pass larger type count */
+    ctype[0] = WOLFSSL_CERT_TYPE_RPK;
+    ctype[1] = WOLFSSL_CERT_TYPE_X509;
+    ctype[2] = 1;                       /* pass unacceptable type count */
+
+    ExpectIntEQ(wolfSSL_set_client_cert_type(ssl, ctype,
+                                                MAX_CLIENT_CERT_TYPE_CNT + 1),
+                                                BAD_FUNC_ARG);
+
+    /* should accept NULL for type buffer */
+    ExpectIntEQ(wolfSSL_set_client_cert_type(ssl, NULL,
+                                                MAX_CLIENT_CERT_TYPE_CNT),
+                                                WOLFSSL_SUCCESS);
+
+    /* should accept zero for type count */
+    ExpectIntEQ(wolfSSL_set_client_cert_type(ssl, ctype,
+                                                0),
+                                                WOLFSSL_SUCCESS);
+
+    ExpectIntEQ(wolfSSL_set_client_cert_type(ssl, ctype,
+                                                MAX_CLIENT_CERT_TYPE_CNT),
+                                                WOLFSSL_SUCCESS);
+
+    /*--------------------------------------------*/
+    /* tests for wolfSSL_CTX_set_server_cert_type */
+    /*--------------------------------------------*/
+
+    ExpectIntEQ(wolfSSL_set_server_cert_type(NULL, ctype,
+                                                MAX_SERVER_CERT_TYPE_CNT),
+                                                BAD_FUNC_ARG);
+
+    ExpectIntEQ(wolfSSL_set_server_cert_type(ssl, ctype,
+                                                sizeof(ctype)),
+                                                BAD_FUNC_ARG);
+
+    ctype[0] = WOLFSSL_CERT_TYPE_RPK;  /* set an identical cert type */
+    ctype[1] = WOLFSSL_CERT_TYPE_RPK;
+
+    ExpectIntEQ(wolfSSL_set_server_cert_type(ssl, ctype,
+                                                MAX_SERVER_CERT_TYPE_CNT),
+                                                BAD_FUNC_ARG);
+
+    ctype[0] = WOLFSSL_CERT_TYPE_X509;
+    ctype[1] = 10;                      /* set unknown cert type */
+
+    ExpectIntEQ(wolfSSL_set_server_cert_type(ssl, ctype,
+                                                MAX_SERVER_CERT_TYPE_CNT),
+                                                BAD_FUNC_ARG);
+    /* pass larger type count */
+    ctype[0] = WOLFSSL_CERT_TYPE_RPK;
+    ctype[1] = WOLFSSL_CERT_TYPE_X509;
+    ctype[2] = 1;                       /* pass unacceptable type count */
+
+    ExpectIntEQ(wolfSSL_set_server_cert_type(ssl, ctype,
+                                                MAX_SERVER_CERT_TYPE_CNT + 1),
+                                                BAD_FUNC_ARG);
+
+    /* should accept NULL for type buffer */
+    ExpectIntEQ(wolfSSL_set_server_cert_type(ssl, NULL,
+                                                MAX_SERVER_CERT_TYPE_CNT),
+                                                WOLFSSL_SUCCESS);
+
+    /* should accept zero for type count */
+    ExpectIntEQ(wolfSSL_set_server_cert_type(ssl, ctype,
+                                                0),
+                                                WOLFSSL_SUCCESS);
+
+    ExpectIntEQ(wolfSSL_set_server_cert_type(ssl, ctype,
+                                                MAX_SERVER_CERT_TYPE_CNT),
+                                                WOLFSSL_SUCCESS);
+
+    /*------------------------------------------------*/
+    /* tests for wolfSSL_get_negotiated_xxx_cert_type */
+    /*------------------------------------------------*/
+
+    ExpectIntEQ(wolfSSL_get_negotiated_client_cert_type(NULL, &tp),
+                                                BAD_FUNC_ARG);
+
+    ExpectIntEQ(wolfSSL_get_negotiated_client_cert_type(ssl, NULL),
+                                                BAD_FUNC_ARG);
+
+    ExpectIntEQ(wolfSSL_get_negotiated_server_cert_type(NULL, &tp),
+                                                BAD_FUNC_ARG);
+
+    ExpectIntEQ(wolfSSL_get_negotiated_server_cert_type(ssl, NULL),
+                                                BAD_FUNC_ARG);
+
+
+    /* clean up */
+    wolfSSL_free(ssl);
+    wolfSSL_CTX_free(ctx);
+
+#endif
+    return EXPECT_RESULT();
+}
+
+static int test_tls13_rpk_handshake(void)
+{
+    EXPECT_DECLS;
+#if defined(HAVE_RPK)
+    int ret = 0;
+    WOLFSSL_CTX *ctx_c = NULL, *ctx_s = NULL;
+    WOLFSSL *ssl_c = NULL, *ssl_s = NULL;
+    struct test_memio_ctx test_ctx;
+    int err;
+    char certType_c[MAX_CLIENT_CERT_TYPE_CNT];
+    char certType_s[MAX_CLIENT_CERT_TYPE_CNT];
+    int typeCnt_c;
+    int typeCnt_s;
+    int tp;
+
+    (void)err;
+    (void)typeCnt_c;
+    (void)typeCnt_s;
+    (void)certType_c;
+    (void)certType_s;
+
+    /*  TLS1.2
+     *  Both client and server load x509 cert and start handshaking.
+     *  Check no negotiation occurred.
+     */
+    XMEMSET(&test_ctx, 0, sizeof(test_ctx));
+
+    ExpectIntEQ(
+        test_rpk_memio_setup(
+            &test_ctx, &ctx_c, &ctx_s, &ssl_c, &ssl_s,
+            wolfTLSv1_2_client_method, wolfTLSv1_2_server_method,
+            cliCertFile,     WOLFSSL_FILETYPE_PEM,
+            svrCertFile,     WOLFSSL_FILETYPE_PEM,
+            cliKeyFile,      WOLFSSL_FILETYPE_PEM,
+            svrKeyFile,      WOLFSSL_FILETYPE_PEM)
+        , 0);
+
+
+    /* set client certificate type in client end */
+    certType_c[0] = WOLFSSL_CERT_TYPE_RPK;
+    certType_c[1] = WOLFSSL_CERT_TYPE_X509;
+    typeCnt_c = 2;
+
+    certType_s[0] = WOLFSSL_CERT_TYPE_RPK;
+    certType_s[1] = WOLFSSL_CERT_TYPE_X509;
+    typeCnt_s = 2;
+
+    /*  both clien and server do not call client/server_cert_type APIs,
+     *  expecting default settings works and no negotiation performed.
+     */
+
+    if (test_memio_do_handshake(ssl_c, ssl_s, 10, NULL) != 0)
+        return TEST_FAIL;
+
+    /* confirm no negotiation occurred */
+    ExpectIntEQ(wolfSSL_get_negotiated_client_cert_type(ssl_c, &tp),
+                                                            WOLFSSL_SUCCESS);
+    ExpectIntEQ((int)tp, WOLFSSL_CERT_TYPE_UNKNOWN);
+    ExpectIntEQ(wolfSSL_get_negotiated_server_cert_type(ssl_c, &tp),
+                                                            WOLFSSL_SUCCESS);
+    ExpectIntEQ(tp, WOLFSSL_CERT_TYPE_UNKNOWN);
+    ExpectIntEQ(wolfSSL_get_negotiated_client_cert_type(ssl_s, &tp),
+                                                            WOLFSSL_SUCCESS);
+    ExpectIntEQ(tp, WOLFSSL_CERT_TYPE_UNKNOWN);
+
+    ExpectIntEQ(wolfSSL_get_negotiated_server_cert_type(ssl_s, &tp),
+                                                            WOLFSSL_SUCCESS);
+    ExpectIntEQ(tp, WOLFSSL_CERT_TYPE_UNKNOWN);
+
+    wolfSSL_free(ssl_c);
+    wolfSSL_CTX_free(ctx_c);
+    wolfSSL_free(ssl_s);
+    wolfSSL_CTX_free(ctx_s);
+    ssl_c = ssl_s = NULL;
+    ctx_c = ctx_s = NULL;
+
+    /*  Both client and server load x509 cert and start handshaking.
+     *  Check no negotiation occurred.
+     */
+    XMEMSET(&test_ctx, 0, sizeof(test_ctx));
+
+    ExpectIntEQ(
+        test_rpk_memio_setup(
+            &test_ctx, &ctx_c, &ctx_s, &ssl_c, &ssl_s,
+            wolfTLSv1_3_client_method, wolfTLSv1_3_server_method,
+            cliCertFile,     WOLFSSL_FILETYPE_PEM,
+            svrCertFile,     WOLFSSL_FILETYPE_PEM,
+            cliKeyFile,      WOLFSSL_FILETYPE_PEM,
+            svrKeyFile,      WOLFSSL_FILETYPE_PEM )
+        , 0);
+
+    /* set client certificate type in client end */
+    certType_c[0] = WOLFSSL_CERT_TYPE_RPK;
+    certType_c[1] = WOLFSSL_CERT_TYPE_X509;
+    typeCnt_c = 2;
+
+    certType_s[0] = WOLFSSL_CERT_TYPE_RPK;
+    certType_s[1] = WOLFSSL_CERT_TYPE_X509;
+    typeCnt_s = 2;
+
+    /*  both clien and server do not call client/server_cert_type APIs,
+     *  expecting default settings works and no negotiation performed.
+     */
+
+    if (test_memio_do_handshake(ssl_c, ssl_s, 10, NULL) != 0)
+        return TEST_FAIL;
+
+    /* confirm no negotiation occurred */
+    ExpectIntEQ(wolfSSL_get_negotiated_client_cert_type(ssl_c, &tp),
+                                                        WOLFSSL_SUCCESS);
+    ExpectIntEQ((int)tp, WOLFSSL_CERT_TYPE_UNKNOWN);
+
+    ExpectIntEQ(wolfSSL_get_negotiated_server_cert_type(ssl_c, &tp),
+                                                        WOLFSSL_SUCCESS);
+    ExpectIntEQ(tp, WOLFSSL_CERT_TYPE_UNKNOWN);
+
+    ExpectIntEQ(wolfSSL_get_negotiated_client_cert_type(ssl_s, &tp),
+                                                        WOLFSSL_SUCCESS);
+    ExpectIntEQ(tp, WOLFSSL_CERT_TYPE_UNKNOWN);
+
+    ExpectIntEQ(wolfSSL_get_negotiated_server_cert_type(ssl_s, &tp),
+                                                        WOLFSSL_SUCCESS);
+    ExpectIntEQ(tp, WOLFSSL_CERT_TYPE_UNKNOWN);
+
+    wolfSSL_free(ssl_c);
+    wolfSSL_CTX_free(ctx_c);
+    wolfSSL_free(ssl_s);
+    wolfSSL_CTX_free(ctx_s);
+    ssl_c = ssl_s = NULL;
+    ctx_c = ctx_s = NULL;
+
+
+    /*  Both client and server load RPK cert and start handshaking.
+     *  Confirm negotiated cert types match as expected.
+     */
+    XMEMSET(&test_ctx, 0, sizeof(test_ctx));
+
+    ExpectIntEQ(
+        test_rpk_memio_setup(
+            &test_ctx, &ctx_c, &ctx_s, &ssl_c, &ssl_s,
+            wolfTLSv1_3_client_method, wolfTLSv1_3_server_method,
+            clntRpkCertFile, WOLFSSL_FILETYPE_ASN1,
+            svrRpkCertFile,  WOLFSSL_FILETYPE_ASN1,
+            cliKeyFile,      WOLFSSL_FILETYPE_PEM,
+            svrKeyFile,      WOLFSSL_FILETYPE_PEM )
+        , 0);
+
+    /* set client certificate type in client end */
+    certType_c[0] = WOLFSSL_CERT_TYPE_RPK;
+    certType_c[1] = WOLFSSL_CERT_TYPE_X509;
+    typeCnt_c = 2;
+
+    certType_s[0] = WOLFSSL_CERT_TYPE_RPK;
+    certType_s[1] = WOLFSSL_CERT_TYPE_X509;
+    typeCnt_s = 2;
+
+    ExpectIntEQ(wolfSSL_set_client_cert_type(ssl_c, certType_c, typeCnt_c),
+                                                        WOLFSSL_SUCCESS);
+
+    /* set server certificate type in client end */
+    ExpectIntEQ(wolfSSL_set_server_cert_type(ssl_c, certType_s, typeCnt_s),
+                                                        WOLFSSL_SUCCESS);
+
+    /* set client certificate type in server end */
+    ExpectIntEQ(wolfSSL_set_client_cert_type(ssl_s, certType_c, typeCnt_c),
+                                                        WOLFSSL_SUCCESS);
+
+    /* set server certificate type in server end */
+    ExpectIntEQ(wolfSSL_set_server_cert_type(ssl_s, certType_s, typeCnt_s),
+                                                        WOLFSSL_SUCCESS);
+
+    if (test_memio_do_handshake(ssl_c, ssl_s, 10, NULL) != 0)
+        return TEST_FAIL;
+
+    ExpectIntEQ(wolfSSL_get_negotiated_client_cert_type(ssl_c, &tp),
+                                                        WOLFSSL_SUCCESS);
+    ExpectIntEQ(tp, WOLFSSL_CERT_TYPE_RPK);
+
+    ExpectIntEQ(wolfSSL_get_negotiated_server_cert_type(ssl_c, &tp),
+                                                        WOLFSSL_SUCCESS);
+    ExpectIntEQ(tp, WOLFSSL_CERT_TYPE_RPK);
+
+    ExpectIntEQ(wolfSSL_get_negotiated_client_cert_type(ssl_s, &tp),
+                                                        WOLFSSL_SUCCESS);
+    ExpectIntEQ(tp, WOLFSSL_CERT_TYPE_RPK);
+
+    ExpectIntEQ(wolfSSL_get_negotiated_server_cert_type(ssl_s, &tp),
+                                                        WOLFSSL_SUCCESS);
+    ExpectIntEQ(tp, WOLFSSL_CERT_TYPE_RPK);
+
+    wolfSSL_free(ssl_c);
+    wolfSSL_CTX_free(ctx_c);
+    wolfSSL_free(ssl_s);
+    wolfSSL_CTX_free(ctx_s);
+    ssl_c = ssl_s = NULL;
+    ctx_c = ctx_s = NULL;
+
+
+    /*  TLS1.2
+     *  Both client and server load RPK cert and start handshaking.
+     *  Confirm negotiated cert types match as expected.
+     */
+    XMEMSET(&test_ctx, 0, sizeof(test_ctx));
+
+    ExpectIntEQ(
+        test_rpk_memio_setup(
+            &test_ctx, &ctx_c, &ctx_s, &ssl_c, &ssl_s,
+            wolfTLSv1_2_client_method, wolfTLSv1_2_server_method,
+            clntRpkCertFile, WOLFSSL_FILETYPE_ASN1,
+            svrRpkCertFile,  WOLFSSL_FILETYPE_ASN1,
+            cliKeyFile,      WOLFSSL_FILETYPE_PEM,
+            svrKeyFile,      WOLFSSL_FILETYPE_PEM )
+        , 0);
+
+    /* set client certificate type in client end */
+    certType_c[0] = WOLFSSL_CERT_TYPE_RPK;
+    certType_c[1] = WOLFSSL_CERT_TYPE_X509;
+    typeCnt_c = 2;
+
+    certType_s[0] = WOLFSSL_CERT_TYPE_RPK;
+    certType_s[1] = WOLFSSL_CERT_TYPE_X509;
+    typeCnt_s = 2;
+
+    ExpectIntEQ(wolfSSL_set_client_cert_type(ssl_c, certType_c, typeCnt_c),
+                                                        WOLFSSL_SUCCESS);
+
+    /* set server certificate type in client end */
+    ExpectIntEQ(wolfSSL_set_server_cert_type(ssl_c, certType_s, typeCnt_s),
+                                                        WOLFSSL_SUCCESS);
+
+    /* set client certificate type in server end */
+    ExpectIntEQ(wolfSSL_set_client_cert_type(ssl_s, certType_c, typeCnt_c),
+                                                        WOLFSSL_SUCCESS);
+
+    /* set server certificate type in server end */
+    ExpectIntEQ(wolfSSL_set_server_cert_type(ssl_s, certType_s, typeCnt_s),
+                                                        WOLFSSL_SUCCESS);
+
+    if (test_memio_do_handshake(ssl_c, ssl_s, 10, NULL) != 0)
+        return TEST_FAIL;
+
+    ExpectIntEQ(wolfSSL_get_negotiated_client_cert_type(ssl_c, &tp),
+                                                        WOLFSSL_SUCCESS);
+    ExpectIntEQ(tp, WOLFSSL_CERT_TYPE_RPK);
+
+    ExpectIntEQ(wolfSSL_get_negotiated_server_cert_type(ssl_c, &tp),
+                                                        WOLFSSL_SUCCESS);
+    ExpectIntEQ(tp, WOLFSSL_CERT_TYPE_RPK);
+
+    ExpectIntEQ(wolfSSL_get_negotiated_client_cert_type(ssl_s, &tp),
+                                                        WOLFSSL_SUCCESS);
+    ExpectIntEQ(tp, WOLFSSL_CERT_TYPE_RPK);
+
+    ExpectIntEQ(wolfSSL_get_negotiated_server_cert_type(ssl_s, &tp),
+                                                        WOLFSSL_SUCCESS);
+    ExpectIntEQ(tp, WOLFSSL_CERT_TYPE_RPK);
+
+    wolfSSL_free(ssl_c);
+    wolfSSL_CTX_free(ctx_c);
+    wolfSSL_free(ssl_s);
+    wolfSSL_CTX_free(ctx_s);
+    ssl_c = ssl_s = NULL;
+    ctx_c = ctx_s = NULL;
+
+
+    /*  Both client and server load x509 cert.
+     *  Have client call set_client_cert_type with both RPK and x509.
+     *  This doesn't makes client add client cert type extension to ClientHello,
+     *  since it does not load RPK cert actually.
+     */
+    XMEMSET(&test_ctx, 0, sizeof(test_ctx));
+
+    ExpectIntEQ(
+        test_rpk_memio_setup(
+            &test_ctx, &ctx_c, &ctx_s, &ssl_c, &ssl_s,
+            wolfTLSv1_3_client_method, wolfTLSv1_3_server_method,
+            cliCertFile,     WOLFSSL_FILETYPE_PEM,
+            svrCertFile,     WOLFSSL_FILETYPE_PEM,
+            cliKeyFile,      WOLFSSL_FILETYPE_PEM,
+            svrKeyFile,      WOLFSSL_FILETYPE_PEM )
+        , 0);
+
+    /* set client certificate type in client end */
+    certType_c[0] = WOLFSSL_CERT_TYPE_RPK;
+    certType_c[1] = WOLFSSL_CERT_TYPE_X509;
+    typeCnt_c = 2;
+
+    /* client indicates both RPK and x509 certs are available but loaded RPK
+     * cert only. It does not have client add client-cert-type extension in CH.
+     */
+    certType_c[0] = WOLFSSL_CERT_TYPE_RPK;
+    certType_c[1] = WOLFSSL_CERT_TYPE_X509;
+    typeCnt_c = 2;
+
+    ExpectIntEQ(wolfSSL_set_client_cert_type(ssl_c, certType_c, typeCnt_c),
+                                                        WOLFSSL_SUCCESS);
+
+    /* client indicates both RPK and x509 certs are acceptable */
+    certType_s[0] = WOLFSSL_CERT_TYPE_RPK;
+    certType_s[1] = WOLFSSL_CERT_TYPE_X509;
+    typeCnt_s = 2;
+
+    ExpectIntEQ(wolfSSL_set_server_cert_type(ssl_c, certType_s, typeCnt_s),
+                                                        WOLFSSL_SUCCESS);
+
+    /* server indicates both RPK and x509 certs are acceptable */
+    certType_c[0] = WOLFSSL_CERT_TYPE_RPK;
+    certType_c[1] = WOLFSSL_CERT_TYPE_X509;
+    typeCnt_c = 2;
+
+    ExpectIntEQ(wolfSSL_set_client_cert_type(ssl_s, certType_c, typeCnt_c),
+                                                        WOLFSSL_SUCCESS);
+
+    /* server should indicate only RPK cert is available */
+    certType_s[0] = WOLFSSL_CERT_TYPE_X509;
+    certType_s[1] = -1;
+    typeCnt_s = 1;
+
+    ExpectIntEQ(wolfSSL_set_server_cert_type(ssl_s, certType_s, typeCnt_s),
+                                                        WOLFSSL_SUCCESS);
+
+    if (test_memio_do_handshake(ssl_c, ssl_s, 10, NULL) != 0)
+        return TEST_FAIL;
+
+    /* Negotiation for client-cert-type should NOT happen. Therefore -1 should
+     * be returned as cert type.
+     */
+    ExpectIntEQ(wolfSSL_get_negotiated_client_cert_type(ssl_c, &tp),
+                                                        WOLFSSL_SUCCESS);
+    ExpectIntEQ(tp, WOLFSSL_CERT_TYPE_UNKNOWN);
+
+    ExpectIntEQ(wolfSSL_get_negotiated_server_cert_type(ssl_c, &tp),
+                                                        WOLFSSL_SUCCESS);
+    ExpectIntEQ(tp, WOLFSSL_CERT_TYPE_X509);
+
+    ExpectIntEQ(wolfSSL_get_negotiated_client_cert_type(ssl_s, &tp),
+                                                        WOLFSSL_SUCCESS);
+    ExpectIntEQ(tp, WOLFSSL_CERT_TYPE_UNKNOWN);
+
+    ExpectIntEQ(wolfSSL_get_negotiated_server_cert_type(ssl_s, &tp),
+                                                        WOLFSSL_SUCCESS);
+    ExpectIntEQ(tp, WOLFSSL_CERT_TYPE_X509);
+
+    wolfSSL_free(ssl_c);
+    wolfSSL_CTX_free(ctx_c);
+    wolfSSL_free(ssl_s);
+    wolfSSL_CTX_free(ctx_s);
+    ssl_c = ssl_s = NULL;
+    ctx_c = ctx_s = NULL;
+
+
+    /*  Have client load RPK cert and have server load x509 cert.
+     *  Check the negotiation result from both ends.
+     */
+    XMEMSET(&test_ctx, 0, sizeof(test_ctx));
+
+    ExpectIntEQ(
+        test_rpk_memio_setup(
+            &test_ctx, &ctx_c, &ctx_s, &ssl_c, &ssl_s,
+            wolfTLSv1_3_client_method, wolfTLSv1_3_server_method,
+            clntRpkCertFile, WOLFSSL_FILETYPE_ASN1,
+            svrCertFile,     WOLFSSL_FILETYPE_PEM,
+            cliKeyFile,      WOLFSSL_FILETYPE_PEM,
+            svrKeyFile,      WOLFSSL_FILETYPE_PEM )
+        , 0);
+
+    /* have client tell to use RPK cert */
+    certType_c[0] = WOLFSSL_CERT_TYPE_RPK;
+    certType_c[1] = -1;
+    typeCnt_c = 1;
+
+    ExpectIntEQ(wolfSSL_set_client_cert_type(ssl_c, certType_c, typeCnt_c),
+                                                        WOLFSSL_SUCCESS);
+
+    /* have client tell to accept both RPK and x509 cert */
+    certType_s[0] = WOLFSSL_CERT_TYPE_X509;
+    certType_s[1] = WOLFSSL_CERT_TYPE_RPK;
+    typeCnt_s = 2;
+
+    ExpectIntEQ(wolfSSL_set_server_cert_type(ssl_c, certType_s, typeCnt_s),
+                                                        WOLFSSL_SUCCESS);
+
+    /* have server accept to both RPK and x509 cert */
+    certType_c[0] = WOLFSSL_CERT_TYPE_X509;
+    certType_c[1] = WOLFSSL_CERT_TYPE_RPK;
+    typeCnt_c = 2;
+
+    ExpectIntEQ(wolfSSL_set_client_cert_type(ssl_s, certType_c, typeCnt_c),
+                                                        WOLFSSL_SUCCESS);
+
+    /* does not call wolfSSL_set_server_cert_type intentionally in sesrver
+     * end, expecting the default setting works.
+     */
+
+
+    if (test_memio_do_handshake(ssl_c, ssl_s, 10, NULL) != 0)
+        return TEST_FAIL;
+
+    ExpectIntEQ(wolfSSL_get_negotiated_client_cert_type(ssl_c, &tp),
+                                                        WOLFSSL_SUCCESS);
+    ExpectIntEQ(tp, WOLFSSL_CERT_TYPE_RPK);
+
+    ExpectIntEQ(wolfSSL_get_negotiated_server_cert_type(ssl_c, &tp),
+                                                        WOLFSSL_SUCCESS);
+    ExpectIntEQ(tp, WOLFSSL_CERT_TYPE_X509);
+
+    ExpectIntEQ(wolfSSL_get_negotiated_client_cert_type(ssl_s, &tp),
+                                                        WOLFSSL_SUCCESS);
+    ExpectIntEQ(tp, WOLFSSL_CERT_TYPE_RPK);
+
+    ExpectIntEQ(wolfSSL_get_negotiated_server_cert_type(ssl_s, &tp),
+                                                        WOLFSSL_SUCCESS);
+    ExpectIntEQ(tp, WOLFSSL_CERT_TYPE_X509);
+
+    wolfSSL_free(ssl_c);
+    wolfSSL_CTX_free(ctx_c);
+    wolfSSL_free(ssl_s);
+    wolfSSL_CTX_free(ctx_s);
+    ssl_c = ssl_s = NULL;
+    ctx_c = ctx_s = NULL;
+
+
+    /*  Have both client and server load RPK cert, however, have server
+     *  indicate its cert type x509.
+     *  Client is expected to detect the cert type mismatch then to send alert
+     *  with "unsupported_certificate".
+     */
+    XMEMSET(&test_ctx, 0, sizeof(test_ctx));
+
+    ExpectIntEQ(
+        test_rpk_memio_setup(
+            &test_ctx, &ctx_c, &ctx_s, &ssl_c, &ssl_s,
+            wolfTLSv1_3_client_method, wolfTLSv1_3_server_method,
+            clntRpkCertFile, WOLFSSL_FILETYPE_ASN1,
+            svrRpkCertFile,  WOLFSSL_FILETYPE_ASN1, /* server sends RPK cert */
+            cliKeyFile,      WOLFSSL_FILETYPE_PEM,
+            svrKeyFile,      WOLFSSL_FILETYPE_PEM )
+        , 0);
+
+    /* have client tell to use RPK cert */
+    certType_c[0] = WOLFSSL_CERT_TYPE_RPK;
+    certType_c[1] = -1;
+    typeCnt_c = 1;
+
+    ExpectIntEQ(wolfSSL_set_client_cert_type(ssl_c, certType_c, typeCnt_c),
+                                                        WOLFSSL_SUCCESS);
+
+    /* have client tell to accept both RPK and x509 cert */
+    certType_s[0] = WOLFSSL_CERT_TYPE_X509;
+    certType_s[1] = WOLFSSL_CERT_TYPE_RPK;
+    typeCnt_s = 2;
+
+    ExpectIntEQ(wolfSSL_set_server_cert_type(ssl_c, certType_s, typeCnt_s),
+                                                        WOLFSSL_SUCCESS);
+
+    /* have server accept to both RPK and x509 cert */
+    certType_c[0] = WOLFSSL_CERT_TYPE_X509;
+    certType_c[1] = WOLFSSL_CERT_TYPE_RPK;
+    typeCnt_c = 2;
+
+    ExpectIntEQ(wolfSSL_set_client_cert_type(ssl_s, certType_c, typeCnt_c),
+                                                        WOLFSSL_SUCCESS);
+
+    /* have server tell to use x509 cert intentionally. This will bring
+     * certificate type mismatch in client side.
+     */
+    certType_s[0] = WOLFSSL_CERT_TYPE_X509;
+    certType_s[1] = -1;
+    typeCnt_s = 1;
+
+    ExpectIntEQ(wolfSSL_set_server_cert_type(ssl_s, certType_s, typeCnt_s),
+                                                        WOLFSSL_SUCCESS);
+
+    /* expect client detect cert type mismatch then send Alert */
+    ret = test_memio_do_handshake(ssl_c, ssl_s, 10, NULL);
+    if (ret != -1)
+        return TEST_FAIL;
+
+    ExpectIntEQ(wolfSSL_get_error(ssl_c, ret), UNSUPPORTED_CERTIFICATE);
+
+    ExpectIntEQ(wolfSSL_get_negotiated_client_cert_type(ssl_c, &tp),
+                                                        WOLFSSL_SUCCESS);
+    ExpectIntEQ(tp, WOLFSSL_CERT_TYPE_RPK);
+
+    ExpectIntEQ(wolfSSL_get_negotiated_server_cert_type(ssl_c, &tp),
+                                                        WOLFSSL_SUCCESS);
+    ExpectIntEQ(tp, WOLFSSL_CERT_TYPE_X509);
+
+    ExpectIntEQ(wolfSSL_get_negotiated_client_cert_type(ssl_s, &tp),
+                                                        WOLFSSL_SUCCESS);
+    ExpectIntEQ(tp, WOLFSSL_CERT_TYPE_RPK);
+
+    ExpectIntEQ(wolfSSL_get_negotiated_server_cert_type(ssl_s, &tp),
+                                                        WOLFSSL_SUCCESS);
+    ExpectIntEQ(tp, WOLFSSL_CERT_TYPE_X509);
+
+    wolfSSL_free(ssl_c);
+    wolfSSL_CTX_free(ctx_c);
+    wolfSSL_free(ssl_s);
+    wolfSSL_CTX_free(ctx_s);
+    ssl_c = ssl_s = NULL;
+    ctx_c = ctx_s = NULL;
+
+
+    /*  Have client load x509 cert and server load RPK cert,
+     *  however, have client indicate its cert type RPK.
+     *  Server is expected to detect the cert type mismatch then to send alert
+     *  with "unsupported_certificate".
+     */
+    XMEMSET(&test_ctx, 0, sizeof(test_ctx));
+
+    ExpectIntEQ(
+        test_rpk_memio_setup(
+            &test_ctx, &ctx_c, &ctx_s, &ssl_c, &ssl_s,
+            wolfTLSv1_3_client_method, wolfTLSv1_3_server_method,
+            cliCertFile,     WOLFSSL_FILETYPE_PEM,
+            svrRpkCertFile,  WOLFSSL_FILETYPE_ASN1,
+            cliKeyFile,      WOLFSSL_FILETYPE_PEM,
+            svrKeyFile,      WOLFSSL_FILETYPE_PEM )
+        , 0);
+
+    /* have client tell to use RPK cert intentionally */
+    certType_c[0] = WOLFSSL_CERT_TYPE_RPK;
+    certType_c[1] = -1;
+    typeCnt_c = 1;
+
+    ExpectIntEQ(wolfSSL_set_client_cert_type(ssl_c, certType_c, typeCnt_c),
+                                                        WOLFSSL_SUCCESS);
+
+    /* have client tell to accept both RPK and x509 cert */
+    certType_s[0] = WOLFSSL_CERT_TYPE_X509;
+    certType_s[1] = WOLFSSL_CERT_TYPE_RPK;
+    typeCnt_s = 2;
+
+    ExpectIntEQ(wolfSSL_set_server_cert_type(ssl_c, certType_s, typeCnt_s),
+                                                        WOLFSSL_SUCCESS);
+
+    /* have server accept to both RPK and x509 cert */
+    certType_c[0] = WOLFSSL_CERT_TYPE_X509;
+    certType_c[1] = WOLFSSL_CERT_TYPE_RPK;
+    typeCnt_c = 2;
+
+    ExpectIntEQ(wolfSSL_set_client_cert_type(ssl_s, certType_c, typeCnt_c),
+                                                        WOLFSSL_SUCCESS);
+
+    /* have server tell to use x509 cert intentionally. This will bring
+     * certificate type mismatch in client side.
+     */
+    certType_s[0] = WOLFSSL_CERT_TYPE_X509;
+    certType_s[1] = -1;
+    typeCnt_s = 1;
+
+    ExpectIntEQ(wolfSSL_set_server_cert_type(ssl_s, certType_s, typeCnt_s),
+                                                        WOLFSSL_SUCCESS);
+
+    ret = test_memio_do_handshake(ssl_c, ssl_s, 10, NULL);
+
+    /* expect server detect cert type mismatch then send Alert */
+    ExpectIntNE(ret, 0);
+    err = wolfSSL_get_error(ssl_c, ret);
+    ExpectIntEQ(err, UNSUPPORTED_CERTIFICATE);
+
+    /* client did not load RPK cert actually, so negotiation did not happen */
+    ExpectIntEQ(wolfSSL_get_negotiated_client_cert_type(ssl_c, &tp),
+                                                        WOLFSSL_SUCCESS);
+    ExpectIntEQ(tp, WOLFSSL_CERT_TYPE_UNKNOWN);
+
+    ExpectIntEQ(wolfSSL_get_negotiated_server_cert_type(ssl_c, &tp),
+                                                        WOLFSSL_SUCCESS);
+    ExpectIntEQ(tp, WOLFSSL_CERT_TYPE_X509);
+
+    /* client did not load RPK cert actually, so negotiation did not happen */
+    ExpectIntEQ(wolfSSL_get_negotiated_client_cert_type(ssl_s, &tp),
+                                                        WOLFSSL_SUCCESS);
+    ExpectIntEQ(tp, WOLFSSL_CERT_TYPE_UNKNOWN);
+
+    ExpectIntEQ(wolfSSL_get_negotiated_server_cert_type(ssl_s, &tp),
+                                                        WOLFSSL_SUCCESS);
+    ExpectIntEQ(tp, WOLFSSL_CERT_TYPE_X509);
+
+    wolfSSL_free(ssl_c);
+    wolfSSL_CTX_free(ctx_c);
+    wolfSSL_free(ssl_s);
+    wolfSSL_CTX_free(ctx_s);
+    ssl_c = ssl_s = NULL;
+    ctx_c = ctx_s = NULL;
+
+
+#if defined(WOLFSSL_ALWAYS_VERIFY_CB)
+    /*  Both client and server load RPK cert and set certificate verify
+     *  callbacks then start handshaking.
+     *  Confirm both side can refer the peer's cert.
+     */
+    XMEMSET(&test_ctx, 0, sizeof(test_ctx));
+
+    ExpectIntEQ(
+        test_rpk_memio_setup(
+            &test_ctx, &ctx_c, &ctx_s, &ssl_c, &ssl_s,
+            wolfTLSv1_3_client_method, wolfTLSv1_3_server_method,
+            clntRpkCertFile, WOLFSSL_FILETYPE_ASN1,
+            svrRpkCertFile,  WOLFSSL_FILETYPE_ASN1,
+            cliKeyFile,      WOLFSSL_FILETYPE_PEM,
+            svrKeyFile,      WOLFSSL_FILETYPE_PEM )
+        , 0);
+
+    /* set client certificate type in client end */
+    certType_c[0] = WOLFSSL_CERT_TYPE_RPK;
+    certType_c[1] = WOLFSSL_CERT_TYPE_X509;
+    typeCnt_c = 2;
+
+    certType_s[0] = WOLFSSL_CERT_TYPE_RPK;
+    certType_s[1] = WOLFSSL_CERT_TYPE_X509;
+    typeCnt_s = 2;
+
+    ExpectIntEQ(wolfSSL_set_client_cert_type(ssl_c, certType_c, typeCnt_c),
+                                                        WOLFSSL_SUCCESS);
+
+    /* set server certificate type in client end */
+    ExpectIntEQ(wolfSSL_set_server_cert_type(ssl_c, certType_s, typeCnt_s),
+                                                        WOLFSSL_SUCCESS);
+
+    /* set client certificate type in server end */
+    ExpectIntEQ(wolfSSL_set_client_cert_type(ssl_s, certType_c, typeCnt_c),
+                                                        WOLFSSL_SUCCESS);
+
+    /* set server certificate type in server end */
+    ExpectIntEQ(wolfSSL_set_server_cert_type(ssl_s, certType_s, typeCnt_s),
+                                                        WOLFSSL_SUCCESS);
+
+    /* set certificate verify callback to both client and server */
+    int isServer = 0;
+    wolfSSL_SetCertCbCtx(ssl_c, &isServer);
+    wolfSSL_set_verify(ssl_c, SSL_VERIFY_PEER, MyRpkVerifyCb);
+
+    isServer = 1;
+    wolfSSL_SetCertCbCtx(ssl_c, &isServer);
+    wolfSSL_set_verify(ssl_s, SSL_VERIFY_PEER, MyRpkVerifyCb);
+
+    ret = test_memio_do_handshake(ssl_c, ssl_s, 10, NULL);
+    if (ret != 0)
+        return TEST_FAIL;
+
+    ExpectIntEQ(wolfSSL_get_negotiated_client_cert_type(ssl_c, &tp),
+                                                        WOLFSSL_SUCCESS);
+    ExpectIntEQ(tp, WOLFSSL_CERT_TYPE_RPK);
+
+    ExpectIntEQ(wolfSSL_get_negotiated_server_cert_type(ssl_c, &tp),
+                                                        WOLFSSL_SUCCESS);
+    ExpectIntEQ(tp, WOLFSSL_CERT_TYPE_RPK);
+
+    ExpectIntEQ(wolfSSL_get_negotiated_client_cert_type(ssl_s, &tp),
+                                                        WOLFSSL_SUCCESS);
+    ExpectIntEQ(tp, WOLFSSL_CERT_TYPE_RPK);
+
+    ExpectIntEQ(wolfSSL_get_negotiated_server_cert_type(ssl_s, &tp),
+                                                        WOLFSSL_SUCCESS);
+    ExpectIntEQ(tp, WOLFSSL_CERT_TYPE_RPK);
+
+    wolfSSL_free(ssl_c);
+    wolfSSL_CTX_free(ctx_c);
+    wolfSSL_free(ssl_s);
+    wolfSSL_CTX_free(ctx_s);
+    ssl_c = ssl_s = NULL;
+    ctx_c = ctx_s = NULL;
+#endif /* WOLFSSL_ALWAYS_VERIFY_CB */
+
+#endif /* HAVE_RPK */
+    return EXPECT_RESULT();
+}
+
 #if defined(HAVE_MANUAL_MEMIO_TESTS_DEPENDENCIES) && defined(WOLFSSL_DTLS13)
 
 
@@ -63215,20 +64288,52 @@ static int test_TLSX_CA_NAMES_bad_extension(void)
         0x0d, 0x00, 0x00, 0x11, 0x00, 0x00, 0x0d, 0x00, 0x2f, 0x00, 0x01, 0xff,
         0xff, 0xff, 0xff, 0xfa, 0x0d, 0x00, 0x00, 0x00, 0xad, 0x02
     };
+    const byte shBadCaNamesExt2[] = {
+        0x16, 0x03, 0x04, 0x00, 0x3f, 0x02, 0x00, 0x00, 0x3b, 0x03, 0x03, 0xcf,
+        0x21, 0xad, 0x74, 0xe5, 0x9a, 0x61, 0x11, 0xbe, 0x1d, 0x8c, 0x02, 0x1e,
+        0x65, 0xb8, 0x91, 0xc2, 0xa2, 0x11, 0x16, 0x7a, 0xbb, 0x8c, 0x5e, 0x07,
+        0x9e, 0x09, 0xe2, 0xc8, 0xa8, 0x33, 0x9c, 0x00, 0x13, 0x03, 0x00, 0x00,
+        0x13, 0x94, 0x7e, 0x00, 0x03, 0x0b, 0xf7, 0x03, 0x00, 0x2b, 0x00, 0x02,
+        0x03, 0x04, 0x00, 0x33, 0x00, 0x02, 0x00, 0x19, 0x16, 0x03, 0x03, 0x00,
+        0x5e, 0x02, 0x00, 0x00, 0x3b, 0x03, 0x03, 0x7f, 0xd0, 0x2d, 0xea, 0x6e,
+        0x53, 0xa1, 0x6a, 0xc9, 0xc8, 0x54, 0xef, 0x75, 0xe4, 0xd9, 0xc6, 0x3e,
+        0x74, 0xcb, 0x30, 0x80, 0xcc, 0x83, 0x3a, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0xc0, 0x5a, 0x00, 0xc0, 0xb5, 0x00, 0x00, 0x11, 0x8f, 0x00, 0x00,
+        0x03, 0x03, 0x00, 0x0c, 0x00, 0x2b, 0x00, 0x02, 0x03, 0x04, 0x53, 0x25,
+        0x00, 0x00, 0x08, 0x00, 0x00, 0x06, 0x00, 0x04, 0x02, 0x05, 0x00, 0x00,
+        0x0d, 0x00, 0x00, 0x11, 0x00, 0x00, 0x0d, 0x00, 0x2f, 0x00, 0x06, 0x00,
+        0x04, 0x00, 0x03, 0x30, 0x00, 0x13, 0x94, 0x00, 0x06, 0x00, 0x04, 0x02
+    };
+    int i = 0;
 
-    XMEMSET(&test_ctx, 0, sizeof(test_ctx));
+    for (i = 0; i < 2; i++) {
+        XMEMSET(&test_ctx, 0, sizeof(test_ctx));
 
-    ExpectIntEQ(test_memio_setup(&test_ctx, &ctx_c, NULL, &ssl_c, NULL,
-        wolfTLSv1_3_client_method, NULL), 0);
+        ExpectIntEQ(test_memio_setup(&test_ctx, &ctx_c, NULL, &ssl_c, NULL,
+            wolfTLSv1_3_client_method, NULL), 0);
 
-    XMEMCPY(test_ctx.c_buff, shBadCaNamesExt, sizeof(shBadCaNamesExt));
-    test_ctx.c_len = sizeof(shBadCaNamesExt);
+        switch (i) {
+            case 0:
+                XMEMCPY(test_ctx.c_buff, shBadCaNamesExt,
+                        sizeof(shBadCaNamesExt));
+                test_ctx.c_len = sizeof(shBadCaNamesExt);
+                break;
+            case 1:
+                XMEMCPY(test_ctx.c_buff, shBadCaNamesExt2,
+                        sizeof(shBadCaNamesExt2));
+                test_ctx.c_len = sizeof(shBadCaNamesExt2);
+                break;
+        }
 
-    ExpectIntEQ(wolfSSL_connect(ssl_c), -1);
-    ExpectIntEQ(wolfSSL_get_error(ssl_c, -1), BUFFER_ERROR);
+        ExpectIntEQ(wolfSSL_connect(ssl_c), -1);
+        ExpectIntEQ(wolfSSL_get_error(ssl_c, -1), BUFFER_ERROR);
 
-    wolfSSL_free(ssl_c);
-    wolfSSL_CTX_free(ctx_c);
+        wolfSSL_free(ssl_c);
+        ssl_c = NULL;
+        wolfSSL_CTX_free(ctx_c);
+        ctx_c = NULL;
+    }
+
 #endif
     return EXPECT_RESULT();
 }
@@ -64708,6 +65813,8 @@ TEST_CASE testCases[] = {
     /* Can't memory test as client/server Asserts. */
     TEST_DECL(test_harden_no_secure_renegotiation),
     TEST_DECL(test_override_alt_cert_chain),
+    TEST_DECL(test_rpk_set_xxx_cert_type),
+    TEST_DECL(test_tls13_rpk_handshake),
     TEST_DECL(test_dtls13_bad_epoch_ch),
     TEST_DECL(test_short_session_id),
     TEST_DECL(test_wolfSSL_dtls13_null_cipher),
