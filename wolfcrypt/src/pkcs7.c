@@ -212,8 +212,11 @@ static void wc_PKCS7_FreeStream(PKCS7* pkcs7)
 static int wc_PKCS7_GrowStream(PKCS7* pkcs7, word32 newSz)
 {
     byte* pt;
+    if (newSz<=0) {
+        return MEMORY_E;
+    }
     pt = (byte*)XMALLOC(newSz, pkcs7->heap, DYNAMIC_TYPE_PKCS7);
-    if (pt == NULL || newSz == 0) {
+    if (pt == NULL ) {
         return MEMORY_E;
     }
 
