@@ -213,7 +213,7 @@ static int wc_PKCS7_GrowStream(PKCS7* pkcs7, word32 newSz)
 {
     byte* pt;
     pt = (byte*)XMALLOC(newSz, pkcs7->heap, DYNAMIC_TYPE_PKCS7);
-    if (pt == NULL) {
+    if (pt == NULL || newSz == 0) {
         return MEMORY_E;
     }
 
