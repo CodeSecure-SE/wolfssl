@@ -2,7 +2,7 @@ name: CodeSonar
 on:
   push:                  # Only run onces the Pull request is created
     branches:
-      - 'release/**'               # Feature Branches
+      - 'release/VelvetShadow'               # Feature Branches
   pull_request:
     branches:
       - 'release/**'
