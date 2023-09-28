@@ -43,7 +43,7 @@ jobs:
       - name: Merge from upstream
         run: |
            git remote add upstream https://github.com/wolfssl/wolfssl.git
-           git pull -r upstream
+           git pull -r upstream master
       - name: Safe directory
         run: git config --global --add safe.directory `pwd`
       - name : configure
