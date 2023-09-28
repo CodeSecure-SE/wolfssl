@@ -63,7 +63,8 @@ on the specific device platform.
 #endif
 
 
-#if !defined(NO_SHA256) && !defined(WOLFSSL_ARMASM)
+#if !defined(NO_SHA256) && (!defined(WOLFSSL_ARMASM) && \
+    !defined(WOLFSSL_ARMASM_NO_NEON))
 
 #if defined(HAVE_FIPS) && defined(HAVE_FIPS_VERSION) && (HAVE_FIPS_VERSION >= 2)
     /* set NO_WRAPPERS before headers, use direct internal f()s not wrappers */
@@ -108,57 +109,10 @@ on the specific device platform.
     **
     ** Beware of possible conflict in test.c (that one now named TEST_TAG)
     */
-    static const char* TAG = "wc_sha256";
+    #if defined(WOLFSSL_USE_ESP32_CRYPT_HASH_HW)
+        static const char* TAG = "wc_sha256";
+    #endif
 #endif
-
-/* fips wrapper calls, user can call direct */
-#if defined(HAVE_FIPS) && \
-    (!defined(HAVE_FIPS_VERSION) || (HAVE_FIPS_VERSION < 2))
-
-    int wc_InitSha256(wc_Sha256* sha)
-    {
-        if (sha == NULL) {
-            return BAD_FUNC_ARG;
-        }
-        return InitSha256_fips(sha);
-    }
-    int wc_InitSha256_ex(wc_Sha256* sha, void* heap, int devId)
-    {
-        (void)heap;
-        (void)devId;
-        if (sha == NULL) {
-            return BAD_FUNC_ARG;
-        }
-        return InitSha256_fips(sha);
-    }
-    int wc_Sha256Update(wc_Sha256* sha, const byte* data, word32 len)
-    {
-        if (sha == NULL ||  (data == NULL && len > 0)) {
-            return BAD_FUNC_ARG;
-        }
-
-        if (data == NULL && len == 0) {
-            /* valid, but do nothing */
-            return 0;
-        }
-
-        return Sha256Update_fips(sha, data, len);
-    }
-    int wc_Sha256Final(wc_Sha256* sha, byte* out)
-    {
-        if (sha == NULL || out == NULL) {
-            return BAD_FUNC_ARG;
-        }
-        return Sha256Final_fips(sha, out);
-    }
-    void wc_Sha256Free(wc_Sha256* sha)
-    {
-        (void)sha;
-        /* Not supported in FIPS */
-    }
-
-#else /* else build without fips, or for FIPS v2 */
-
 
 #if defined(WOLFSSL_TI_HASH)
     /* #include <wolfcrypt/src/port/ti/ti-hash.c> included by wc_port.c */
@@ -225,8 +179,8 @@ on the specific device platform.
     !defined(WOLFSSL_PSOC6_CRYPTO) && !defined(WOLFSSL_IMXRT_DCP) && !defined(WOLFSSL_SILABS_SE_ACCEL) && \
     !defined(WOLFSSL_KCAPI_HASH) && !defined(WOLFSSL_SE050_HASH) && \
     ((!defined(WOLFSSL_RENESAS_SCEPROTECT) && \
-        !defined(WOLFSSL_RENESAS_SCEPROTECT_CRYPTONLY)) \
-      || defined(NO_WOLFSSL_RENESAS_SCEPROTECT_HASH)) && \
+      !defined(WOLFSSL_RENESAS_RSIP)) \
+      || defined(NO_WOLFSSL_RENESAS_FSPSM_HASH)) && \
     (!defined(WOLFSSL_HAVE_PSA) || defined(WOLFSSL_PSA_NO_HASH)) && \
     !defined(WOLFSSL_RENESAS_RX64_HASH)
 
@@ -805,11 +759,10 @@ static int InitSha256(wc_Sha256* sha256)
 
     /* implemented in wolfcrypt/src/port/Renesas/renesas_tsip_sha.c */
 
-#elif (defined(WOLFSSL_RENESAS_SCEPROTECT) || \
-        defined(WOLFSSL_RENESAS_SCEPROTECT_CRYPTONLY)) && \
-    !defined(NO_WOLFSSL_RENESAS_SCEPROTECT_HASH)
+#elif (defined(WOLFSSL_RENESAS_SCEPROTECT) || defined(WOLFSSL_RENESAS_RSIP)) \
+     && !defined(NO_WOLFSSL_RENESAS_FSPSM_HASH)
 
-    /* implemented in wolfcrypt/src/port/Renesas/renesas_sce_sha.c */
+    /* implemented in wolfcrypt/src/port/Renesas/renesas_fspsm_sha.c */
 
 #elif defined(WOLFSSL_PSOC6_CRYPTO)
 
@@ -980,6 +933,7 @@ static int InitSha256(wc_Sha256* sha256)
         }
 
     #if defined(WOLFSSL_SMALL_STACK) && !defined(WOLFSSL_SMALL_STACK_CACHE)
+        ForceZero(W, sizeof(word32) * WC_SHA256_BLOCK_SIZE);
         XFREE(W, NULL, DYNAMIC_TYPE_TMP_BUFFER);
     #endif
         return 0;
@@ -1561,6 +1515,11 @@ static int InitSha256(wc_Sha256* sha256)
 
 /* implemented in wolfcrypt/src/port/Renesas/renesas_rx64_hw_sha.c */
 
+#elif defined(WOLFSSL_RENESAS_RSIP) && \
+     !defined(NO_WOLFSSL_RENESAS_FSPSM_HASH)
+
+    /* implemented in wolfcrypt/src/port/Renesas/renesas_fspsm_sha.c */
+
 #else
 
     #define NEED_SOFT_SHA224
@@ -1739,10 +1698,11 @@ static int InitSha256(wc_Sha256* sha256)
             return;
 
 #ifdef WOLFSSL_SMALL_STACK_CACHE
-    if (sha224->W != NULL) {
-        XFREE(sha224->W, NULL, DYNAMIC_TYPE_DIGEST);
-        sha224->W = NULL;
-    }
+        if (sha224->W != NULL) {
+            ForceZero(sha224->W, sizeof(word32) * WC_SHA224_BLOCK_SIZE);
+            XFREE(sha224->W, NULL, DYNAMIC_TYPE_DIGEST);
+            sha224->W = NULL;
+        }
 #endif
 
     #if defined(WOLFSSL_ASYNC_CRYPT) && defined(WC_ASYNC_ENABLE_SHA224)
@@ -1755,12 +1715,16 @@ static int InitSha256(wc_Sha256* sha256)
     #if defined(WOLFSSL_KCAPI_HASH)
         KcapiHashFree(&sha224->kcapi);
     #endif
-    #if defined(WOLFSSL_RENESAS_RX64_HASH)
-    if (sha224->msg != NULL) {
-        XFREE(sha224->msg, sha224->heap, DYNAMIC_TYPE_TMP_BUFFER);
-        sha224->msg = NULL;
-    }
+    #if defined(WOLFSSL_RENESAS_RX64_HASH) || \
+        (defined(WOLFSSL_RENESAS_RSIP) && \
+        !defined(NO_WOLFSSL_RENESAS_FSPSM_HASH))
+        if (sha224->msg != NULL) {
+            ForceZero(sha224->msg, sha224->len);
+            XFREE(sha224->msg, sha224->heap, DYNAMIC_TYPE_TMP_BUFFER);
+            sha224->msg = NULL;
+        }
     #endif
+        ForceZero(sha224, sizeof(*sha224));
     }
 #endif /* WOLFSSL_SHA224 */
 #endif /* !defined(WOLFSSL_HAVE_PSA) || defined(WOLFSSL_PSA_NO_HASH) */
@@ -1786,6 +1750,7 @@ void wc_Sha256Free(wc_Sha256* sha256)
 
 #ifdef WOLFSSL_SMALL_STACK_CACHE
     if (sha256->W != NULL) {
+        ForceZero(sha256->W, sizeof(word32) * WC_SHA256_BLOCK_SIZE);
         XFREE(sha256->W, NULL, DYNAMIC_TYPE_DIGEST);
         sha256->W = NULL;
     }
@@ -1815,13 +1780,13 @@ void wc_Sha256Free(wc_Sha256* sha256)
     ((defined(WOLFSSL_RENESAS_TSIP_TLS) || \
       defined(WOLFSSL_RENESAS_TSIP_CRYPTONLY)) && \
     !defined(NO_WOLFSSL_RENESAS_TSIP_CRYPT_HASH)) || \
-    ((defined(WOLFSSL_RENESAS_SCEPROTECT) || \
-      defined(WOLFSSL_RENESAS_SCEPROTECT_CRYPTONLY)) && \
-    !defined(NO_WOLFSSL_RENESAS_SCEPROTECT_HASH)) || \
+    ((defined(WOLFSSL_RENESAS_SCEPROTECT) || defined(WOLFSSL_RENESAS_RSIP)) && \
+    !defined(NO_WOLFSSL_RENESAS_FSPSM_HASH)) || \
     defined(WOLFSSL_RENESAS_RX64_HASH) || \
     defined(WOLFSSL_HASH_KEEP)
 
     if (sha256->msg != NULL) {
+        ForceZero(sha256->msg, sha256->len);
         XFREE(sha256->msg, sha256->heap, DYNAMIC_TYPE_TMP_BUFFER);
         sha256->msg = NULL;
     }
@@ -1863,6 +1828,7 @@ void wc_Sha256Free(wc_Sha256* sha256)
         ESP_LOGV(TAG, "Hardware unlock not needed in wc_Sha256Free.");
     }
 #endif
+    ForceZero(sha256, sizeof(*sha256));
 }
 
 #endif /* !defined(WOLFSSL_HAVE_PSA) || defined(WOLFSSL_PSA_NO_HASH) */
@@ -1887,11 +1853,12 @@ int wc_Sha224_Grow(wc_Sha224* sha224, const byte* in, int inSz)
 #endif /* WOLFSSL_HASH_KEEP */
 
 #endif /* !WOLFSSL_TI_HASH */
-#endif /* HAVE_FIPS */
 
 
 #ifndef WOLFSSL_TI_HASH
-#if !defined(WOLFSSL_RENESAS_RX64_HASH)
+#if !defined(WOLFSSL_RENESAS_RX64_HASH) && \
+    (!defined(WOLFSSL_RENESAS_RSIP) || \
+      defined(NO_WOLFSSL_RENESAS_FSPSM_HASH))
 #ifdef WOLFSSL_SHA224
 
 #if defined(WOLFSSL_KCAPI_HASH) && !defined(WOLFSSL_NO_KCAPI_SHA224)
@@ -2012,11 +1979,10 @@ int wc_Sha224_Grow(wc_Sha224* sha224, const byte* in, int inSz)
 
     /* implemented in wolfcrypt/src/port/Renesas/renesas_tsip_sha.c */
 
-#elif (defined(WOLFSSL_RENESAS_SCEPROTECT) || \
-       defined(WOLFSSL_RENESAS_SCEPROTECT_CRYPTONLY)) && \
-    !defined(NO_WOLFSSL_RENESAS_SCEPROTECT_HASH)
+#elif (defined(WOLFSSL_RENESAS_SCEPROTECT) || defined(WOLFSSL_RENESAS_RSIP))\
+     && !defined(NO_WOLFSSL_RENESAS_FSPSM_HASH)
 
-    /* implemented in wolfcrypt/src/port/Renesas/renesas_sce_sha.c */
+    /* implemented in wolfcrypt/src/port/Renesas/renesas_fspsm_sha.c */
 
 #elif defined(WOLFSSL_PSOC6_CRYPTO)
     /* implemented in wolfcrypt/src/port/cypress/psoc6_crypto.c */

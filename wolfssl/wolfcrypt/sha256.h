@@ -37,26 +37,6 @@
     #include <wolfssl/wolfcrypt/fips.h>
 #endif /* HAVE_FIPS_VERSION >= 2 */
 
-#if defined(HAVE_FIPS) && \
-        (!defined(HAVE_FIPS_VERSION) || (HAVE_FIPS_VERSION < 2))
-    #define wc_Sha256             Sha256
-    #define WC_SHA256             SHA256
-    #define WC_SHA256_BLOCK_SIZE  SHA256_BLOCK_SIZE
-    #define WC_SHA256_DIGEST_SIZE SHA256_DIGEST_SIZE
-    #define WC_SHA256_PAD_SIZE    SHA256_PAD_SIZE
-
-    #ifdef WOLFSSL_SHA224
-        #define wc_Sha224             Sha224
-        #define WC_SHA224             SHA224
-        #define WC_SHA224_BLOCK_SIZE  SHA224_BLOCK_SIZE
-        #define WC_SHA224_DIGEST_SIZE SHA224_DIGEST_SIZE
-        #define WC_SHA224_PAD_SIZE    SHA224_PAD_SIZE
-    #endif
-
-    /* for fips @wc_fips */
-    #include <cyassl/ctaocrypt/sha256.h>
-#endif
-
 #ifdef FREESCALE_LTC_SHA
     #include "fsl_ltc.h"
 #endif
@@ -155,9 +135,9 @@ enum {
    !defined(NO_WOLFSSL_RENESAS_TSIP_CRYPT_HASH)
     #include "wolfssl/wolfcrypt/port/Renesas/renesas_tsip_types.h"
 #elif (defined(WOLFSSL_RENESAS_SCEPROTECT) || \
-        defined(WOLFSSL_RENESAS_SCEPROTECT_CRYPTONLY)) && \
-   !defined(NO_WOLFSSL_RENESAS_SCEPROTECT_HASH)
-    #include "wolfssl/wolfcrypt/port/Renesas/renesas-sce-crypt.h"
+       defined(WOLFSSL_RENESAS_RSIP))    && \
+     !defined(NO_WOLFSSL_RENESAS_FSPSM_HASH)
+    #include "wolfssl/wolfcrypt/port/Renesas/renesas-fspsm-crypt.h"
 #elif defined(WOLFSSL_RENESAS_RX64_HASH)
     #include "wolfssl/wolfcrypt/port/Renesas/renesas-rx64-hw-crypt.h"
 #else

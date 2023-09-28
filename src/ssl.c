@@ -213,6 +213,8 @@
 #include "src/ssl_certman.c"
 #endif
 
+#define _HMAC_Init _InitHmac
+
 #if (defined(OPENSSL_EXTRA) || defined(OPENSSL_EXTRA_X509_SMALL)) && \
     !defined(WOLFCRYPT_ONLY)
 /* Convert shortname to NID.
@@ -1055,7 +1057,7 @@ int GetEchConfigsEx(WOLFSSL_EchConfig* configs, byte* output, word32* outputLen)
 #endif /* WOLFSSL_TLS13 && HAVE_ECH */
 
 
-#if defined(WOLFSSL_RENESAS_TSIP_TLS) || defined(WOLFSSL_RENESAS_SCEPROTECT)
+#if defined(WOLFSSL_RENESAS_TSIP_TLS) || defined(WOLFSSL_RENESAS_FSPSM_TLS)
 #include <wolfssl/wolfcrypt/port/Renesas/renesas_cmn.h>
 #endif
 
@@ -1560,6 +1562,13 @@ static int DupSSL(WOLFSSL* dup, WOLFSSL* ssl)
     }
     ssl->dupWrite->dupCount = 2;    /* both sides have a count to start */
     dup->dupWrite = ssl->dupWrite; /* each side uses */
+
+    if (dup->options.weOwnRng) {
+        wc_FreeRng(dup->rng);
+        XFREE(dup->rng, dup->heap, DYNAMIC_TYPE_RNG);
+        dup->rng = NULL;
+        dup->options.weOwnRng = 0;
+    }
 
     /* copy write parts over to dup writer */
     XMEMCPY(&dup->specs,   &ssl->specs,   sizeof(CipherSpecs));
@@ -4004,7 +4013,7 @@ int wolfSSL_CTX_UseSecureRenegotiation(WOLFSSL_CTX* ctx)
     return WOLFSSL_SUCCESS;
 }
 
-
+#ifdef HAVE_SECURE_RENEGOTIATION
 /* do a secure renegotiation handshake, user forced, we discourage */
 static int _Rehandshake(WOLFSSL* ssl)
 {
@@ -4069,7 +4078,7 @@ static int _Rehandshake(WOLFSSL* ssl)
 
         ssl->secure_renegotiation->cache_status = SCR_CACHE_NEEDED;
 
-#if !defined(NO_WOLFSSL_SERVER) && defined(HAVE_SECURE_RENEGOTIATION)
+#if !defined(NO_WOLFSSL_SERVER)
         if (ssl->options.side == WOLFSSL_SERVER_END) {
             ret = SendHelloRequest(ssl);
             if (ret != 0) {
@@ -4077,7 +4086,7 @@ static int _Rehandshake(WOLFSSL* ssl)
                 return WOLFSSL_FATAL_ERROR;
             }
         }
-#endif /* !NO_WOLFSSL_SERVER && HAVE_SECURE_RENEGOTIATION */
+#endif /* !NO_WOLFSSL_SERVER */
 
         ret = InitHandshakeHashes(ssl);
         if (ret != 0) {
@@ -4150,6 +4159,8 @@ int wolfSSL_SecureResume(WOLFSSL* ssl)
 }
 
 #endif /* NO_WOLFSSL_CLIENT */
+
+#endif /* HAVE_SECURE_RENEGOTIATION */
 
 long wolfSSL_SSL_get_secure_renegotiation_support(WOLFSSL* ssl)
 {
@@ -5929,7 +5940,7 @@ int AddCA(WOLFSSL_CERT_MANAGER* cm, DerBuffer** pDer, int type, int verify)
             ret = BAD_MUTEX_E;
         }
     }
-#if defined(WOLFSSL_RENESAS_TSIP_TLS) || defined(WOLFSSL_RENESAS_SCEPROTECT)
+#if defined(WOLFSSL_RENESAS_TSIP_TLS) || defined(WOLFSSL_RENESAS_FSPSM_TLS)
     /* Verify CA by TSIP so that generated tsip key is going to be able to */
     /* be used for peer's cert verification                                */
     /* TSIP is only able to handle USER CA, and only one CA.               */
@@ -7402,6 +7413,20 @@ int ProcessBuffer(WOLFSSL_CTX* ctx, const unsigned char* buff,
         #endif
             return WOLFSSL_BAD_FILE;
         }
+#if defined(HAVE_RPK)
+        if (ssl) {
+            ssl->options.rpkState.isRPKLoaded = 0;
+            if (cert->isRPK) {
+                ssl->options.rpkState.isRPKLoaded = 1;
+            }
+        }
+        else if (ctx) {
+            ctx->rpkState.isRPKLoaded = 0;
+            if (cert->isRPK) {
+                ctx->rpkState.isRPKLoaded = 1;
+            }
+        }
+#endif /* HAVE_RPK */
 
         if (ssl) {
             if (ssl->options.side == WOLFSSL_SERVER_END)
@@ -8282,7 +8307,7 @@ int wolfSSL_CTX_load_verify_locations_ex(WOLFSSL_CTX* ctx, const char* file,
         /* pass directory read failure to response code */
         if (fileRet != WC_READDIR_NOFILE) {
             ret = fileRet;
-    #if defined(WOLFSSL_QT)
+    #if defined(WOLFSSL_QT) || defined(WOLFSSL_IGNORE_BAD_CERT_PATH)
             if (ret == BAD_PATH_ERROR &&
                 flags & WOLFSSL_LOAD_FLAG_IGNORE_BAD_PATH_ERR) {
                /* QSslSocket always loads certs in system folder
@@ -10182,6 +10207,232 @@ int wolfSSL_use_certificate(WOLFSSL* ssl, WOLFSSL_X509* x509)
 }
 
 #endif /* OPENSSL_EXTRA */
+
+#if defined(HAVE_RPK)
+/* Confirm that all the byte data in the buffer is unique.
+ * return 1 if all the byte data in the buffer is unique, otherwise 0.
+ */
+static int isArrayUnique(const char* buf, size_t len)
+{
+    size_t i, j;
+    /* check the array is unique */
+    for (i = 0; i < len -1; ++i) {
+        for (j = i+ 1; j < len; ++j) {
+            if (buf[i] == buf[j]) {
+                return 0;
+            }
+        }
+    }
+    return 1;
+}
+
+/* Set user preference for the client_cert_type exetnsion.
+ * Takes byte array containing cert types the caller can provide to its peer.
+ * Cert types are in preferred order in the array.
+ */
+WOLFSSL_API int wolfSSL_CTX_set_client_cert_type(WOLFSSL_CTX* ctx,
+                                          const char* buf, int bufLen)
+{
+    int i;
+
+    if (ctx == NULL || bufLen > MAX_CLIENT_CERT_TYPE_CNT) {
+        return BAD_FUNC_ARG;
+    }
+
+    /* if buf is set to NULL or bufLen is set to zero, it defaults the setting*/
+    if (buf == NULL || bufLen == 0) {
+        ctx->rpkConfig.preferred_ClientCertTypeCnt = 1;
+        ctx->rpkConfig.preferred_ClientCertTypes[0]= WOLFSSL_CERT_TYPE_X509;
+        ctx->rpkConfig.preferred_ClientCertTypes[1]= WOLFSSL_CERT_TYPE_X509;
+        return WOLFSSL_SUCCESS;
+    }
+
+    if (!isArrayUnique(buf, bufLen))
+        return BAD_FUNC_ARG;
+
+    for (i = 0; i < bufLen; i++){
+        if (buf[i] != WOLFSSL_CERT_TYPE_RPK && buf[i] != WOLFSSL_CERT_TYPE_X509)
+            return BAD_FUNC_ARG;
+
+        ctx->rpkConfig.preferred_ClientCertTypes[i] = buf[i];
+    }
+    ctx->rpkConfig.preferred_ClientCertTypeCnt = bufLen;
+
+    return WOLFSSL_SUCCESS;
+}
+
+/* Set user preference for the server_cert_type exetnsion.
+ * Takes byte array containing cert types the caller can provide to its peer.
+ * Cert types are in preferred order in the array.
+ */
+WOLFSSL_API int wolfSSL_CTX_set_server_cert_type(WOLFSSL_CTX* ctx,
+                                                const char* buf, int bufLen)
+{
+    int i;
+
+    if (ctx == NULL || bufLen > MAX_SERVER_CERT_TYPE_CNT) {
+        return BAD_FUNC_ARG;
+    }
+
+    /* if buf is set to NULL or bufLen is set to zero, it defaults the setting*/
+    if (buf == NULL || bufLen == 0) {
+        ctx->rpkConfig.preferred_ServerCertTypeCnt = 1;
+        ctx->rpkConfig.preferred_ServerCertTypes[0]= WOLFSSL_CERT_TYPE_X509;
+        ctx->rpkConfig.preferred_ServerCertTypes[1]= WOLFSSL_CERT_TYPE_X509;
+        return WOLFSSL_SUCCESS;
+    }
+
+    if (!isArrayUnique(buf, bufLen))
+        return BAD_FUNC_ARG;
+
+    for (i = 0; i < bufLen; i++){
+        if (buf[i] != WOLFSSL_CERT_TYPE_RPK && buf[i] != WOLFSSL_CERT_TYPE_X509)
+            return BAD_FUNC_ARG;
+
+        ctx->rpkConfig.preferred_ServerCertTypes[i] = buf[i];
+    }
+    ctx->rpkConfig.preferred_ServerCertTypeCnt = bufLen;
+
+    return WOLFSSL_SUCCESS;
+}
+
+/* Set user preference for the client_cert_type exetnsion.
+ * Takes byte array containing cert types the caller can provide to its peer.
+ * Cert types are in preferred order in the array.
+ */
+WOLFSSL_API int wolfSSL_set_client_cert_type(WOLFSSL* ssl,
+                                          const char* buf, int bufLen)
+{
+    int i;
+
+    if (ssl == NULL || bufLen > MAX_CLIENT_CERT_TYPE_CNT) {
+        return BAD_FUNC_ARG;
+    }
+
+    /* if buf is set to NULL or bufLen is set to zero, it defaults the setting*/
+    if (buf == NULL || bufLen == 0) {
+        ssl->options.rpkConfig.preferred_ClientCertTypeCnt = 1;
+        ssl->options.rpkConfig.preferred_ClientCertTypes[0]
+                                                    = WOLFSSL_CERT_TYPE_X509;
+        ssl->options.rpkConfig.preferred_ClientCertTypes[1]
+                                                    = WOLFSSL_CERT_TYPE_X509;
+        return WOLFSSL_SUCCESS;
+    }
+
+    if (!isArrayUnique(buf, bufLen))
+        return BAD_FUNC_ARG;
+
+    for (i = 0; i < bufLen; i++){
+        if (buf[i] != WOLFSSL_CERT_TYPE_RPK && buf[i] != WOLFSSL_CERT_TYPE_X509)
+            return BAD_FUNC_ARG;
+
+        ssl->options.rpkConfig.preferred_ClientCertTypes[i] = buf[i];
+    }
+    ssl->options.rpkConfig.preferred_ClientCertTypeCnt = bufLen;
+
+    return WOLFSSL_SUCCESS;
+}
+
+/* Set user preference for the server_cert_type exetnsion.
+ * Takes byte array containing cert types the caller can provide to its peer.
+ * Cert types are in preferred order in the array.
+ */
+WOLFSSL_API int wolfSSL_set_server_cert_type(WOLFSSL* ssl,
+                                          const char* buf, int bufLen)
+{
+    int i;
+
+    if (ssl == NULL || bufLen > MAX_SERVER_CERT_TYPE_CNT) {
+        return BAD_FUNC_ARG;
+    }
+
+    /* if buf is set to NULL or bufLen is set to zero, it defaults the setting*/
+    if (buf == NULL || bufLen == 0) {
+        ssl->options.rpkConfig.preferred_ServerCertTypeCnt = 1;
+        ssl->options.rpkConfig.preferred_ServerCertTypes[0]
+                                                    = WOLFSSL_CERT_TYPE_X509;
+        ssl->options.rpkConfig.preferred_ServerCertTypes[1]
+                                                    = WOLFSSL_CERT_TYPE_X509;
+        return WOLFSSL_SUCCESS;
+    }
+
+    if (!isArrayUnique(buf, bufLen))
+        return BAD_FUNC_ARG;
+
+    for (i = 0; i < bufLen; i++){
+        if (buf[i] != WOLFSSL_CERT_TYPE_RPK && buf[i] != WOLFSSL_CERT_TYPE_X509)
+            return BAD_FUNC_ARG;
+
+        ssl->options.rpkConfig.preferred_ServerCertTypes[i] = buf[i];
+    }
+    ssl->options.rpkConfig.preferred_ServerCertTypeCnt = bufLen;
+
+    return WOLFSSL_SUCCESS;
+}
+
+/* get negotiated certificate type value and return it to the second parameter.
+ * cert type value:
+ * -1: WOLFSSL_CERT_TYPE_UNKNOWN
+ *  0: WOLFSSL_CERT_TYPE_X509
+ *  2: WOLFSSL_CERT_TYPE_RPK
+ * return WOLFSSL_SUCCESS on success, otherwise negative value.
+ * in case no negotiation performed, it returns WOLFSSL_SUCCESS and -1 is for
+ * cert type.
+ */
+WOLFSSL_API int wolfSSL_get_negotiated_client_cert_type(WOLFSSL* ssl, int* tp)
+{
+    int ret = WOLFSSL_SUCCESS;
+
+    if (ssl == NULL || tp == NULL)
+        return BAD_FUNC_ARG;
+
+    if (ssl->options.side == WOLFSSL_CLIENT_END) {
+        if (ssl->options.rpkState.received_ClientCertTypeCnt == 1)
+            *tp = ssl->options.rpkState.received_ClientCertTypes[0];
+        else
+            *tp = WOLFSSL_CERT_TYPE_UNKNOWN;
+    }
+    else {
+        if (ssl->options.rpkState.sending_ClientCertTypeCnt == 1)
+            *tp = ssl->options.rpkState.sending_ClientCertTypes[0];
+        else
+            *tp = WOLFSSL_CERT_TYPE_UNKNOWN;
+    }
+    return ret;
+}
+
+/* get negotiated certificate type value and return it to the second parameter.
+ * cert type value:
+ * -1: WOLFSSL_CERT_TYPE_UNKNOWN
+ *  0: WOLFSSL_CERT_TYPE_X509
+ *  2: WOLFSSL_CERT_TYPE_RPK
+ * return WOLFSSL_SUCCESS on success, otherwise negative value.
+ * in case no negotiation performed, it returns WOLFSSL_SUCCESS and -1 is for
+ * cert type.
+ */
+WOLFSSL_API int wolfSSL_get_negotiated_server_cert_type(WOLFSSL* ssl, int* tp)
+{
+    int ret = WOLFSSL_SUCCESS;
+
+    if (ssl == NULL || tp == NULL)
+        return BAD_FUNC_ARG;
+
+    if (ssl->options.side == WOLFSSL_CLIENT_END) {
+        if (ssl->options.rpkState.received_ServerCertTypeCnt == 1)
+            *tp = ssl->options.rpkState.received_ServerCertTypes[0];
+        else
+            *tp = WOLFSSL_CERT_TYPE_UNKNOWN;
+    }
+    else {
+        if (ssl->options.rpkState.sending_ServerCertTypeCnt == 1)
+            *tp = ssl->options.rpkState.sending_ServerCertTypes[0];
+        else
+            *tp = WOLFSSL_CERT_TYPE_UNKNOWN;
+    }
+    return ret;
+}
+
+#endif /* HAVE_RPK */
 
 int wolfSSL_use_certificate_ASN1(WOLFSSL* ssl, const unsigned char* der,
                                  int derSz)
@@ -12203,7 +12454,7 @@ int wolfSSL_DTLS_SetCookieSecret(WOLFSSL* ssl,
                     return WOLFSSL_FATAL_ERROR;
                 }
                 /* if resumption failed, reset needed state */
-                else if (neededState == SERVER_FINISHED_COMPLETE)
+                else if (neededState == SERVER_FINISHED_COMPLETE) {
                     if (!ssl->options.resuming) {
                     #ifdef WOLFSSL_DTLS
                         if (IsDtlsNotSctpMode(ssl))
@@ -12212,17 +12463,19 @@ int wolfSSL_DTLS_SetCookieSecret(WOLFSSL* ssl,
                     #endif
                             neededState = SERVER_HELLODONE_COMPLETE;
                     }
-#ifdef WOLFSSL_DTLS13
+                }
 
+#ifdef WOLFSSL_DTLS13
                 if (ssl->options.dtls && IsAtLeastTLSv1_3(ssl->version)
-                    && ssl->dtls13Rtx.sendAcks == 1) {
-                    ssl->dtls13Rtx.sendAcks = 0;
+                    && ssl->dtls13Rtx.sendAcks == 1
+                    && ssl->options.seenUnifiedHdr) {
                     /* we aren't negotiated the version yet, so we aren't sure
                      * the other end can speak v1.3. On the other side we have
                      * received a unified records, assuming that the
                      * ServerHello got lost, we will send an empty ACK. In case
                      * the server is a DTLS with version less than 1.3, it
                      * should just ignore the message */
+                    ssl->dtls13Rtx.sendAcks = 0;
                     if ((ssl->error = SendDtls13Ack(ssl)) < 0) {
                         if (ssl->error == WANT_WRITE)
                             ssl->dtls13SendingAckOrRtx = 1;
@@ -12230,8 +12483,6 @@ int wolfSSL_DTLS_SetCookieSecret(WOLFSSL* ssl,
                         return WOLFSSL_FATAL_ERROR;
                     }
                 }
-
-
 #endif /* WOLFSSL_DTLS13 */
             }
 
@@ -13755,7 +14006,6 @@ int wolfSSL_GetSessionFromCache(WOLFSSL* ssl, WOLFSSL_SESSION* output)
             TlsSessionCacheUnlockRow(row);
             error = WOLFSSL_FAILURE;
         }
-#if defined(WOLFSSL_TLS13) && defined(HAVE_SESSION_TICKET)
         else if (LowResTimer() >= (sess->bornOn + sess->timeout)) {
             WOLFSSL_SESSION* wrSess = NULL;
             WOLFSSL_MSG("Invalid session: timed out");
@@ -13770,7 +14020,6 @@ int wolfSSL_GetSessionFromCache(WOLFSSL* ssl, WOLFSSL_SESSION* output)
             }
             error = WOLFSSL_FAILURE;
         }
-#endif /* HAVE_SESSION_TICKET && WOLFSSL_TLS13 */
     }
 
     /* mollify confused cppcheck nullPointer warning. */
@@ -13931,11 +14180,7 @@ int wolfSSL_SetSession(WOLFSSL* ssl, WOLFSSL_SESSION* session)
         if (ssl->session == session) {
             WOLFSSL_MSG("ssl->session and session same");
         }
-        else
-#ifdef HAVE_STUNNEL
-        /* stunnel depends on the ex_data not being duplicated. Copy OpenSSL
-         * behaviour for now. */
-        if (session->type != WOLFSSL_SESSION_TYPE_CACHE) {
+        else if (session->type != WOLFSSL_SESSION_TYPE_CACHE) {
             if (wolfSSL_SESSION_up_ref(session) == WOLFSSL_SUCCESS) {
                 wolfSSL_FreeSession(ssl->ctx, ssl->session);
                 ssl->session = session;
@@ -13943,9 +14188,7 @@ int wolfSSL_SetSession(WOLFSSL* ssl, WOLFSSL_SESSION* session)
             else
                 ret = WOLFSSL_FAILURE;
         }
-        else
-#endif
-        {
+        else {
             ret = wolfSSL_DupSession(session, ssl->session, 0);
             if (ret != WOLFSSL_SUCCESS)
                 WOLFSSL_MSG("Session duplicate failed");
@@ -20365,7 +20608,6 @@ int wolfSSL_DupSession(const WOLFSSL_SESSION* input, WOLFSSL_SESSION* output,
 
 WOLFSSL_SESSION* wolfSSL_SESSION_dup(WOLFSSL_SESSION* session)
 {
-#ifdef HAVE_EXT_CACHE
     WOLFSSL_SESSION* copy;
 
     WOLFSSL_ENTER("wolfSSL_SESSION_dup");
@@ -20388,11 +20630,6 @@ WOLFSSL_SESSION* wolfSSL_SESSION_dup(WOLFSSL_SESSION* session)
         copy = NULL;
     }
     return copy;
-#else
-    WOLFSSL_MSG("wolfSSL_SESSION_dup feature not compiled in");
-    (void)session;
-    return NULL;
-#endif /* HAVE_EXT_CACHE */
 }
 
 void wolfSSL_FreeSession(WOLFSSL_CTX* ctx, WOLFSSL_SESSION* session)
@@ -25460,80 +25697,6 @@ int wolfSSL_HMAC_CTX_copy(WOLFSSL_HMAC_CTX* des, WOLFSSL_HMAC_CTX* src)
 
     return wolfSSL_HmacCopy(&des->hmac, &src->hmac);
 }
-
-
-#if defined(HAVE_FIPS) && \
-    (!defined(HAVE_FIPS_VERSION) || (HAVE_FIPS_VERSION < 2))
-
-static int _HMAC_Init(Hmac* hmac, int type, void* heap)
-{
-    int ret = 0;
-
-    switch (type) {
-    #ifndef NO_MD5
-        case WC_MD5:
-            ret = wc_InitMd5(&hmac->hash.md5);
-            break;
-    #endif /* !NO_MD5 */
-
-    #ifndef NO_SHA
-        case WC_SHA:
-            ret = wc_InitSha(&hmac->hash.sha);
-            break;
-    #endif /* !NO_SHA */
-
-    #ifdef WOLFSSL_SHA224
-        case WC_SHA224:
-            ret = wc_InitSha224(&hmac->hash.sha224);
-            break;
-    #endif /* WOLFSSL_SHA224 */
-
-    #ifndef NO_SHA256
-        case WC_SHA256:
-            ret = wc_InitSha256(&hmac->hash.sha256);
-            break;
-    #endif /* !NO_SHA256 */
-
-    #ifdef WOLFSSL_SHA384
-        case WC_SHA384:
-            ret = wc_InitSha384(&hmac->hash.sha384);
-            break;
-    #endif /* WOLFSSL_SHA384 */
-    #ifdef WOLFSSL_SHA512
-        case WC_SHA512:
-            ret = wc_InitSha512(&hmac->hash.sha512);
-            break;
-    #endif /* WOLFSSL_SHA512 */
-
-    #ifdef WOLFSSL_SHA3
-        case WC_SHA3_224:
-            ret = wc_InitSha3_224(&hmac->hash.sha3, heap, INVALID_DEVID);
-            break;
-        case WC_SHA3_256:
-            ret = wc_InitSha3_256(&hmac->hash.sha3, heap, INVALID_DEVID);
-            break;
-        case WC_SHA3_384:
-            ret = wc_InitSha3_384(&hmac->hash.sha3, heap, INVALID_DEVID);
-            break;
-        case WC_SHA3_512:
-            ret = wc_InitSha3_512(&hmac->hash.sha3, heap, INVALID_DEVID);
-            break;
-    #endif
-
-        default:
-            ret = BAD_FUNC_ARG;
-            break;
-    }
-
-    (void)heap;
-
-    return ret;
-}
-
-#else
-    #define _HMAC_Init _InitHmac
-#endif
-
 
 int wolfSSL_HMAC_Init(WOLFSSL_HMAC_CTX* ctx, const void* key, int keylen,
                   const EVP_MD* type)

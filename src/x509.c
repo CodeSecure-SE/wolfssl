@@ -1192,7 +1192,9 @@ WOLFSSL_X509_EXTENSION* wolfSSL_X509_set_ext(WOLFSSL_X509* x509, int loc)
 
                 /* Get extension data and copy as ASN1_STRING */
                 tmpIdx = idx + length;
-                if ((tmpIdx >= (word32)sz) || (input[tmpIdx++] != ASN_OCTET_STRING)) {
+                if ((tmpIdx >= (word32)sz) ||
+                    (input[tmpIdx] != ASN_OCTET_STRING))
+                {
                     WOLFSSL_MSG("Error decoding unknown extension data");
                     wolfSSL_ASN1_OBJECT_free(ext->obj);
                     wolfSSL_X509_EXTENSION_free(ext);
@@ -1202,6 +1204,8 @@ WOLFSSL_X509_EXTENSION* wolfSSL_X509_set_ext(WOLFSSL_X509* x509, int loc)
                 #endif
                     return NULL;
                 }
+
+                tmpIdx++;
 
                 if (GetLength(input, &tmpIdx, &length, sz) <= 0) {
                     WOLFSSL_MSG("Error: Invalid Input Length.");
@@ -1561,11 +1565,9 @@ int wolfSSL_X509V3_EXT_print(WOLFSSL_BIO *out, WOLFSSL_X509_EXTENSION *ext,
         {
             char* asn1str;
             asn1str = wolfSSL_i2s_ASN1_STRING(NULL, str);
-            if ((tmpLen = XSNPRINTF(
-                     tmp, tmpSz, "%*s%s", indent, "", asn1str))
-                >= tmpSz)
-                return rc;
+            tmpLen = XSNPRINTF(tmp, tmpSz, "%*s%s", indent, "", asn1str);
             XFREE(asn1str, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+            if (tmpLen >= tmpSz) return rc;
             break;
         }
         case AUTH_INFO_OID:
@@ -9687,7 +9689,8 @@ WOLF_STACK_OF(WOLFSSL_X509)* wolfSSL_X509_chain_up_ref(
             }
             if (req->keyUsageSet)
                 cert->keyUsage = req->keyUsage;
-            /* Extended Key Usage not supported. */
+
+            cert->extKeyUsage = req->extKeyUsage;
     #endif
 
             XMEMCPY(cert->challengePw, req->challengePw, CTC_NAME_SIZE);
@@ -10718,6 +10721,7 @@ int wolfSSL_i2d_X509_NAME(WOLFSSL_X509_NAME* name, unsigned char** out)
                 case MBSTRING_UTF8:
                     type = CTC_UTF8;
                     break;
+                case MBSTRING_ASC:
                 case V_ASN1_PRINTABLESTRING:
                     type = CTC_PRINTABLE;
                     break;
@@ -12606,6 +12610,10 @@ static int get_dn_attr_by_nid(int n, const char** buf)
             str = "ST";
             len = 2;
             break;
+        case NID_streetAddress:
+            str = "street";
+            len = 6;
+            break;
         case NID_organizationName:
             str = "O";
             len = 1;
@@ -12613,6 +12621,10 @@ static int get_dn_attr_by_nid(int n, const char** buf)
         case NID_organizationalUnitName:
             str = "OU";
             len = 2;
+            break;
+        case NID_postalCode:
+            str = "postalCode";
+            len = 10;
             break;
         case NID_emailAddress:
             str = "emailAddress";
@@ -12645,6 +12657,10 @@ static int get_dn_attr_by_nid(int n, const char** buf)
         case NID_pkcs9_contentType:
             str = "contentType";
             len = 11;
+            break;
+        case NID_userId:
+            str = "UID";
+            len = 3;
             break;
         default:
             WOLFSSL_MSG("Attribute type not found");

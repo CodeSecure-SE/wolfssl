@@ -33,11 +33,6 @@ the error status.
 
 #include <wolfssl/wolfcrypt/types.h>
 
-#if defined(HAVE_FIPS) && \
-    (!defined(HAVE_FIPS_VERSION) || (HAVE_FIPS_VERSION < 2))
-    #include <cyassl/ctaocrypt/error-crypt.h>
-#endif /* HAVE_FIPS V1 */
-
 #ifdef __cplusplus
     extern "C" {
 #endif
@@ -54,7 +49,7 @@ enum {
     BAD_MUTEX_E        = -106,  /* Bad mutex operation */
     WC_TIMEOUT_E       = -107,  /* timeout error */
     WC_PENDING_E       = -108,  /* wolfCrypt operation pending (would block) */
-    WC_NOT_PENDING_E   = -109,  /* wolfCrypt operation not pending */
+    WC_NO_PENDING_E    = -109,  /* no asynchronous operation pending */
 
     MP_INIT_E          = -110,  /* mp_init error state */
     MP_READ_E          = -111,  /* mp_read error state */
@@ -71,6 +66,7 @@ enum {
 
     MEMORY_E           = -125,  /* out of memory error */
     VAR_STATE_CHANGE_E = -126,  /* var state modified by different thread */
+    FIPS_DEGRADED_E    = -127,  /* FIPS Module in degraded mode */
 
     RSA_WRONG_TYPE_E   = -130,  /* RSA wrong block type for RSA function */
     RSA_BUFFER_E       = -131,  /* RSA buffer error, output too small or

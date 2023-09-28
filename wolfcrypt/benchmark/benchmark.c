@@ -157,7 +157,7 @@
     #include <wolfssl/wolfcrypt/ext_kyber.h>
 #endif
 #endif
-#ifdef WOLFSSL_HAVE_LMS
+#if defined(WOLFSSL_HAVE_LMS) && !defined(WOLFSSL_LMS_VERIFY_ONLY)
     #include <wolfssl/wolfcrypt/lms.h>
 #ifdef HAVE_LIBLMS
     #include <wolfssl/wolfcrypt/ext_lms.h>
@@ -444,14 +444,14 @@
     } while(0)
 #endif
 
-#undef PTHREAD_CHECK_RET
-#define PTHREAD_CHECK_RET(...) do {                                  \
-        int _pthread_ret = (__VA_ARGS__);                            \
-        if (_pthread_ret != 0) {                                     \
-            errno = _pthread_ret;                                    \
+#undef THREAD_CHECK_RET
+#define THREAD_CHECK_RET(...) do {                                   \
+        int _thread_ret = (__VA_ARGS__);                             \
+        if (_thread_ret != 0) {                                      \
+            errno = _thread_ret;                                     \
             printf("%s%s L%d error %d for \"%s\"\n",                 \
                    err_prefix, __FILE__, __LINE__,                   \
-                   _pthread_ret, #__VA_ARGS__);                      \
+                   _thread_ret, #__VA_ARGS__);                       \
             XFFLUSH(stdout);                                         \
             _exit(1);                                                \
         }                                                            \
@@ -870,7 +870,7 @@ static const bench_alg bench_other_opt[] = {
 
 #endif /* !WOLFSSL_BENCHMARK_ALL && !NO_MAIN_DRIVER */
 
-#if defined(WOLFSSL_HAVE_LMS)
+#if defined(WOLFSSL_HAVE_LMS) && !defined(WOLFSSL_LMS_VERIFY_ONLY)
 typedef struct bench_pq_hash_sig_alg {
     /* Command line option string. */
     const char* str;
@@ -883,7 +883,7 @@ static const bench_pq_hash_sig_alg bench_pq_hash_sig_opt[] = {
     { "-lms_hss", BENCH_LMS_HSS},
     { NULL, 0}
 };
-#endif /* if defined(WOLFSSL_HAVE_LMS) */
+#endif /* if defined(WOLFSSL_HAVE_LMS) && !defined(WOLFSSL_LMS_VERIFY_ONLY) */
 
 #if defined(HAVE_PQC) && defined(HAVE_LIBOQS)
 /* The post-quantum-specific mapping of command line option to bit values and
@@ -915,7 +915,7 @@ static const bench_pq_alg bench_pq_asym_opt[] = {
     { NULL, 0, NULL }
 };
 
-#ifdef HAVE_LIBOQS
+#if defined(HAVE_LIBOQS) && defined(HAVE_SPHINCS)
 /* All recognized post-quantum asymmetric algorithm choosing command line
  * options. (Part 2) */
 static const bench_pq_alg bench_pq_asym_opt2[] = {
@@ -934,7 +934,7 @@ static const bench_pq_alg bench_pq_asym_opt2[] = {
       OQS_SIG_alg_sphincs_shake_256s_simple },
     { NULL, 0, NULL }
 };
-#endif /* HAVE_LIBOQS */
+#endif /* HAVE_LIBOQS && HAVE_SPHINCS */
 #endif /* HAVE_PQC */
 
 #ifdef HAVE_WNR
@@ -1323,7 +1323,11 @@ static const char* bench_result_words2[][5] = {
     #ifndef NO_HW_BENCH
         #define BENCH_DEVID
     #endif
-    #define BENCH_DEVID_GET_NAME(useDeviceID) (useDeviceID) ? "HW" : "SW"
+    #ifndef HAVE_RENESAS_SYNC
+        #define BENCH_DEVID_GET_NAME(useDeviceID) (useDeviceID) ? "HW" : "SW"
+    #else
+        #define BENCH_DEVID_GET_NAME(useDeviceID) ""
+    #endif
 #else
     #define BENCH_DEVID_GET_NAME(useDeviceID) ""
 #endif
@@ -1587,7 +1591,10 @@ static const XGEN_ALIGN byte bench_iv_buf[] =
 };
 static THREAD_LS_T byte* bench_key = NULL;
 static THREAD_LS_T byte* bench_iv = NULL;
-
+#ifdef HAVE_RENESAS_SYNC
+static THREAD_LS_T byte* bench_key1 = NULL;
+static THREAD_LS_T byte* bench_key2 = NULL;
+#endif
 #ifdef WOLFSSL_STATIC_MEMORY
     #ifdef WOLFSSL_STATIC_MEMORY_TEST_SZ
         static byte gBenchMemory[WOLFSSL_STATIC_MEMORY_TEST_SZ];
@@ -1673,7 +1680,7 @@ typedef enum bench_stat_type {
 
     #ifdef WC_ENABLE_BENCH_THREADING
         /* protect bench_stats_head and bench_stats_tail access */
-        PTHREAD_CHECK_RET(pthread_mutex_lock(&bench_lock));
+        THREAD_CHECK_RET(pthread_mutex_lock(&bench_lock));
     #endif
 
         if (algo != NULL) {
@@ -1722,7 +1729,7 @@ typedef enum bench_stat_type {
                 bstat->lastRet = ret; /* track last error */
         }
     #ifdef WC_ENABLE_BENCH_THREADING
-        PTHREAD_CHECK_RET(pthread_mutex_unlock(&bench_lock));
+        THREAD_CHECK_RET(pthread_mutex_unlock(&bench_lock));
     #endif
         return bstat;
     }
@@ -1733,7 +1740,7 @@ typedef enum bench_stat_type {
 
     #ifdef WC_ENABLE_BENCH_THREADING
         /* protect bench_stats_head and bench_stats_tail access */
-        PTHREAD_CHECK_RET(pthread_mutex_lock(&bench_lock));
+        THREAD_CHECK_RET(pthread_mutex_lock(&bench_lock));
     #endif
 
         for (bstat = bench_stats_head; bstat != NULL; ) {
@@ -1754,7 +1761,7 @@ typedef enum bench_stat_type {
         }
 
     #ifdef WC_ENABLE_BENCH_THREADING
-        PTHREAD_CHECK_RET(pthread_mutex_unlock(&bench_lock));
+        THREAD_CHECK_RET(pthread_mutex_unlock(&bench_lock));
     #endif
     }
 #endif /* WC_BENCH_TRACK_STATS */
@@ -2381,6 +2388,11 @@ static void* benchmarks_do(void* args)
     }
     XMEMCPY(bench_key, bench_key_buf, sizeof(bench_key_buf));
     XMEMCPY(bench_iv, bench_iv_buf, sizeof(bench_iv_buf));
+#elif defined(HAVE_RENESAS_SYNC)
+    bench_key1 = (byte*)guser_PKCbInfo.wrapped_key_aes128;
+    bench_key2 = (byte*)guser_PKCbInfo.wrapped_key_aes256;
+    bench_key = (byte*)bench_key_buf;
+    bench_iv = (byte*)bench_iv_buf;
 #else
     bench_key = (byte*)bench_key_buf;
     bench_iv = (byte*)bench_iv_buf;
@@ -2396,7 +2408,7 @@ static void* benchmarks_do(void* args)
     #ifndef NO_SW_BENCH
         bench_aescbc(0);
     #endif
-    #if defined(BENCH_DEVID) || defined(HAVE_RENESAS_SYNC)
+    #if defined(BENCH_DEVID)
         bench_aescbc(1);
     #endif
     }
@@ -2412,8 +2424,12 @@ static void* benchmarks_do(void* args)
         !defined(NO_HW_BENCH)
         bench_aes_aad_options_wrap(bench_aesgcm, 1);
     #endif
-
-        bench_gmac();
+    #ifndef NO_SW_BENCH
+        bench_gmac(0);
+    #endif
+    #if defined(BENCH_DEVID)
+        bench_gmac(1);
+    #endif
     }
 #endif
 #ifdef HAVE_AES_ECB
@@ -2765,6 +2781,7 @@ static void* benchmarks_do(void* args)
 #endif
 
 #ifndef NO_RSA
+#ifndef HAVE_RENESAS_SYNC
     #ifdef WOLFSSL_KEY_GEN
         if (bench_all || (bench_asym_algs & BENCH_RSA_KEYGEN)) {
         #ifndef NO_SW_BENCH
@@ -2806,6 +2823,7 @@ static void* benchmarks_do(void* args)
     }
     #endif
 #endif
+#endif
 
 #ifndef NO_DH
     if (bench_all || (bench_asym_algs & BENCH_DH)) {
@@ -2832,11 +2850,11 @@ static void* benchmarks_do(void* args)
     }
 #endif
 
-#ifdef WOLFSSL_HAVE_LMS
+#if defined(WOLFSSL_HAVE_LMS) && !defined(WOLFSSL_LMS_VERIFY_ONLY)
     if (bench_all || (bench_pq_hash_sig_algs & BENCH_LMS_HSS)) {
         bench_lms();
     }
-#endif
+#endif /* if defined(WOLFSSL_HAVE_LMS) && !defined(WOLFSSL_LMS_VERIFY_ONLY) */
 
 #ifdef HAVE_ECC
     if (bench_all || (bench_asym_algs & BENCH_ECC_MAKEKEY) ||
@@ -3186,12 +3204,12 @@ static int benchmark_test_threaded(void* args)
     }
 
     for (i = 0; i < g_threadCount; i++) {
-        PTHREAD_CHECK_RET(pthread_create(&g_threadData[i].thread_id,
+        THREAD_CHECK_RET(pthread_create(&g_threadData[i].thread_id,
                                          NULL, run_bench, args));
     }
 
     for (i = 0; i < g_threadCount; i++) {
-        PTHREAD_CHECK_RET(pthread_join(g_threadData[i].thread_id, 0));
+        THREAD_CHECK_RET(pthread_join(g_threadData[i].thread_id, 0));
     }
 
     printf("\n");
@@ -3440,16 +3458,26 @@ exit:
 void bench_aescbc(int useDeviceID)
 {
 #ifdef WOLFSSL_AES_128
+#ifdef HAVE_RENESAS_SYNC
+    bench_aescbc_internal(useDeviceID, bench_key1, 16, bench_iv,
+                 "AES-128-CBC-enc", "AES-128-CBC-dec");
+#else
     bench_aescbc_internal(useDeviceID, bench_key, 16, bench_iv,
                  "AES-128-CBC-enc", "AES-128-CBC-dec");
+#endif
 #endif
 #ifdef WOLFSSL_AES_192
     bench_aescbc_internal(useDeviceID, bench_key, 24, bench_iv,
                  "AES-192-CBC-enc", "AES-192-CBC-dec");
 #endif
 #ifdef WOLFSSL_AES_256
+#ifdef HAVE_RENESAS_SYNC
+    bench_aescbc_internal(useDeviceID, bench_key2, 32, bench_iv,
+                 "AES-256-CBC-enc", "AES-256-CBC-dec");
+#else
     bench_aescbc_internal(useDeviceID, bench_key, 32, bench_iv,
                  "AES-256-CBC-enc", "AES-256-CBC-dec");
+#endif
 #endif
 }
 
@@ -3756,8 +3784,13 @@ void bench_aesgcm(int useDeviceID)
 #if defined(WOLFSSL_AES_128) && !defined(WOLFSSL_AFALG_XILINX_AES) \
         && !defined(WOLFSSL_XILINX_CRYPT)                          \
         ||  defined(WOLFSSL_XILINX_CRYPT_VERSAL)
+#ifdef HAVE_RENESAS_SYNC
+    bench_aesgcm_internal(useDeviceID, bench_key1, 16, bench_iv, 12,
+                          AES_GCM_STRING(128, enc), AES_GCM_STRING(128, dec));
+#else
     bench_aesgcm_internal(useDeviceID, bench_key, 16, bench_iv, 12,
                           AES_GCM_STRING(128, enc), AES_GCM_STRING(128, dec));
+#endif
 #endif
 #if defined(WOLFSSL_AES_192) && !defined(WOLFSSL_AFALG_XILINX_AES) \
         && !defined(WOLFSSL_XILINX_CRYPT)
@@ -3765,8 +3798,13 @@ void bench_aesgcm(int useDeviceID)
                           AES_GCM_STRING(192, enc), AES_GCM_STRING(192, dec));
 #endif
 #ifdef WOLFSSL_AES_256
+#ifdef HAVE_RENESAS_SYNC
+    bench_aesgcm_internal(useDeviceID, bench_key2, 32, bench_iv, 12,
+                          AES_GCM_STRING(256, enc), AES_GCM_STRING(256, dec));
+#else
     bench_aesgcm_internal(useDeviceID, bench_key, 32, bench_iv, 12,
                           AES_GCM_STRING(256, enc), AES_GCM_STRING(256, dec));
+#endif
 #endif
 #ifdef WOLFSSL_AESGCM_STREAM
 #undef AES_GCM_STRING
@@ -3791,7 +3829,7 @@ void bench_aesgcm(int useDeviceID)
 }
 
 /* GMAC */
-void bench_gmac(void)
+void bench_gmac(int useDeviceID)
 {
     int ret, count = 0;
     Gmac gmac;
@@ -3815,9 +3853,13 @@ void bench_gmac(void)
     XMEMSET(bench_plain, 0, bench_size);
     XMEMSET(tag, 0, sizeof(tag));
     XMEMSET(&gmac, 0, sizeof(Gmac)); /* clear context */
-    (void)wc_AesInit((Aes*)&gmac, HEAP_HINT, INVALID_DEVID);
+    (void)wc_AesInit((Aes*)&gmac, HEAP_HINT,
+                useDeviceID ? devId: INVALID_DEVID);
+#ifdef HAVE_RENESAS_SYNC
+    wc_GmacSetKey(&gmac, bench_key1, 16);
+#else
     wc_GmacSetKey(&gmac, bench_key, 16);
-
+#endif
     bench_stats_start(&count, &start);
     do {
         ret = wc_GmacUpdate(&gmac, bench_iv, 12, bench_plain, bench_size,
@@ -7664,7 +7706,7 @@ void bench_kyber(int type)
 }
 #endif
 
-#ifdef WOLFSSL_HAVE_LMS
+#if defined(WOLFSSL_HAVE_LMS) && !defined(WOLFSSL_LMS_VERIFY_ONLY)
 /* WC_LMS_PARM_L2_H10_W2
  * signature length: 9300 */
 static const byte lms_priv_L2_H10_W2[64] =
@@ -8031,7 +8073,7 @@ void bench_lms(void)
     return;
 }
 
-#endif /* ifdef WOLFSSL_HAVE_LMS */
+#endif /* if defined(WOLFSSL_HAVE_LMS) && !defined(WOLFSSL_LMS_VERIFY_ONLY) */
 
 #ifdef HAVE_ECC
 
@@ -8922,6 +8964,7 @@ exit:
 #ifdef HAVE_ED25519
 void bench_ed25519KeyGen(void)
 {
+#ifdef HAVE_ED25519_MAKE_KEY
     ed25519_key genKey;
     double start;
     int    i, count;
@@ -8938,12 +8981,15 @@ void bench_ed25519KeyGen(void)
         count += i;
     } while (bench_stats_check(start));
     bench_stats_asym_finish("ED", 25519, desc[2], 0, count, start, 0);
+#endif /* HAVE_ED25519_MAKE_KEY */
 }
 
 
 void bench_ed25519KeySign(void)
 {
+#ifdef HAVE_ED25519_MAKE_KEY
     int    ret;
+#endif
     ed25519_key genKey;
 #ifdef HAVE_ED25519_SIGN
     double start;
@@ -8956,11 +9002,13 @@ void bench_ed25519KeySign(void)
 
     wc_ed25519_init(&genKey);
 
+#ifdef HAVE_ED25519_MAKE_KEY
     ret = wc_ed25519_make_key(&gRng, ED25519_KEY_SIZE, &genKey);
     if (ret != 0) {
         printf("ed25519_make_key failed\n");
         return;
     }
+#endif
 
 #ifdef HAVE_ED25519_SIGN
     /* make dummy msg */
@@ -10297,6 +10345,7 @@ static void Usage(void)
 
     printf("benchmark\n");
     printf("%s", bench_Usage_msg1[lng_index][e++]);    /* option -? */
+    printf("%s", bench_Usage_msg1[lng_index][e++]);    /* English / Japanese */
     printf("%s", bench_Usage_msg1[lng_index][e++]);    /* option -csv */
     printf("%s", bench_Usage_msg1[lng_index][e++]);    /* option -base10 */
 #if defined(HAVE_AESGCM) || defined(HAVE_AESCCM)
@@ -10356,15 +10405,15 @@ static void Usage(void)
 #if defined(HAVE_PQC) && defined(HAVE_LIBOQS)
     for (i=0; bench_pq_asym_opt[i].str != NULL; i++)
         print_alg(bench_pq_asym_opt[i].str, &line);
-#if defined(HAVE_LIBOQS)
+#if defined(HAVE_LIBOQS) && defined(HAVE_SPHINCS)
     for (i=0; bench_pq_asym_opt2[i].str != NULL; i++)
         print_alg(bench_pq_asym_opt2[i].str, &line);
-#endif /* HAVE_LIBOQS */
+#endif /* HAVE_LIBOQS && HAVE_SPHINCS */
 #endif /* HAVE_PQC */
-#if defined(WOLFSSL_HAVE_LMS)
+#if defined(WOLFSSL_HAVE_LMS) && !defined(WOLFSSL_LMS_VERIFY_ONLY)
     for (i=0; bench_pq_hash_sig_opt[i].str != NULL; i++)
         print_alg(bench_pq_hash_sig_opt[i].str, &line);
-#endif /* if defined(WOLFSSL_HAVE_LMS) */
+#endif /* if defined(WOLFSSL_HAVE_LMS) && !defined(WOLFSSL_LMS_VERIFY_ONLY) */
     printf("\n");
 #endif /* !WOLFSSL_BENCHMARK_ALL */
     e++;
@@ -10600,6 +10649,7 @@ int wolfcrypt_benchmark_main(int argc, char** argv)
                     optMatched = 1;
                 }
             }
+        #ifdef HAVE_SPHINCS
             /* Both bench_pq_asym_opt and bench_pq_asym_opt2 are looking for
              * -pq, so we need to do a special case for -pq since optMatched
              * was set to 1 just above. */
@@ -10615,6 +10665,7 @@ int wolfcrypt_benchmark_main(int argc, char** argv)
                     optMatched = 1;
                 }
             }
+        #endif
         #endif /* HAVE_PQC */
             /* Other known cryptographic algorithms */
             for (i=0; !optMatched && bench_other_opt[i].str != NULL; i++) {
@@ -10625,7 +10676,7 @@ int wolfcrypt_benchmark_main(int argc, char** argv)
                 }
             }
 
-        #if defined(WOLFSSL_HAVE_LMS)
+        #if defined(WOLFSSL_HAVE_LMS) && !defined(WOLFSSL_LMS_VERIFY_ONLY)
             /* post-quantum stateful hash-based signatures */
             for (i=0; !optMatched && bench_pq_hash_sig_opt[i].str != NULL; i++) {
                 if (string_matches(argv[1], bench_pq_hash_sig_opt[i].str)) {
@@ -10634,7 +10685,7 @@ int wolfcrypt_benchmark_main(int argc, char** argv)
                     optMatched = 1;
                 }
             }
-        #endif /* if defined(WOLFSSL_HAVE_LMS) */
+        #endif
 #endif
             if (!optMatched) {
                 printf("Option not recognized: %s\n", argv[1]);

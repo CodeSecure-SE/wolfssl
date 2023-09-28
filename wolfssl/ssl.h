@@ -525,6 +525,9 @@ struct WOLFSSL_BIO_METHOD {
     wolfssl_BIO_meth_ctrl_info_cb ctrlInfoCb;
 };
 
+#define WOLFSSL_BIO_METHOD_INIT(bio_type) \
+    { bio_type, { 0 }, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL }
+
 /* wolfSSL BIO type */
 typedef long (*wolf_bio_info_cb)(WOLFSSL_BIO *bio, int event, const char *parg,
                                  int iarg, long larg, long return_value);
@@ -1061,8 +1064,10 @@ WOLFSSL_ABI WOLFSSL_API int wolfSSL_CTX_use_PrivateKey_file(
 #define WOLFSSL_LOAD_FLAG_IGNORE_ERR    0x00000001
 #define WOLFSSL_LOAD_FLAG_DATE_ERR_OKAY 0x00000002
 #define WOLFSSL_LOAD_FLAG_PEM_CA_ONLY   0x00000004
-#if defined(WOLFSSL_QT)
+#if defined(WOLFSSL_QT) || defined(WOLFSSL_IGNORE_BAD_CERT_PATH)
 #define WOLFSSL_LOAD_FLAG_IGNORE_BAD_PATH_ERR 0x00000008
+#endif
+#if defined(WOLFSSL_QT)
 #define WOLFSSL_LOAD_FLAG_IGNORE_ZEROFILE     0x00000010
 #endif
 
@@ -1181,18 +1186,20 @@ WOLFSSL_API int  wolfSSL_CTX_allow_post_handshake_auth(WOLFSSL_CTX* ctx);
 WOLFSSL_API int  wolfSSL_allow_post_handshake_auth(WOLFSSL* ssl);
 WOLFSSL_API int  wolfSSL_request_certificate(WOLFSSL* ssl);
 
-WOLFSSL_API int  wolfSSL_CTX_set1_groups_list(WOLFSSL_CTX *ctx, char *list);
-WOLFSSL_API int  wolfSSL_set1_groups_list(WOLFSSL *ssl, char *list);
-
 WOLFSSL_API int  wolfSSL_preferred_group(WOLFSSL* ssl);
 WOLFSSL_API int  wolfSSL_CTX_set_groups(WOLFSSL_CTX* ctx, int* groups,
                                         int count);
 WOLFSSL_API int  wolfSSL_set_groups(WOLFSSL* ssl, int* groups, int count);
 
-#ifdef OPENSSL_EXTRA
+#if defined(OPENSSL_EXTRA) && defined(HAVE_SUPPORTED_CURVES)
 WOLFSSL_API int  wolfSSL_CTX_set1_groups(WOLFSSL_CTX* ctx, int* groups,
                                         int count);
 WOLFSSL_API int  wolfSSL_set1_groups(WOLFSSL* ssl, int* groups, int count);
+
+#ifdef HAVE_ECC
+WOLFSSL_API int  wolfSSL_CTX_set1_groups_list(WOLFSSL_CTX *ctx, char *list);
+WOLFSSL_API int  wolfSSL_set1_groups_list(WOLFSSL *ssl, char *list);
+#endif
 #endif
 
 WOLFSSL_API int  wolfSSL_connect_TLSv13(WOLFSSL* ssl);
@@ -3984,8 +3991,10 @@ WOLFSSL_API int wolfSSL_NoKeyShares(WOLFSSL* ssl);
 
 WOLFSSL_API int wolfSSL_UseSecureRenegotiation(WOLFSSL* ssl);
 WOLFSSL_API int wolfSSL_CTX_UseSecureRenegotiation(WOLFSSL_CTX* ctx);
+#ifdef HAVE_SECURE_RENEGOTIATION
 WOLFSSL_API int wolfSSL_Rehandshake(WOLFSSL* ssl);
 WOLFSSL_API int wolfSSL_SecureResume(WOLFSSL* ssl);
+#endif
 WOLFSSL_API long wolfSSL_SSL_get_secure_renegotiation_support(WOLFSSL* ssl);
 
 #endif
@@ -5130,6 +5139,29 @@ WOLFSSL_API int wolfSSL_CTX_get_ephemeral_key(WOLFSSL_CTX* ctx, int keyAlgo,
 WOLFSSL_API int wolfSSL_get_ephemeral_key(WOLFSSL* ssl, int keyAlgo,
     const unsigned char** key, unsigned int* keySz);
 #endif
+
+#ifdef HAVE_RPK
+/* cert type for client_certificate_type/server_certificate_type extensions */
+enum {
+    WOLFSSL_CERT_TYPE_UNKNOWN = -1,
+    WOLFSSL_CERT_TYPE_X509 = 0,
+    WOLFSSL_CERT_TYPE_RPK  = 2,
+};
+#define MAX_CLIENT_CERT_TYPE_CNT 2
+#define MAX_SERVER_CERT_TYPE_CNT 2
+
+WOLFSSL_API int wolfSSL_CTX_set_client_cert_type(WOLFSSL_CTX* ctx,
+                                          const char* buf, int len);
+WOLFSSL_API int wolfSSL_CTX_set_server_cert_type(WOLFSSL_CTX* ctx,
+                                          const char* buf, int len);
+WOLFSSL_API int wolfSSL_set_client_cert_type(WOLFSSL* ssl,
+                                          const char* buf, int len);
+WOLFSSL_API int wolfSSL_set_server_cert_type(WOLFSSL* ssl,
+                                          const char* buf, int len);
+WOLFSSL_API int wolfSSL_get_negotiated_client_cert_type(WOLFSSL* ssl, int* tp);
+WOLFSSL_API int wolfSSL_get_negotiated_server_cert_type(WOLFSSL* ssl, int* tp);
+#endif /* HAVE_RPK */
+
 
 #if defined(OPENSSL_EXTRA)
 #ifndef WOLFCRYPT_ONLY
