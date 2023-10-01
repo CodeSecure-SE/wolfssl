@@ -1,6 +1,7 @@
 name: Daily Merge and CodeSonar run
 on:
-  push:
+  schedule:
+    - cron: '30 * * * *'
 
 
 
@@ -42,7 +43,8 @@ jobs:
       - name: Merge from upstream
         run: |
            git remote add upstream https://github.com/wolfssl/wolfssl.git
-           git pull -r upstream master
+           git fetch upstream
+           git merge upstream/nightly-snapshot
       - name: Safe directory
         run: git config --global --add safe.directory `pwd`
       - name : configure
