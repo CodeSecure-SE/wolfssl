@@ -1,0 +1,64 @@
+name: CodeSonar run
+on:
+
+  pull_request:
+    branches:
+      - 'release/**'
+  push:
+    branches:
+      - 'release/**'
+
+
+jobs:
+  CodeSonar_Analyze:
+    permissions: write-all
+    runs-on: self-hosted
+    container:
+      image: canuckmh/wolfssl-cso-builder:7.4p0
+      credentials:
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        password: ${{ secrets.DOCKERHUB_TOKEN }}
+    env:
+      CAFILE: ".github/github.cert.pem"
+      TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+      API_URL: https://api.github.com
+      REQUEST_NUMBER: ${{ github.event.pull_request.number }}
+      ROOT_TREE: "WolfSSL-Projects/WolfSSL-GitHub"
+      PROJECT_NAME: "wolfssl"
+      BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
+      COMMIT_HASH: $GITHUB_SHA
+      CSONAR_HUB_URL: "https://partnerdemo.codesonar.com"
+      CSONAR_HUB_USER: "${{ secrets.CSONAR_HUB_USER }}"
+      CSONAR_HUB_PASSWORD: "${{ secrets.CSONAR_HUB_PASS }}"
+      CSONAR_CSHOME: /opt/codesonar
+      CSO_GITHUB: /opt/codesonar-github
+      REPO_URL: "http://github.com/markhermeling/wolfssl"    # the github.repositoryUrl is not an http-link.
+      TARGET: ${{ github.base_ref }}
+      IS_PR: ${{ github.event_name }}
+    steps:
+      - name: Set parallelism and project name
+        run: |
+          echo "PARALLEL=`nproc`" >> $GITHUB_ENV
+      - name: Checkout
+        uses: actions/checkout@v3
+      - name: Fix ownership warning
+        run: git config --global --add safe.directory /__w/wolfssl/wolfssl
+      - name : configure
+        run: ./autogen.sh ; ./configure --enable-all
+      - name: Checkout CodeSonar CI-Script
+        uses: actions/checkout@v4
+        with:
+          repository: CodeSecure-SE/codesonar_ci
+          path: codesonar-scripts
+      - name: Build and Analyze
+        run: python3 codesonar-scripts/build_and_analyze.py codesonar.conf make -j $PARALLEL
+      - name: Download results
+        run: |
+          echo $CSONAR_HUB_PASSWORD > hubpwfile
+          $CSONAR_CSHOME/codesonar/bin/codesonar dump_warnings.py --project-file $PROJECT_NAME.prj -auth password -hubuser $CSONAR_HUB_USER -hubpwfile hubpwfile  --hub $CSONAR_HUB_URL --gained-since-previous-analysis --sarif --sarif-detail brief -o diff.sarif
+          rm hubpwfile
+      - name: Upload artefact
+        uses: actions/upload-artifact@v3
+        with:
+          name: SARIF results summary
+          path: diff.sarif
