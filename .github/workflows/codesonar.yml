@@ -1,9 +1,10 @@
-name: CodeSonar
+name: CodeSonar run
 on:
-  push:                  # Only run onces the Pull request is created
-    branches:
-      - 'release/VelvetShadow'               # Feature Branches
+
   pull_request:
+    branches:
+      - 'release/**'
+  push:
     branches:
       - 'release/**'
 
@@ -18,19 +19,20 @@ jobs:
         username: ${{ secrets.DOCKERHUB_USERNAME }}
         password: ${{ secrets.DOCKERHUB_TOKEN }}
     env:
-      GITHUB_CAFILE: ".github/github.cert.pem"
-      GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
-      GITHUB_API_URL: https://api.github.com
-      PULL_REQUEST_NUMBER: ${{ github.event.pull_request.number }}
-      ROOT_TREE: "OSS-Projects/WolfSSL-GitHub"
+      CAFILE: ".github/github.cert.pem"
+      TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+      API_URL: https://api.github.com
+      REQUEST_NUMBER: ${{ github.event.pull_request.number }}
+      ROOT_TREE: "WolfSSL-Projects/WolfSSL-GitHub"
       PROJECT_NAME: "wolfssl"
       BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
+      COMMIT_HASH: $GITHUB_SHA
       CSONAR_HUB_URL: "https://partnerdemo.codesonar.com"
       CSONAR_HUB_USER: "${{ secrets.CSONAR_HUB_USER }}"
       CSONAR_HUB_PASSWORD: "${{ secrets.CSONAR_HUB_PASS }}"
       CSONAR_CSHOME: /opt/codesonar
       CSO_GITHUB: /opt/codesonar-github
-      GITHUB_REPO_URL: "http://github.com/markhermeling/wolfssl"    # the github.repositoryUrl is not an http-link.
+      REPO_URL: "http://github.com/markhermeling/wolfssl"    # the github.repositoryUrl is not an http-link.
       TARGET: ${{ github.base_ref }}
       IS_PR: ${{ github.event_name }}
     steps:
@@ -39,28 +41,24 @@ jobs:
           echo "PARALLEL=`nproc`" >> $GITHUB_ENV
       - name: Checkout
         uses: actions/checkout@v3
-      - name: Safe directory
-        run: git config --global --add safe.directory `pwd`
+      - name: Fix ownership warning
+        run: git config --global --add safe.directory /__w/wolfssl/wolfssl
       - name : configure
         run: ./autogen.sh ; ./configure --enable-all
       - name: Checkout CodeSonar CI-Script
         uses: actions/checkout@v4
         with:
           repository: CodeSecure-SE/codesonar_ci
-          ref: main
           path: codesonar-scripts
       - name: Build and Analyze
         run: python3 codesonar-scripts/build_and_analyze.py codesonar.conf make -j $PARALLEL
-      - name: Upload SARIF to GitHub #Use this if you do not have GitHub Enterprise
-        if: ${{ github.event.pull_request }}
+      - name: Download results
+        run: |
+          echo $CSONAR_HUB_PASSWORD > hubpwfile
+          $CSONAR_CSHOME/codesonar/bin/codesonar dump_warnings.py --project-file $PROJECT_NAME.prj -auth password -hubuser $CSONAR_HUB_USER -hubpwfile hubpwfile  --hub $CSONAR_HUB_URL --gained-since-previous-analysis --sarif --sarif-detail brief -o diff.sarif
+          rm hubpwfile
+      - name: Upload artefact
         uses: actions/upload-artifact@v3
         with:
-          name: SARIF file
-          path: warnings.sarif
-      - name: Push Summary Report
-        if: ${{ github.event.pull_request }}
-        uses: thollander/actions-comment-pull-request@v2
-        with:
-          filePath: warnings.md
-
-
+          name: SARIF results summary
+          path: diff.sarif

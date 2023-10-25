@@ -2123,6 +2123,9 @@ extern void uITRON4_free(void *p) ;
     #ifdef WOLFSSL_SP_MATH
         /* for single precision math only make sure the enabled key sizes are
          * included in the ECC curve table */
+        #if defined(WOLFSSL_SP_NO_256) && !defined(NO_ECC256)
+            #define NO_ECC256
+        #endif
         #if defined(WOLFSSL_SP_384) && !defined(HAVE_ECC384)
             #define HAVE_ECC384
         #endif
@@ -3012,6 +3015,15 @@ extern void uITRON4_free(void *p) ;
 
 #if defined(HAVE_PQC) && defined(HAVE_LIBOQS) && defined(HAVE_PQM4)
 #error Please do not define both HAVE_LIBOQS and HAVE_PQM4.
+#endif
+
+#if defined(HAVE_PQC) && defined(WOLFSSL_DTLS13) && \
+    !defined(WOLFSSL_DTLS_CH_FRAG)
+#warning "Using DTLS 1.3 + pqc without WOLFSSL_DTLS_CH_FRAG will probably" \
+         "fail.Use --enable-dtls-frag-ch to enable it."
+#endif
+#if !defined(WOLFSSL_DTLS13) && defined(WOLFSSL_DTLS_CH_FRAG)
+#error "WOLFSSL_DTLS_CH_FRAG only works with DTLS 1.3"
 #endif
 
 /* SRTP requires DTLS */

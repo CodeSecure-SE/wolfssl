@@ -47,7 +47,7 @@ char* create_tmp_dir(char *tmpDir, int len)
 #ifdef _MSC_VER
     if (_mkdir(tmpDir) != 0)
         return NULL;
-#elif defined(__CYGWIN__) || defined(__MINGW32__)
+#elif defined(__MINGW32__)
     if (mkdir(tmpDir) != 0)
         return NULL;
 #else
@@ -170,6 +170,15 @@ static WC_INLINE int test_memio_write_cb(WOLFSSL *ssl, char *data, int sz,
     if ((unsigned)(*len + sz) > TEST_MEMIO_BUF_SZ)
         return WOLFSSL_CBIO_ERR_WANT_WRITE;
 
+#ifdef WOLFSSL_DUMP_MEMIO_STREAM
+    {
+        WOLFSSL_BIO *dump_file = wolfSSL_BIO_new_file("test_memio.dump", "a");
+        if (dump_file != NULL) {
+            (void)wolfSSL_BIO_write(dump_file, data, sz);
+            wolfSSL_BIO_free(dump_file);
+        }
+    }
+#endif
     XMEMCPY(buf + *len, data, sz);
     *len += sz;
 
