@@ -56,6 +56,7 @@ jobs:
         run: |
           echo $CSONAR_HUB_PASSWORD > hubpwfile
           $CSONAR_CSHOME/codesonar/bin/codesonar dump_warnings.py --project-file $PROJECT_NAME.prj -auth password -hubuser $CSONAR_HUB_USER -hubpwfile hubpwfile  --hub $CSONAR_HUB_URL --gained-since-previous-analysis --sarif --sarif-detail brief -o diff.sarif
+          $CSONAR_CSHOME/codesonar/bin/codesonar dump_warnings.py --project-file $PROJECT_NAME.prj -auth password -hubuser $CSONAR_HUB_USER -hubpwfile hubpwfile  --hub $CSONAR_HUB_URL --gained-since-previous-analysis --csv -o diff.csv
       - name: Upload artefact
         uses: actions/upload-artifact@v3
         with:
@@ -65,6 +66,8 @@ jobs:
         run: |
            $CSONAR_CSHOME/codesonar/bin/codesonar get -auth password -hubuser $CSONAR_HUB_USER -hubpwfile hubpwfile \
            $CSONAR_HUB_URL/report/aid-$(cat $PROJECT_NAME.prj_files/aid.txt)-3.html -o report.html
+           $CSONAR_CSHOME/codesonar/bin/codesonar get -auth password -hubuser $CSONAR_HUB_USER -hubpwfile hubpwfile \
+           $CSONAR_HUB_URL/report/aid-$(cat $PROJECT_NAME.prj_files/aid.txt)-3.pdf -o report.pdf
       - name: Email results
         uses: dawidd6/action-send-mail@v3
         with:
@@ -78,6 +81,6 @@ jobs:
             from: "CodeSonar Analyzer"
             to: "mark@hermeling.org"
             reply_to: "mark@hermeling.org"
-            attachments: diff.sarif
+            attachments: diff.sarif, diff.csv, report.html, report.pdf
       - name: cleanup
         run: rm hubpwfile
