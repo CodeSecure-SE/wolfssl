@@ -66,6 +66,7 @@ jobs:
         run: |
            $CSONAR_CSHOME/codesonar/bin/codesonar get -auth password -hubuser $CSONAR_HUB_USER -hubpwfile hubpwfile \
            $CSONAR_HUB_URL/report/aid-$(cat $PROJECT_NAME.prj_files/aid.txt)-3.html -o report.html
+           sed -i 's/Grid.clickRow(\'/Grid.clickRow(\'$CSONAR_HUB_URL/g' report.html
            $CSONAR_CSHOME/codesonar/bin/codesonar get -auth password -hubuser $CSONAR_HUB_USER -hubpwfile hubpwfile \
            $CSONAR_HUB_URL/report/aid-$(cat $PROJECT_NAME.prj_files/aid.txt)-3.pdf -o report.pdf
       - name: Email results
