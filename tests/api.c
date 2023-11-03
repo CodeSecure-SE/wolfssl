@@ -1859,7 +1859,9 @@ static int test_wolfSSL_CertManagerAPI(void)
 #if !defined(NO_FILESYSTEM)
     {
         const char* ca_cert = "./certs/ca-cert.pem";
+    #if !defined(NO_WOLFSSL_CLIENT) || !defined(WOLFSSL_NO_CLIENT_AUTH)
         const char* ca_cert_der = "./certs/ca-cert.der";
+    #endif
         const char* ca_path = "./certs";
 
     #if !defined(NO_WOLFSSL_CLIENT) || !defined(WOLFSSL_NO_CLIENT_AUTH)
@@ -4886,6 +4888,7 @@ static int test_wolfSSL_EVP_EncodeUpdate(void)
     const unsigned char plain1[] = {"This is a base64 encodeing test."};
     const unsigned char plain2[] = {"This is additional data."};
 
+    const unsigned char encBlock0[] = {"VGg="};
     const unsigned char enc0[]   = {"VGg=\n"};
     /* expected encoded result for the first output 64 chars plus trailing LF*/
     const unsigned char enc1[]   = {"VGhpcyBpcyBhIGJhc2U2NCBlbmNvZGVpbmcgdGVzdC5UaGlzIGlzIGFkZGl0aW9u\n"};
@@ -4987,12 +4990,8 @@ static int test_wolfSSL_EVP_EncodeUpdate(void)
 
     XMEMSET( encOutBuff,0, sizeof(encOutBuff));
     ExpectIntEQ(EVP_EncodeBlock(encOutBuff, plain0, sizeof(plain0)-1),
-                sizeof(enc0)-1);
-    ExpectIntEQ(
-        XSTRNCMP(
-            (const char*)encOutBuff,
-            (const char*)enc0,sizeof(enc0) ),
-    0);
+                sizeof(encBlock0)-1);
+    ExpectStrEQ(encOutBuff, encBlock0);
 
     /* pass small size( < 48bytes ) input, then make sure they are not
      * encoded  and just stored in ctx
@@ -16876,6 +16875,7 @@ static int test_wc_Chacha_SetKey(void)
     word32 keySz = (word32)(sizeof(key)/sizeof(byte));
     byte       cipher[128];
 
+    XMEMSET(cipher, 0, sizeof(cipher));
     ExpectIntEQ(wc_Chacha_SetKey(&ctx, key, keySz), 0);
     /* Test bad args. */
     ExpectIntEQ(wc_Chacha_SetKey(NULL, key, keySz), BAD_FUNC_ARG);
@@ -27645,6 +27645,7 @@ static int test_wc_PKCS7_EncodeDecodeEnvelopedData(void)
         tmpBytePtr = pkcs7->singleCert;
         pkcs7->singleCert = NULL;
     }
+  #ifndef NO_RSA
     #if defined(NO_PKCS7_STREAM)
     /* when none streaming mode is used and PKCS7 is in bad state buffer error
      * is returned from kari parse which gets set to bad func arg */
@@ -27656,6 +27657,7 @@ static int test_wc_PKCS7_EncodeDecodeEnvelopedData(void)
         (word32)sizeof(output), decoded, (word32)sizeof(decoded)),
         ASN_PARSE_E);
     #endif
+  #endif /* !NO_RSA */
     if (pkcs7 != NULL) {
         pkcs7->singleCert = tmpBytePtr;
     }
@@ -36008,7 +36010,8 @@ static int test_wolfSSL_CTX_add_client_CA(void)
 #endif /* OPENSSL_EXTRA  && !NO_RSA && !NO_CERTS && !NO_WOLFSSL_CLIENT */
     return EXPECT_RESULT();
 }
-#if defined(WOLFSSL_TLS13) && defined(HAVE_ECH)
+#if defined(WOLFSSL_TLS13) && defined(HAVE_ECH) && \
+    defined(HAVE_IO_TESTS_DEPENDENCIES)
 static THREAD_RETURN WOLFSSL_THREAD server_task_ech(void* args)
 {
     callback_functions* callbacks = ((func_args*)args)->callbacks;
@@ -41784,8 +41787,10 @@ static int test_wolfSSL_BIO_gets(void)
     ExpectNotNull(emp_bm = BUF_MEM_new());
     ExpectNotNull(msg_bm = BUF_MEM_new());
     ExpectIntEQ(BUF_MEM_grow(msg_bm, sizeof(msg)), sizeof(msg));
-    if (EXPECT_SUCCESS())
+    if (EXPECT_SUCCESS()) {
         XFREE(msg_bm->data, NULL, DYNAMIC_TYPE_OPENSSL);
+        msg_bm->data = NULL;
+    }
     /* emp size is 1 for terminator */
     ExpectIntEQ(BUF_MEM_grow(emp_bm, sizeof(emp)), sizeof(emp));
     if (EXPECT_SUCCESS()) {
@@ -43618,6 +43623,7 @@ static int test_wolfSSL_GENERAL_NAME_print(void)
     ExpectIntEQ(XSTRNCMP((const char*)outbuf, dnsStr, XSTRLEN(dnsStr)), 0);
 
     sk_GENERAL_NAME_pop_free(sk, GENERAL_NAME_free);
+    gn = NULL;
     sk = NULL;
     X509_free(x509);
     x509 = NULL;
@@ -53017,6 +53023,31 @@ static int test_wolfSSL_X509_load_crl_file(void)
     return EXPECT_RESULT();
 }
 
+static int test_wolfSSL_i2d_X509(void)
+{
+    EXPECT_DECLS;
+#if defined(OPENSSL_EXTRA) && defined(USE_CERT_BUFFERS_2048) && !defined(NO_RSA)
+    const unsigned char* cert_buf = server_cert_der_2048;
+    unsigned char* out = NULL;
+    unsigned char* tmp = NULL;
+    X509* cert = NULL;
+
+    ExpectNotNull(d2i_X509(&cert, &cert_buf, sizeof_server_cert_der_2048));
+    /* Pointer should be advanced */
+    ExpectPtrGT(cert_buf, server_cert_der_2048);
+    ExpectIntGT(i2d_X509(cert, &out), 0);
+    ExpectNotNull(out);
+    tmp = out;
+    ExpectIntGT(i2d_X509(cert, &tmp), 0);
+    ExpectPtrGT(tmp, out);
+
+    if (out != NULL)
+        XFREE(out, NULL, DYNAMIC_TYPE_OPENSSL);
+    X509_free(cert);
+#endif
+    return EXPECT_RESULT();
+}
+
 static int test_wolfSSL_d2i_X509_REQ(void)
 {
     EXPECT_DECLS;
@@ -54043,6 +54074,8 @@ static int test_wolfssl_EVP_chacha20(void)
     EVP_CIPHER_CTX* ctx = NULL;
     int outSz;
 
+    XMEMSET(key, 0, sizeof(key));
+    XMEMSET(iv, 0, sizeof(iv));
     /* Encrypt. */
     ExpectNotNull((ctx = EVP_CIPHER_CTX_new()));
     ExpectIntEQ(EVP_EncryptInit_ex(ctx, EVP_chacha20(), NULL, NULL,
@@ -59052,12 +59085,12 @@ static int test_openssl_generate_key_and_cert(void)
 {
     EXPECT_DECLS;
 #if defined(OPENSSL_EXTRA)
+    int expectedDerSz;
     EVP_PKEY* pkey = NULL;
 #ifdef HAVE_ECC
     EC_KEY* ec_key = NULL;
 #endif
 #if !defined(NO_RSA)
-    int expectedDerSz;
     int key_length = 2048;
     BIGNUM* exponent = NULL;
     RSA* rsa = NULL;
@@ -59102,7 +59135,6 @@ static int test_openssl_generate_key_and_cert(void)
     #endif
     }
 
-    (void)expectedDerSz;
     EVP_PKEY_free(pkey);
     pkey = NULL;
     BN_free(exponent);
@@ -59132,6 +59164,7 @@ static int test_openssl_generate_key_and_cert(void)
     EVP_PKEY_free(pkey);
 #endif /* HAVE_ECC */
     (void)pkey;
+    (void)expectedDerSz;
 #endif /* OPENSSL_EXTRA */
 
     return EXPECT_RESULT();
@@ -59265,10 +59298,10 @@ static int test_wolfSSL_CTX_LoadCRL(void)
     #define SUCC_T(x, y, z, p, d) ExpectIntEQ((int) x(y, z, p, d), \
                                                 WOLFSSL_SUCCESS)
 #ifndef NO_WOLFSSL_CLIENT
-    #define NEW_CTX(ctx) AssertNotNull( \
+    #define NEW_CTX(ctx) ExpectNotNull( \
             (ctx) = wolfSSL_CTX_new(wolfSSLv23_client_method()))
 #elif !defined(NO_WOLFSSL_SERVER)
-    #define NEW_CTX(ctx) AssertNotNull( \
+    #define NEW_CTX(ctx) ExpectNotNull( \
             (ctx) = wolfSSL_CTX_new(wolfSSLv23_server_method()))
 #else
     #define NEW_CTX(ctx) return
@@ -67716,6 +67749,7 @@ TEST_CASE testCases[] = {
     TEST_DECL(test_wolfSSL_X509_set_version),
     TEST_DECL(test_wolfSSL_X509_get_serialNumber),
     TEST_DECL(test_wolfSSL_X509_CRL),
+    TEST_DECL(test_wolfSSL_i2d_X509),
     TEST_DECL(test_wolfSSL_d2i_X509_REQ),
     TEST_DECL(test_wolfSSL_PEM_read_X509),
     TEST_DECL(test_wolfSSL_X509_check_ca),
@@ -68190,7 +68224,8 @@ TEST_CASE testCases[] = {
     TEST_DECL(test_wolfSSL_wolfSSL_UseSecureRenegotiation),
     TEST_DECL(test_wolfSSL_SCR_Reconnect),
     TEST_DECL(test_tls_ext_duplicate),
-#if defined(WOLFSSL_TLS13) && defined(HAVE_ECH)
+#if defined(WOLFSSL_TLS13) && defined(HAVE_ECH) && \
+    defined(HAVE_IO_TESTS_DEPENDENCIES)
     TEST_DECL(test_wolfSSL_Tls13_ECH_params),
     /* Uses Assert in handshake callback. */
     TEST_DECL(test_wolfSSL_Tls13_ECH),

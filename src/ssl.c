@@ -8572,10 +8572,7 @@ int wolfSSL_CTX_load_system_CA_certs(WOLFSSL_CTX* ctx)
      * load them manually into wolfSSL "the old way". Accessiblity of this API
      * is indicated by the presence of the Security/SecTrustSettings.h header */
     ret = LoadSystemCaCertsMac(ctx, &loaded);
-#elif defined(WOLFSSL_APPLE_NATIVE_CERT_VALIDATION) \
-   || (defined(HAVE_SECURITY_SECCERTIFICATE_H) \
-       && defined(HAVE_SECURITY_SECTRUST_H)    \
-       && defined(HAVE_SECURITY_SECPOLICY_H))
+#elif defined(WOLFSSL_APPLE_NATIVE_CERT_VALIDATION)
     /* For other Apple devices, Apple has removed the ability to obtain
      * certificates from the trust store, so we can't use wolfSSL's built-in
      * certificate validation mechanisms anymore. We instead must call into the
@@ -35991,6 +35988,9 @@ PKCS7* wolfSSL_d2i_PKCS7_ex(PKCS7** p7, const unsigned char** in, int len,
                                                                          != 0) {
             WOLFSSL_MSG("wc_PKCS7_VerifySignedData failed");
             wolfSSL_PKCS7_free((PKCS7*)pkcs7);
+            if (p7 != NULL) {
+                *p7 = NULL;
+            }
             return NULL;
         }
     }
