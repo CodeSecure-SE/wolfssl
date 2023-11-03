@@ -32,7 +32,7 @@ jobs:
       CSONAR_HUB_PASSWORD: "${{ secrets.CSONAR_HUB_PASS }}"
       CSONAR_CSHOME: /opt/codesonar
       CSO_GITHUB: /opt/codesonar-github
-      REPO_URL: "http://github.com/markhermeling/wolfssl"    # the github.repositoryUrl is not an http-link.
+      REPO_URL: "http://github.com/markhermeling/wolfssl"
       TARGET: ${{ github.base_ref }}
       IS_PR: ${{ github.event_name }}
     steps:
@@ -43,7 +43,7 @@ jobs:
         uses: actions/checkout@v3
       - name: Fix ownership warning
         run: git config --global --add safe.directory /__w/wolfssl/wolfssl
-      - name : configure
+      - name: configure
         run: ./autogen.sh ; ./configure --enable-all
       - name: Checkout CodeSonar CI-Script
         uses: actions/checkout@v4
@@ -55,8 +55,10 @@ jobs:
       - name: Download results
         run: |
           echo $CSONAR_HUB_PASSWORD > hubpwfile
-          $CSONAR_CSHOME/codesonar/bin/codesonar dump_warnings.py --project-file $PROJECT_NAME.prj -auth password -hubuser $CSONAR_HUB_USER -hubpwfile hubpwfile  --hub $CSONAR_HUB_URL --gained-since-previous-analysis --sarif --sarif-detail brief -o diff.sarif
-          $CSONAR_CSHOME/codesonar/bin/codesonar dump_warnings.py --project-file $PROJECT_NAME.prj -auth password -hubuser $CSONAR_HUB_USER -hubpwfile hubpwfile  --hub $CSONAR_HUB_URL --gained-since-previous-analysis --csv -o diff.csv
+          $CSONAR_CSHOME/codesonar/bin/codesonar dump_warnings.py --project-file $PROJECT_NAME.prj \
+          -auth password -hubuser $CSONAR_HUB_USER -hubpwfile hubpwfile  --hub $CSONAR_HUB_URL --gained-since-previous-analysis --sarif --sarif-detail brief -o diff.sarif
+          $CSONAR_CSHOME/codesonar/bin/codesonar dump_warnings.py --project-file $PROJECT_NAME.prj \
+          -auth password -hubuser $CSONAR_HUB_USER -hubpwfile hubpwfile  --hub $CSONAR_HUB_URL --gained-since-previous-analysis --csv -o diff.csv
           sed -i 's#/warninginstance#https://partnerdemo.codesonar.com/warninginstance#' diff.csv
           sed -i 's#.txt$#.html#' diff.csv
       - name: Upload artefact
@@ -65,22 +67,23 @@ jobs:
           name: SARIF results summary
           path: diff.sarif
       - name: Get report
-        run: $CSONAR_CSHOME/codesonar/bin/codesonar get -auth password -hubuser $CSONAR_HUB_USER -hubpwfile hubpwfile $CSONAR_HUB_URL/report/aid-$(cat $PROJECT_NAME.prj_files/aid.txt)-3.html -o report.html
+        run: |
+           $CSONAR_CSHOME/codesonar/bin/codesonar get -auth password -hubuser $CSONAR_HUB_USER \
+           -hubpwfile hubpwfile $CSONAR_HUB_URL/report/aid-$(cat $PROJECT_NAME.prj_files/aid.txt)-3.html -o report.html
       - name: Email results
         uses: dawidd6/action-send-mail@v3
         with:
-            server_address: smtp.gmail.com
-            server_port: 465
-            username: ${{ secrets.GMAIL_USERNAME }}
-            password: ${{ secrets.GMAIL_PASSWORD }}
-            subject: CodeSonar results for ${{ github.repository }}
-            body_html: file://report.html
-            body: file://diff.csv
+          server_address: smtp.gmail.com
+          server_port: 465
+          username: ${{ secrets.GMAIL_USERNAME }}
+          password: ${{ secrets.GMAIL_PASSWORD }}
+          subject: CodeSonar results for ${{ github.repository }}
+          body_html: file://report.html
+          body: file://diff.csv
 
-            from: "CodeSonar Analyzer"
-           to: "mark@hermeling.org"
- #           to: "mark@hermeling.org, andras@wolfssl.com, douzzer@wolfssl.com"
-            reply_to: "mark@hermeling.org"
-            attachments: diff.sarif, diff.csv, report.html
+          from: "CodeSonar Analyzer"
+          to: "mark@hermeling.org"
+          reply_to: "mark@hermeling.org"
+          attachments: diff.sarif, diff.csv, report.html
       - name: cleanup
         run: rm hubpwfile
