@@ -61,7 +61,7 @@ jobs:
           -auth password -hubuser $CSONAR_HUB_USER -hubpwfile hubpwfile  --hub $CSONAR_HUB_URL --gained-since-previous-analysis --csv -o diff.csv
           sed -i 's#/warninginstance#https://partnerdemo.codesonar.com/warninginstance#' diff.csv
           sed -i 's#.txt$#.html#' diff.csv
-          cvs2md diff.csv diff.md
+          csv2md diff.csv diff.md
       - name: Upload artefact
         uses: actions/upload-artifact@v3
         with:
