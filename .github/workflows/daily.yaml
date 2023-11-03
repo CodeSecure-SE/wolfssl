@@ -57,6 +57,8 @@ jobs:
           echo $CSONAR_HUB_PASSWORD > hubpwfile
           $CSONAR_CSHOME/codesonar/bin/codesonar dump_warnings.py --project-file $PROJECT_NAME.prj -auth password -hubuser $CSONAR_HUB_USER -hubpwfile hubpwfile  --hub $CSONAR_HUB_URL --gained-since-previous-analysis --sarif --sarif-detail brief -o diff.sarif
           $CSONAR_CSHOME/codesonar/bin/codesonar dump_warnings.py --project-file $PROJECT_NAME.prj -auth password -hubuser $CSONAR_HUB_USER -hubpwfile hubpwfile  --hub $CSONAR_HUB_URL --gained-since-previous-analysis --csv -o diff.csv
+          sed -i 's#/warninginstance#https://partnerdemo.codesonar.com/warninginstance#' diff.csv
+          sed -i 's#.txt$#.html#' diff.csv
       - name: Upload artefact
         uses: actions/upload-artifact@v3
         with:
@@ -66,9 +68,6 @@ jobs:
         run: |
            $CSONAR_CSHOME/codesonar/bin/codesonar get -auth password -hubuser $CSONAR_HUB_USER -hubpwfile hubpwfile \
            $CSONAR_HUB_URL/report/aid-$(cat $PROJECT_NAME.prj_files/aid.txt)-3.html -o report.html
-           sed -i 's#Grid.clickRow(\x27#Grid.clickRow(\x27https://partnerdemo.codesonar.com#g' report.html
-           $CSONAR_CSHOME/codesonar/bin/codesonar get -auth password -hubuser $CSONAR_HUB_USER -hubpwfile hubpwfile \
-           $CSONAR_HUB_URL/report/aid-$(cat $PROJECT_NAME.prj_files/aid.txt)-3.pdf -o report.pdf
       - name: Email results
         uses: dawidd6/action-send-mail@v3
         with:
@@ -77,11 +76,12 @@ jobs:
             username: ${{ secrets.GMAIL_USERNAME }}
             password: ${{ secrets.GMAIL_PASSWORD }}
             subject: CodeSonar results for ${{ github.repository }}
-            body: CodeSonar-results
-            html_body: file://report.html
+            body_html: file://report.html
+            body: file://diff.csv
             from: "CodeSonar Analyzer"
-            to: "mark@hermeling.org, andras@wolfssl.com, douzzer@wolfssl.com"
+           to: "mark@hermeling.org"
+ #           to: "mark@hermeling.org, andras@wolfssl.com, douzzer@wolfssl.com"
             reply_to: "mark@hermeling.org"
-            attachments: diff.sarif, diff.csv, report.html, report.pdf
+            attachments: diff.sarif, diff.csv, report.html
       - name: cleanup
         run: rm hubpwfile
