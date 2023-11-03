@@ -61,6 +61,7 @@ jobs:
           -auth password -hubuser $CSONAR_HUB_USER -hubpwfile hubpwfile  --hub $CSONAR_HUB_URL --gained-since-previous-analysis --csv -o diff.csv
           sed -i 's#/warninginstance#https://partnerdemo.codesonar.com/warninginstance#' diff.csv
           sed -i 's#.txt$#.html#' diff.csv
+          cvs2md diff.csv diff.md
       - name: Upload artefact
         uses: actions/upload-artifact@v3
         with:
@@ -78,9 +79,8 @@ jobs:
           username: ${{ secrets.GMAIL_USERNAME }}
           password: ${{ secrets.GMAIL_PASSWORD }}
           subject: CodeSonar results for ${{ github.repository }}
-          body_html: file://report.html
-          body: file://diff.csv
-
+          body: file://diff.md
+          convert_markdown: true
           from: "CodeSonar Analyzer"
           to: "mark@hermeling.org"
           reply_to: "mark@hermeling.org"
