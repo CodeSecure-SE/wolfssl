@@ -28,7 +28,7 @@ if("${CMAKE_SOURCE_DIR}" STREQUAL "${CMAKE_BINARY_DIR}")
      You must delete them, or cmake will refuse to work.")
 endif()
 
-project(wolfssl VERSION 5.6.3 LANGUAGES C ASM)
+project(wolfssl VERSION 5.6.4 LANGUAGES C ASM)
 
 # Set WOLFSSL_ROOT if not already defined
 if ("${WOLFSSL_ROOT}" STREQUAL "")
@@ -43,12 +43,12 @@ endif()
 
 # shared library versioning
 # increment if interfaces have been added, removed or changed
-set(LIBTOOL_CURRENT 40)
+set(LIBTOOL_CURRENT 41)
 # increment if source code has changed  set to zero if current is incremented
-set(LIBTOOL_REVISION 1)
+set(LIBTOOL_REVISION 0)
 # increment if interfaces have been added set to zero if interfaces have been
 # removed or changed
-set(LIBTOOL_AGE 5)
+set(LIBTOOL_AGE 0)
 
 math(EXPR LIBTOOL_SO_VERSION "${LIBTOOL_CURRENT} - ${LIBTOOL_AGE}")
 set(LIBTOOL_FULL_VERSION ${LIBTOOL_SO_VERSION}.${LIBTOOL_AGE}.${LIBTOOL_REVISION})
@@ -1577,8 +1577,11 @@ endif()
 
 # TODO: - Fast huge math
 
+# Set processor-specific build macros
 if("${CMAKE_SYSTEM_PROCESSOR}" MATCHES "x86_64|AMD64")
     list(APPEND WOLFSSL_DEFINITIONS "-DWOLFSSL_X86_64_BUILD")
+elseif("${CMAKE_SYSTEM_PROCESSOR}" MATCHES "aarch64|arm64")
+    list(APPEND WOLFSSL_DEFINITIONS "-DWOLFSSL_AARCH64_BUILD")
 endif()
 
 # SP math all
@@ -1720,22 +1723,38 @@ if(WOLFSSL_SYS_CA_CERTS)
         message("Can't enable system CA certs without a filesystem.")
         override_cache(WOLFSSL_SYS_CA_CERTS "no")
     elseif(APPLE)
+        # Headers used for MacOS default system CA certs behavior. Only MacOS SDK will have this header
         check_include_file("Security/SecTrustSettings.h" HAVE_SECURITY_SECTRUSTSETTINGS_H)
-        if(NOT HAVE_SECURITY_SECTRUSTSETTINGS_H)
-            message("Can't enable system CA certs without Security/SecTrustSettings.h.")
-            override_cache(WOLFSSL_SYS_CA_CERTS "no")
-        else()
+        # Headers used for Apple native cert validation. All device SDKs should have these headers
+        check_include_file("Security/SecCertificate.h" HAVE_SECURITY_SECCERTIFICATE_H)
+        check_include_file("Security/SecTrust.h" HAVE_SECURITY_SECTRUST_H)
+        check_include_file("Security/SecPolicy.h" HAVE_SECURITY_SECPOLICY_H)
+        # Either Security/SecTrustSettings (for MacOS cert loading), or the
+        # trio of Security/SecCertificate.h, Security/SecTrust.h, and
+        # Security/SecPolicy.h (for native trust APIs on other apple devices)
+        # must be present. Default to SecTrustSettings method on MacOS.
+        if(HAVE_SECURITY_SECTRUSTSETTINGS_H OR (HAVE_SECURITY_SECCERTIFICATE_H
+                                                AND HAVE_SECURITY_SECTRUST_H
+                                                AND HAVE_SECURITY_SECPOLICY_H))
             find_library(CORE_FOUNDATION_FRAMEWORK CoreFoundation)
             if(NOT CORE_FOUNDATION_FRAMEWORK)
-                message("Can't enable system CA certs without CoreFoundation framework.")
-                override_cache(WOLFSSL_SYS_CA_CERTS "no")
+                message(FATAL_ERROR "Can't enable system CA certs without CoreFoundation framework.")
             else()
                 find_library(SECURITY_FRAMEWORK Security)
                 if(NOT SECURITY_FRAMEWORK)
-                    message("Can't enable system CA certs without Security framework.")
-                    override_cache(WOLFSSL_SYS_CA_CERTS "no")
+                    message(FATAL_ERROR "Can't enable system CA certs without Security framework.")
                 endif()
             endif()
+
+            # MacOS should not use native cert validation by default, but other apple devices should.
+            if(NOT HAVE_SECURITY_SECTRUSTSETTINGS_H AND HAVE_SECURITY_SECCERTIFICATE_H
+                                                    AND HAVE_SECURITY_SECTRUST_H
+                                                    AND HAVE_SECURITY_SECPOLICY_H)
+                list(APPEND WOLFSSL_DEFINITIONS "-DWOLFSSL_APPLE_NATIVE_CERT_VALIDATION")
+            endif()
+
+        else()
+            message(FATAL_ERROR "Can't enable system CA certs without Apple Security.framework headers.")
         endif()
     endif()
 

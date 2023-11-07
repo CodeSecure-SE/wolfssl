@@ -76,9 +76,9 @@ block cipher mechanism that uses n-bit binary string parameter key with 128-bits
     #include <wolfssl/wolfcrypt/port/nxp/se050_port.h>
 #endif
 
-#if defined(WOLFSSL_AES_SIV) || defined(WOLFSSL_AES_EAX)
+#if defined(WOLFSSL_AES_SIV)
     #include <wolfssl/wolfcrypt/cmac.h>
-#endif /* WOLFSSL_AES_SIV || WOLFSSL_AES_EAX */
+#endif /* WOLFSSL_AES_SIV */
 
 #if defined(WOLFSSL_HAVE_PSA) && !defined(WOLFSSL_PSA_NO_AES)
     #include <wolfssl/wolfcrypt/port/psa/psa.h>
@@ -3073,7 +3073,7 @@ static WARN_UNUSED_RESULT int wc_AesDecrypt(
         #ifdef DEBUG_WOLFSSL
             ESP_LOGW(TAG, "wc_AesSetKeyLocal ByteReverseWords");
         #endif
-            /* When not ESP32 HW, we need to reverse endianess */
+            /* When not ESP32 HW, we need to reverse endianness */
             ByteReverseWords(rk, rk, keylen);
         }
     #endif
@@ -11789,17 +11789,6 @@ int wc_AesSivDecrypt(const byte* key, word32 keySz, const byte* assoc,
 
 #if defined(WOLFSSL_AES_EAX)
 
-struct AesEax {
-    Aes  aes;
-    Cmac nonceCmac;
-    Cmac aadCmac;
-    Cmac ciphertextCmac;
-    byte nonceCmacFinal[AES_BLOCK_SIZE];
-    byte aadCmacFinal[AES_BLOCK_SIZE];
-    byte ciphertextCmacFinal[AES_BLOCK_SIZE];
-    byte prefixBuf[AES_BLOCK_SIZE];
-};
-
 /*
  * AES EAX one-shot API
  * Encrypts input data and computes an auth tag over the input
@@ -12089,7 +12078,7 @@ int  wc_AesEaxEncryptUpdate(AesEax* eax, byte* out,
  * Decrypts input ciphertext using AES EAX mode, adding optional auth data to
  * the authentication stream
  *
- * Returns 0 on sucess
+ * Returns 0 on success
  * Returns error code on failure
  */
 int  wc_AesEaxDecryptUpdate(AesEax* eax, byte* out,
