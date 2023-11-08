@@ -218,7 +218,7 @@ ECC Curve Sizes:
 #if !defined(WOLFSSL_ATECC508A) && !defined(WOLFSSL_ATECC608A) && \
     !defined(WOLFSSL_CRYPTOCELL) && !defined(WOLFSSL_SILABS_SE_ACCEL) && \
     !defined(WOLFSSL_KCAPI_ECC) && !defined(WOLFSSL_SE050) && \
-    !defined(WOLFSSL_XILINX_CRYPT_VERSAL)
+    !defined(WOLFSSL_XILINX_CRYPT_VERSAL) && !defined(WOLFSSL_STM32_PKA)
     #undef  HAVE_ECC_VERIFY_HELPER
     #define HAVE_ECC_VERIFY_HELPER
 #endif
@@ -10883,6 +10883,13 @@ int wc_ecc_import_private_key_ex(const byte* priv, word32 privSz,
         if (ret == 0) {
             ret = mp_read_radix(order, key->dp->order, MP_RADIX_HEX);
         }
+    #ifdef WOLFSSL_SM2
+        /* SM2 curve: private key must be less than order-1. */
+        if ((ret == 0) && (key->idx != ECC_CUSTOM_IDX) &&
+                (ecc_sets[key->idx].id == ECC_SM2P256V1)) {
+            ret = mp_sub_d(order, 1, order);
+        }
+    #endif
         if ((ret == 0) && (mp_cmp(key->k, order) != MP_LT)) {
             ret = ECC_PRIV_KEY_E;
         }

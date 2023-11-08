@@ -5128,10 +5128,10 @@ static void _sp_copy_2_ct(const sp_int* a1, const sp_int* a2, sp_int* r1,
 
     /* Copy data - constant time. */
     for (i = 0; i < used; i++) {
-        r1->dp[i] = (a1->dp[i] & ((sp_digit)wc_off_on_addr[y  ])) +
-                    (a2->dp[i] & ((sp_digit)wc_off_on_addr[y^1]));
-        r2->dp[i] = (a1->dp[i] & ((sp_digit)wc_off_on_addr[y^1])) +
-                    (a2->dp[i] & ((sp_digit)wc_off_on_addr[y  ]));
+        r1->dp[i] = (a1->dp[i] & ((sp_int_digit)wc_off_on_addr[y  ])) +
+                    (a2->dp[i] & ((sp_int_digit)wc_off_on_addr[y^1]));
+        r2->dp[i] = (a1->dp[i] & ((sp_int_digit)wc_off_on_addr[y^1])) +
+                    (a2->dp[i] & ((sp_int_digit)wc_off_on_addr[y  ]));
     }
     /* Copy used. */
     r1->used = (a1->used & ((int)wc_off_on_addr[y  ])) +
@@ -14594,9 +14594,15 @@ static int _sp_sqr(const sp_int* a, sp_int* r)
     }
 #endif
     if (err == MP_OKAY) {
+    #ifndef WOLFSSL_SP_INT_SQR_VOLATILE
         sp_int_word w;
         sp_int_word l;
         sp_int_word h;
+    #else
+        volatile sp_int_word w;
+        volatile sp_int_word l;
+        volatile sp_int_word h;
+    #endif
     #ifdef SP_WORD_OVERFLOW
         sp_int_word o;
     #endif
@@ -17774,6 +17780,73 @@ int sp_to_unsigned_bin_len(const sp_int* a, byte* out, int outSz)
     return err;
 }
 
+/* Convert the multi-precision number to an array of bytes in big-endian format.
+ *
+ * Constant-time implementation.
+ *
+ * The array must be large enough for encoded number - use mp_unsigned_bin_size
+ * to calculate the number of bytes required.
+ * Front-pads the output array with zeros to make number the size of the array.
+ *
+ * @param  [in]   a      SP integer.
+ * @param  [out]  out    Array to put encoding into.
+ * @param  [in]   outSz  Size of the array in bytes.
+ *
+ * @return  MP_OKAY on success.
+ * @return  MP_VAL when a or out is NULL.
+ */
+int sp_to_unsigned_bin_len_ct(const sp_int* a, byte* out, int outSz)
+{
+    int err = MP_OKAY;
+
+    /* Validate parameters. */
+    if ((a == NULL) || (out == NULL) || (outSz < 0)) {
+        err = MP_VAL;
+    }
+
+#if SP_WORD_SIZE > 8
+    if (err == MP_OKAY) {
+        /* Start at the end of the buffer - least significant byte. */
+        int j;
+        unsigned int i;
+        sp_int_digit mask = (sp_int_digit)-1;
+        sp_int_digit d;
+
+        /* Put each digit in. */
+        i = 0;
+        for (j = outSz - 1; j >= 0; ) {
+            int b;
+            d = a->dp[i];
+            /* Place each byte of a digit into the buffer. */
+            for (b = 0; (j >= 0) && (b < SP_WORD_SIZEOF); b++) {
+                out[j--] = (byte)(d & mask);
+                d >>= 8;
+            }
+            mask &= (sp_int_digit)0 - (i < a->used - 1);
+            i += (unsigned int)(1 & mask);
+        }
+    }
+#else
+    if ((err == MP_OKAY) && ((unsigned int)outSz < a->used)) {
+        err = MP_VAL;
+    }
+    if (err == MP_OKAY) {
+        unsigned int i;
+        int j;
+        sp_int_digit mask = (sp_int_digit)-1;
+
+        i = 0;
+        for (j = outSz - 1; j >= 0; j--) {
+            out[j] = a->dp[i] & mask;
+            mask &= (sp_int_digit)0 - (i < a->used - 1);
+            i += (unsigned int)(1 & mask);
+        }
+    }
+#endif
+
+    return err;
+}
+
 #if defined(WOLFSSL_SP_MATH_ALL) && !defined(NO_RSA) && \
     !defined(WOLFSSL_RSA_VERIFY_ONLY)
 /* Store the number in big-endian format in array at an offset.
@@ -19025,7 +19098,7 @@ int sp_prime_is_prime_ex(const sp_int* a, int trials, int* result, WC_RNG* rng)
  *
  * a and b are positive integers.
  *
- * Euclidian Algorithm:
+ * Euclidean Algorithm:
  *  1. If a > b then a = b, b = a
  *  2. u = a
  *  3. v = b % a
@@ -19338,7 +19411,7 @@ word32 CheckRunTimeFastMath(void)
  */
 void sp_memzero_add(const char* name, sp_int* sp)
 {
-    wc_MemZero_Add(name, sp->dp, sp->size * sizeof(sp_digit));
+    wc_MemZero_Add(name, sp->dp, sp->size * sizeof(sp_int_digit));
 }
 
 /* Check the memory in the data pointer for memory that must be zero.
@@ -19347,7 +19420,7 @@ void sp_memzero_add(const char* name, sp_int* sp)
  */
 void sp_memzero_check(sp_int* sp)
 {
-    wc_MemZero_Check(sp->dp, sp->size * sizeof(sp_digit));
+    wc_MemZero_Check(sp->dp, sp->size * sizeof(sp_int_digit));
 }
 #endif /* WOLFSSL_CHECK_MEM_ZERO */
 

@@ -1,13 +1,13 @@
 # configure.ac
 #
-# Copyright (C) 2006-2021 wolfSSL Inc.
+# Copyright (C) 2006-2023 wolfSSL Inc.
 #
 # This file is part of wolfSSL. (formerly known as CyaSSL)
 #
 #
-AC_COPYRIGHT([Copyright (C) 2006-2020 wolfSSL Inc.])
+AC_COPYRIGHT([Copyright (C) 2006-2023 wolfSSL Inc.])
 AC_PREREQ([2.69])
-AC_INIT([wolfssl],[5.6.3],[https://github.com/wolfssl/wolfssl/issues],[wolfssl],[https://www.wolfssl.com])
+AC_INIT([wolfssl],[5.6.4],[https://github.com/wolfssl/wolfssl/issues],[wolfssl],[https://www.wolfssl.com])
 AC_CONFIG_AUX_DIR([build-aux])
 
 # The following sets CFLAGS to empty if unset on command line.  We do not
@@ -46,10 +46,10 @@ AC_SUBST([WOLFSSL_CONFIG_ARGS])
 # shared library versioning
 # The three numbers in the libwolfssl.so.*.*.* file name. Unfortunately
 # these numbers don't always line up nicely with the library version.
-WOLFSSL_LIBRARY_VERSION_FIRST=40
+WOLFSSL_LIBRARY_VERSION_FIRST=41
 WOLFSSL_LIBRARY_VERSION_SECOND=0
 WOLFSSL_LIBRARY_VERSION_THIRD=0
-WOLFSSL_LIBRARY_VERSION=40:0:0
+WOLFSSL_LIBRARY_VERSION=41:0:0
 #                        | | |
 #                 +------+ | +---+
 #                 |        |     |
@@ -3546,6 +3546,22 @@ if test "$ENABLED_X963KDF" = "yes" || test "$ENABLED_WOLFENGINE" = "yes"
 then
   AM_CFLAGS="$AM_CFLAGS -DHAVE_X963_KDF"
 fi
+
+# SRTP-KDF
+AC_ARG_ENABLE([srtp-kdf],
+    [AS_HELP_STRING([--enable-srtp-kdf],[Enable SRTP-KDF support (default: disabled)])],
+    [ ENABLED_SRTP_KDF=$enableval ],
+    [ ENABLED_SRTP_KDF=no ]
+    )
+if test "$ENABLED_SRTP" = "yes"
+then
+  ENABLED_SRTP_KDF="yes"
+fi
+if test "$ENABLED_SRTP_KDF" = "yes"
+then
+  AM_CFLAGS="$AM_CFLAGS -DWC_SRTP_KDF -DHAVE_AES_ECB -DWOLFSSL_AES_DIRECT"
+fi
+
 
 # DSA
 AC_ARG_ENABLE([dsa],
@@ -8351,16 +8367,30 @@ then
 
     case $host_os in
         *darwin*)
-            AC_CHECK_HEADERS([Security/SecTrustSettings.h],
+            # Headers used for MacOS default system CA certs behavior. Only MacOS SDK will have this header
+            AC_CHECK_HEADERS([Security/SecTrustSettings.h])
+            # Headers used for Apple native cert validation. All device SDKs should have these headers
+            AC_CHECK_HEADERS([Security/SecCertificate.h])
+            AC_CHECK_HEADERS([Security/SecTrust.h])
+            AC_CHECK_HEADERS([Security/SecPolicy.h])
+            # Either Security/SecTrustSettings (for MacOS cert loading), or the
+            # trio of Security/SecCertificate.h, Security/SecTrust.h, and
+            # Security/SecPolicy.h (for native trust APIs on other apple devices)
+            # must be present. Default to SecTrustSettings method on MacOS.
+            AS_IF([test "$ac_cv_header_Security_SecTrustSettings_h" = "yes" \
+                   || (test "$ac_cv_header_Security_SecCertificate_h" = "yes" \
+                       && test "$ac_cv_header_Security_SecTrust_h" = "yes" \
+                       && test "$ac_cv_header_Security_SecPolicy_h" = "yes")],
+            [
+                LDFLAGS="$LDFLAGS -framework CoreFoundation -framework Security"
+                AS_IF([test "$ac_cv_header_Security_SecTrustSettings_h" != "yes"],
                 [
-                    # For Mac we need these frameworks to load system CA certs
-                    LDFLAGS="$LDFLAGS -framework CoreFoundation -framework Security"
-                ],
-                [
-                    AC_MSG_NOTICE([Can't enable system CA certs without Security/SecTrustSettings.h])
-                    ENABLED_SYS_CA_CERTS="no"
-                ]
-            )
+                  AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_APPLE_NATIVE_CERT_VALIDATION"
+                ])
+            ],
+            [
+              AC_MSG_ERROR([Unable to find Apple Security.framework headers])
+            ])
             ;;
     esac
 fi
@@ -9569,6 +9599,7 @@ echo "   * wolfCrypt Only:             $ENABLED_CRYPTONLY"
 echo "   * HKDF:                       $ENABLED_HKDF"
 echo "   * HPKE:                       $ENABLED_HPKE"
 echo "   * X9.63 KDF:                  $ENABLED_X963KDF"
+echo "   * SRTP-KDF:                   $ENABLED_SRTP_KDF"
 echo "   * PSK:                        $ENABLED_PSK"
 echo "   * Poly1305:                   $ENABLED_POLY1305"
 echo "   * LEANPSK:                    $ENABLED_LEANPSK"

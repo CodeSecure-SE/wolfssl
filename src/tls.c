@@ -4705,8 +4705,7 @@ int TLSX_ValidateSupportedCurves(const WOLFSSL* ssl, byte first, byte second,
     #ifdef OPENSSL_EXTRA
         /* skip if name is not in supported ECC range
          * or disabled by user */
-        if (curve->name > WOLFSSL_ECC_MAX ||
-            wolfSSL_curve_is_disabled(ssl, curve->name))
+        if (wolfSSL_curve_is_disabled(ssl, curve->name))
             continue;
     #endif
 
@@ -5821,6 +5820,12 @@ static int TLSX_UseSRTP_Parse(WOLFSSL* ssl, const byte* input, word16 length,
         /* parse remainder one profile at a time, looking for match in CTX */
         ret = 0;
         for (i=offset; i<length; i+=OPAQUE16_LEN) {
+            if (length < (i + OPAQUE16_LEN)) {
+                WOLFSSL_MSG("Unexpected length when parsing SRTP profile");
+                ret = BUFFER_ERROR;
+                break;
+            }
+
             ato16(input+i, &profile_value);
             /* find first match */
             if (profile_value < 16 &&
@@ -6678,13 +6683,17 @@ static int TLSX_CA_Names_Parse(WOLFSSL *ssl, const byte* input,
         DecodedCert cert[1];
 #endif
 
-        if (length < OPAQUE16_LEN)
-            return BUFFER_ERROR;
-        ato16(input, &extLen);
-        idx += OPAQUE16_LEN;
-
-        if (idx + extLen > length)
+        if (length < OPAQUE16_LEN) {
             ret = BUFFER_ERROR;
+        }
+
+        if (ret == 0) {
+            ato16(input, &extLen);
+            idx += OPAQUE16_LEN;
+
+            if (idx + extLen > length)
+                ret = BUFFER_ERROR;
+        }
 
         if (ret == 0) {
             InitDecodedCert(cert, input + idx, extLen, ssl->heap);
@@ -8651,8 +8660,7 @@ static int TLSX_SupportedGroups_Find(const WOLFSSL* ssl, word16 name,
     TLSX*          extension;
     SupportedCurve* curve = NULL;
 
-    if ((extension = TLSX_Find(extensions,
-                                              TLSX_SUPPORTED_GROUPS)) == NULL) {
+    if ((extension = TLSX_Find(extensions, TLSX_SUPPORTED_GROUPS)) == NULL) {
         if ((extension = TLSX_Find(ssl->ctx->extensions,
                                               TLSX_SUPPORTED_GROUPS)) == NULL) {
             return 0;
@@ -10138,6 +10146,8 @@ static WC_INLINE byte GetHmacLength(int hmac)
         case sm3_mac:
             return WC_SM3_DIGEST_SIZE;
     #endif
+        default:
+            break;
     }
     return 0;
 }

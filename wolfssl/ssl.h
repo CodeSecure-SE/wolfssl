@@ -1526,6 +1526,7 @@ WOLFSSL_API WOLFSSL_STACK* wolfSSL_sk_new_node(void* heap);
 WOLFSSL_API void wolfSSL_sk_free(WOLFSSL_STACK* sk);
 WOLFSSL_API void wolfSSL_sk_free_node(WOLFSSL_STACK* in);
 WOLFSSL_API WOLFSSL_STACK* wolfSSL_sk_dup(WOLFSSL_STACK* sk);
+WOLFSSL_API WOLFSSL_STACK* wolfSSL_shallow_sk_dup(WOLFSSL_STACK* sk);
 WOLFSSL_API int wolfSSL_sk_push_node(WOLFSSL_STACK** stack, WOLFSSL_STACK* in);
 WOLFSSL_API WOLFSSL_STACK* wolfSSL_sk_get_node(WOLFSSL_STACK* sk, int idx);
 WOLFSSL_API int wolfSSL_sk_push(WOLFSSL_STACK *st, const void *data);
@@ -1656,7 +1657,7 @@ WOLFSSL_API int wolfSSL_CTX_add_session(WOLFSSL_CTX* ctx,
                                         WOLFSSL_SESSION* session);
 WOLFSSL_API int wolfSSL_SESSION_set_cipher(WOLFSSL_SESSION* session,
                                         const WOLFSSL_CIPHER* cipher);
-WOLFSSL_API int  wolfSSL_is_init_finished(WOLFSSL* ssl);
+WOLFSSL_API int  wolfSSL_is_init_finished(const WOLFSSL* ssl);
 
 WOLFSSL_API const char*  wolfSSL_get_version(const WOLFSSL* ssl);
 WOLFSSL_API int  wolfSSL_get_current_cipher_suite(WOLFSSL* ssl);
@@ -3926,7 +3927,10 @@ enum {
     WOLFSSL_ECC_X448      = 30,
     WOLFSSL_ECC_SM2P256V1 = 41,
     WOLFSSL_ECC_MAX       = 41,
+    WOLFSSL_ECC_MAX_AVAIL = 46,
+    /* Update use of disabled curves when adding value greater than 46. */
 
+    WOLFSSL_FFDHE_START   = 256,
     WOLFSSL_FFDHE_2048    = 256,
     WOLFSSL_FFDHE_3072    = 257,
     WOLFSSL_FFDHE_4096    = 258,
@@ -4394,7 +4398,9 @@ WOLFSSL_API size_t wolfSSL_BIO_wpending(const WOLFSSL_BIO *bio);
 WOLFSSL_API int wolfSSL_BIO_supports_pending(const WOLFSSL_BIO *bio);
 WOLFSSL_API size_t wolfSSL_BIO_ctrl_pending(WOLFSSL_BIO *b);
 
-WOLFSSL_API int wolfSSL_get_server_tmp_key(const WOLFSSL* ssl, WOLFSSL_EVP_PKEY** pkey);
+/* Definition for backwards comaptiblity */
+#define wolfSSL_get_server_tmp_key          wolfSSL_get_peer_tmp_key
+WOLFSSL_API int wolfSSL_get_peer_tmp_key(const WOLFSSL* ssl, WOLFSSL_EVP_PKEY** pkey);
 
 WOLFSSL_API int wolfSSL_CTX_set_min_proto_version(WOLFSSL_CTX* ctx, int version);
 WOLFSSL_API int wolfSSL_CTX_set_max_proto_version(WOLFSSL_CTX* ctx, int version);
@@ -5220,6 +5226,9 @@ WOLFSSL_API int wolfSSL_dtls_cid_get_tx(WOLFSSL* ssl, unsigned char* buffer,
 
 #ifdef WOLFSSL_DTLS_CH_FRAG
     WOLFSSL_API int wolfSSL_dtls13_allow_ch_frag(WOLFSSL *ssl, int enabled);
+#endif
+#ifdef WOLFSSL_DTLS13_NO_HRR_ON_RESUME
+    WOLFSSL_API int wolfSSL_dtls13_no_hrr_on_resume(WOLFSSL *ssl, int enabled);
 #endif
 
 /*  */
