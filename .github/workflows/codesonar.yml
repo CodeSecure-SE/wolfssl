@@ -52,13 +52,8 @@ jobs:
           path: codesonar-scripts
       - name: Build and Analyze
         run: python3 codesonar-scripts/build_and_analyze.py codesonar.conf make -j $PARALLEL
-      - name: Download results
-        run: |
-          echo $CSONAR_HUB_PASSWORD > hubpwfile
-          $CSONAR_CSHOME/codesonar/bin/codesonar dump_warnings.py --project-file $PROJECT_NAME.prj -auth password -hubuser $CSONAR_HUB_USER -hubpwfile hubpwfile  --hub $CSONAR_HUB_URL --gained-since-previous-analysis --sarif --sarif-detail brief -o diff.sarif
-          rm hubpwfile
       - name: Upload artefact
         uses: actions/upload-artifact@v3
         with:
           name: SARIF results summary
-          path: diff.sarif
+          path: warnings.sarif
