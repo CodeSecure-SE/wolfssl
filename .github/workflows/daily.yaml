@@ -85,6 +85,5 @@ jobs:
           from: "CodeSonar Analyzer"
           to: "mark@hermeling.org, andras@wolfssl.com, douzzer@wolfssl.com"
           reply_to: "mark@hermeling.org"
-          attachments: diff.sarif, diff.csv, report.html
       - name: cleanup
         run: rm hubpwfile
