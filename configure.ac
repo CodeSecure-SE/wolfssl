@@ -3547,6 +3547,22 @@ then
   AM_CFLAGS="$AM_CFLAGS -DHAVE_X963_KDF"
 fi
 
+# SRTP-KDF
+AC_ARG_ENABLE([srtp-kdf],
+    [AS_HELP_STRING([--enable-srtp-kdf],[Enable SRTP-KDF support (default: disabled)])],
+    [ ENABLED_SRTP_KDF=$enableval ],
+    [ ENABLED_SRTP_KDF=no ]
+    )
+if test "$ENABLED_SRTP" = "yes"
+then
+  ENABLED_SRTP_KDF="yes"
+fi
+if test "$ENABLED_SRTP_KDF" = "yes"
+then
+  AM_CFLAGS="$AM_CFLAGS -DWC_SRTP_KDF -DHAVE_AES_ECB -DWOLFSSL_AES_DIRECT"
+fi
+
+
 # DSA
 AC_ARG_ENABLE([dsa],
     [AS_HELP_STRING([--enable-dsa],[Enable DSA (default: disabled)])],
@@ -3991,63 +4007,6 @@ AC_ARG_ENABLE([errorqueue],
     [ ENABLED_ERROR_QUEUE=yes ]
     )
 
-# OLD TLS
-AC_ARG_ENABLE([oldtls],
-    [AS_HELP_STRING([--enable-oldtls],[Enable old TLS versions < 1.2 (default: enabled)])],
-    [ ENABLED_OLD_TLS=$enableval ],
-    [ ENABLED_OLD_TLS=yes ]
-    )
-
-if test "$ENABLED_CRYPTONLY" = "yes" || test "x$ENABLED_HARDEN_TLS" != "xno"
-then
-    ENABLED_OLD_TLS=no
-fi
-if test "$ENABLED_OLD_TLS" = "no"
-then
-    AM_CFLAGS="$AM_CFLAGS -DNO_OLD_TLS"
-else
-    # turn off old if leanpsk or leantls on
-    if test "$ENABLED_LEANPSK" = "yes" || test "$ENABLED_LEANTLS" = "yes"
-    then
-        AM_CFLAGS="$AM_CFLAGS -DNO_OLD_TLS"
-        ENABLED_OLD_TLS=no
-    fi
-fi
-
-
-# TLSv1.2
-AC_ARG_ENABLE([tlsv12],
-    [AS_HELP_STRING([--enable-tlsv12],[Enable TLS versions 1.2 (default: enabled)])],
-    [ ENABLED_TLSV12=$enableval ],
-    [ ENABLED_TLSV12=yes ]
-    )
-
-if test "$ENABLED_CRYPTONLY" = "yes"
-then
-    ENABLED_TLSV12=no
-fi
-if test "$ENABLED_TLSV12" = "no"
-then
-    AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_NO_TLS12 -DNO_OLD_TLS"
-fi
-
-
-# TLSv1.0
-AC_ARG_ENABLE([tlsv10],
-    [AS_HELP_STRING([--enable-tlsv10],[Enable old TLS versions 1.0 (default: disabled)])],
-    [ ENABLED_TLSV10=$enableval ],
-    [ ENABLED_TLSV10=no ]
-    )
-
-if test "$ENABLED_CRYPTONLY" = "yes"
-then
-    ENABLED_TLSV12=no
-fi
-if test "$ENABLED_TLSV10" = "yes"
-then
-    AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_ALLOW_TLSV10"
-fi
-
 
 # SSLv3
 AC_ARG_ENABLE([sslv3],
@@ -4069,6 +4028,67 @@ if test "$ENABLED_SSLV3" = "yes"
 then
     AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_ALLOW_SSLV3"
 fi
+
+# TLSv1.0
+AC_ARG_ENABLE([tlsv10],
+    [AS_HELP_STRING([--enable-tlsv10],[Enable old TLS versions 1.0 (default: disabled)])],
+    [ ENABLED_TLSV10=$enableval ],
+    [ ENABLED_TLSV10=no ]
+    )
+
+if test "$ENABLED_CRYPTONLY" = "yes"
+then
+    ENABLED_TLSV12=no
+fi
+if test "$ENABLED_TLSV10" = "yes"
+then
+    AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_ALLOW_TLSV10"
+fi
+
+
+# OLD TLS
+AC_ARG_ENABLE([oldtls],
+    [AS_HELP_STRING([--enable-oldtls],[Enable old TLS versions < 1.2 (default: disabled)])],
+    [ ENABLED_OLD_TLS=$enableval ],
+    [ ENABLED_OLD_TLS=no ]
+    )
+
+
+if test "$ENABLED_CRYPTONLY" = "yes" || test "x$ENABLED_HARDEN_TLS" != "xno" || \
+    test "$ENABLED_LEANPSK" = "yes" || test "$ENABLED_LEANTLS" = "yes"
+then
+    ENABLED_OLD_TLS=no
+fi
+
+# if SSL v3.0 or TLS v1.0 enabled, then allow "old tls". QT also requires it apparently
+if test "$ENABLED_TLSV10" = "yes" || test "$ENABLED_SSLV3" = "yes" || \
+    (test "$ENABLED_QT" = "yes" && test "x$ENABLED_ALL" = "xno")
+then
+    ENABLED_OLD_TLS=yes
+fi
+
+if test "$ENABLED_OLD_TLS" = "no"
+then
+    AM_CFLAGS="$AM_CFLAGS -DNO_OLD_TLS"
+fi
+
+
+# TLSv1.2
+AC_ARG_ENABLE([tlsv12],
+    [AS_HELP_STRING([--enable-tlsv12],[Enable TLS versions 1.2 (default: enabled)])],
+    [ ENABLED_TLSV12=$enableval ],
+    [ ENABLED_TLSV12=yes ]
+    )
+
+if test "$ENABLED_CRYPTONLY" = "yes"
+then
+    ENABLED_TLSV12=no
+fi
+if test "$ENABLED_TLSV12" = "no"
+then
+    AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_NO_TLS12 -DNO_OLD_TLS"
+fi
+
 
 
 # STACK SIZE info for testwolfcrypt and examples
@@ -9583,6 +9603,7 @@ echo "   * wolfCrypt Only:             $ENABLED_CRYPTONLY"
 echo "   * HKDF:                       $ENABLED_HKDF"
 echo "   * HPKE:                       $ENABLED_HPKE"
 echo "   * X9.63 KDF:                  $ENABLED_X963KDF"
+echo "   * SRTP-KDF:                   $ENABLED_SRTP_KDF"
 echo "   * PSK:                        $ENABLED_PSK"
 echo "   * Poly1305:                   $ENABLED_POLY1305"
 echo "   * LEANPSK:                    $ENABLED_LEANPSK"
