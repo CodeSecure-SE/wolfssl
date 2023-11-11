@@ -14421,8 +14421,9 @@ int ProcessPeerCerts(WOLFSSL* ssl, byte* input, word32* inOutIdx,
                     }
                 }
                 else if (ret == ASN_PARSE_E || ret == BUFFER_E ||
-                         ret == MEMORY_E) {
-                    WOLFSSL_MSG("Got Peer cert ASN PARSE_E, BUFFER E, MEMORY_E");
+                         ret == MEMORY_E || ret == BAD_FUNC_ARG) {
+                    WOLFSSL_MSG("Got Peer cert ASN_PARSE_E, BUFFER_E, MEMORY_E,"
+                                " BAD_FUNC_ARG");
                 #if defined(WOLFSSL_EXTRA_ALERTS) || defined(OPENSSL_EXTRA) || \
                                                defined(OPENSSL_EXTRA_X509_SMALL)
                     DoCertFatalAlert(ssl, ret);
@@ -26872,7 +26873,7 @@ int PickHashSigAlgo(WOLFSSL* ssl, const byte* hashSigAlgo, word32 hashSigAlgoSz)
             /* add data, put in buffer if bigger than static buffer */
             info->packets[info->numberPackets].valueSz = totalSz;
             if (totalSz < MAX_VALUE_SZ) {
-                XMEMCPY(info->packets[info->numberPackets].value, data + lateRL,
+                XMEMCPY(info->packets[info->numberPackets].value + lateRL, data,
                                sz);
             }
             else {
