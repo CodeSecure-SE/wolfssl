@@ -58,7 +58,9 @@ jobs:
           $CSONAR_CSHOME/codesonar/bin/codesonar dump_warnings.py --project-file $PROJECT_NAME.prj \
           -auth password -hubuser $CSONAR_HUB_USER -hubpwfile hubpwfile  --hub $CSONAR_HUB_URL --gained-since-previous-analysis --sarif --sarif-detail brief -o diff.sarif
           $CSONAR_CSHOME/codesonar/bin/codesonar dump_warnings.py --project-file $PROJECT_NAME.prj \
-          -auth password -hubuser $CSONAR_HUB_USER -hubpwfile hubpwfile  --hub $CSONAR_HUB_URL --gained-since-previous-analysis --csv -o diff.csv
+          -auth password -hubuser $CSONAR_HUB_USER -hubpwfile hubpwfile  --hub $CSONAR_HUB_URL \
+          --sort "ascending:priority" --sort "descending:score" --gained-since-previous-analysis --csv -o diff.csv
+
           sed -i 's#/warninginstance#https://partnerdemo.codesonar.com/warninginstance#' diff.csv
           sed -i 's#.txt$#.html#' diff.csv
           cut -d, -f1,2,3,4,5,6,7,8,9,15 diff.csv > diff2.csv
