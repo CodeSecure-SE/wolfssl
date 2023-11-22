@@ -59,6 +59,7 @@
 #ifdef __IAR_SYSTEMS_ICC__
 #define __asm__        asm
 #define __volatile__   volatile
+#define WOLFSSL_NO_VAR_ASSIGN_REG
 #endif /* __IAR_SYSTEMS_ICC__ */
 #ifdef __KEIL__
 #define __asm__        __asm
@@ -21967,8 +21968,8 @@ SP_NOINLINE static void sp_256_mont_sqr_5(sp_digit* r, const sp_digit* a,
  * m   Modulus (prime).
  * mp  Montgomery multiplier.
  */
-static void sp_256_mont_sqr_n_5(sp_digit* r, const sp_digit* a, int n,
-        const sp_digit* m, sp_digit mp)
+SP_NOINLINE static void sp_256_mont_sqr_n_5(sp_digit* r,
+    const sp_digit* a, int n, const sp_digit* m, sp_digit mp)
 {
     sp_256_mont_sqr_5(r, a, m, mp);
     for (; n > 1; n--) {
@@ -28871,8 +28872,8 @@ SP_NOINLINE static void sp_384_mont_sqr_7(sp_digit* r, const sp_digit* a,
  * m   Modulus (prime).
  * mp  Montgomery multiplier.
  */
-static void sp_384_mont_sqr_n_7(sp_digit* r, const sp_digit* a, int n,
-        const sp_digit* m, sp_digit mp)
+SP_NOINLINE static void sp_384_mont_sqr_n_7(sp_digit* r,
+    const sp_digit* a, int n, const sp_digit* m, sp_digit mp)
 {
     sp_384_mont_sqr_7(r, a, m, mp);
     for (; n > 1; n--) {
@@ -36409,8 +36410,8 @@ SP_NOINLINE static void sp_521_mont_sqr_9(sp_digit* r, const sp_digit* a,
  * m   Modulus (prime).
  * mp  Montgomery multiplier.
  */
-static void sp_521_mont_sqr_n_9(sp_digit* r, const sp_digit* a, int n,
-        const sp_digit* m, sp_digit mp)
+SP_NOINLINE static void sp_521_mont_sqr_n_9(sp_digit* r,
+    const sp_digit* a, int n, const sp_digit* m, sp_digit mp)
 {
     sp_521_mont_sqr_9(r, a, m, mp);
     for (; n > 1; n--) {
