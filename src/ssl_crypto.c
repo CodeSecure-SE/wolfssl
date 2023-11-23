@@ -1616,8 +1616,8 @@ WOLFSSL_HMAC_CTX* wolfSSL_HMAC_CTX_new(void)
  *
  * Not an OpenSSL compatibility API.
  *
- * @param [in, out] ctx  HMAC contect object.
- * @return  1 inficating success.
+ * @param [in, out] ctx  HMAC context object.
+ * @return  1 indicating success.
  */
 int wolfSSL_HMAC_CTX_Init(WOLFSSL_HMAC_CTX* ctx)
 {
@@ -1972,7 +1972,7 @@ unsigned char* wolfSSL_HMAC(const WOLFSSL_EVP_MD* evp_md, const void* key,
     unsigned char* ret = NULL;
     int rc = 0;
     int type = 0;
-    int hmacLen;
+    int hmacLen = 0;
 #ifdef WOLFSSL_SMALL_STACK
     Hmac* hmac = NULL;
 #else
