@@ -127,6 +127,7 @@
 #ifdef WOLFSSL_SIPHASH
     #include <wolfssl/wolfcrypt/siphash.h>
 #endif
+  #include <wolfssl/wolfcrypt/kdf.h>
 #ifndef NO_PWDBASED
     #include <wolfssl/wolfcrypt/pwdbased.h>
 #endif
@@ -150,18 +151,24 @@
 #endif
 #ifdef WOLFSSL_HAVE_KYBER
     #include <wolfssl/wolfcrypt/kyber.h>
-#ifdef WOLFSSL_WC_KYBER
-    #include <wolfssl/wolfcrypt/wc_kyber.h>
-#endif
-#if defined(HAVE_LIBOQS) || defined(HAVE_PQM4)
-    #include <wolfssl/wolfcrypt/ext_kyber.h>
-#endif
+    #ifdef WOLFSSL_WC_KYBER
+        #include <wolfssl/wolfcrypt/wc_kyber.h>
+    #endif
+    #if defined(HAVE_LIBOQS) || defined(HAVE_PQM4)
+        #include <wolfssl/wolfcrypt/ext_kyber.h>
+    #endif
 #endif
 #if defined(WOLFSSL_HAVE_LMS) && !defined(WOLFSSL_LMS_VERIFY_ONLY)
     #include <wolfssl/wolfcrypt/lms.h>
-#ifdef HAVE_LIBLMS
-    #include <wolfssl/wolfcrypt/ext_lms.h>
+    #ifdef HAVE_LIBLMS
+        #include <wolfssl/wolfcrypt/ext_lms.h>
+    #endif
 #endif
+#if defined(WOLFSSL_HAVE_XMSS) && !defined(WOLFSSL_XMSS_VERIFY_ONLY)
+    #include <wolfssl/wolfcrypt/xmss.h>
+    #ifdef HAVE_LIBXMSS
+        #include <wolfssl/wolfcrypt/ext_xmss.h>
+    #endif
 #endif
 #ifdef WOLFCRYPT_HAVE_ECCSI
     #include <wolfssl/wolfcrypt/eccsi.h>
@@ -528,6 +535,9 @@
 #define BENCH_PBKDF2             0x00000100
 #define BENCH_SIPHASH            0x00000200
 
+/* KDF algorithms */
+#define BENCH_SRTP_KDF           0x00000001
+
 /* Asymmetric algorithms. */
 #define BENCH_RSA_KEYGEN         0x00000001
 #define BENCH_RSA                0x00000002
@@ -576,6 +586,7 @@
 
 /* Post-Quantum Stateful Hash-Based sig algorithms. */
 #define BENCH_LMS_HSS                   0x00000001
+#define BENCH_XMSS_XMSSMT               0x00000002
 
 /* Other */
 #define BENCH_RNG                0x00000001
@@ -596,6 +607,11 @@
 #endif
 #endif
 
+#if (defined(WOLFSSL_HAVE_LMS) && !defined(WOLFSSL_LMS_VERIFY_ONLY)) || \
+    (defined(WOLFSSL_HAVE_XMSS) && !defined(WOLFSSL_XMSS_VERIFY_ONLY))
+    #define BENCH_PQ_STATEFUL_HBS
+#endif
+
 /* Benchmark all compiled in algorithms.
  * When 1, ignore other benchmark algorithm values.
  *      0, only benchmark algorithm values set.
@@ -607,6 +623,8 @@ static word32 bench_cipher_algs = 0;
 static word32 bench_digest_algs = 0;
 /* MAC algorithms to benchmark. */
 static word32 bench_mac_algs = 0;
+/* KDF algorithms to benchmark. */
+static word32 bench_kdf_algs = 0;
 /* Asymmetric algorithms to benchmark. */
 static word32 bench_asym_algs = 0;
 /* Post-Quantum Asymmetric algorithms to benchmark. */
@@ -785,9 +803,18 @@ static const bench_alg bench_mac_opt[] = {
     #ifndef NO_PWDBASED
     { "-pbkdf2",             BENCH_PBKDF2            },
     #endif
+#endif
     #ifdef WOLFSSL_SIPHASH
     { "-siphash",            BENCH_SIPHASH           },
     #endif
+    { NULL, 0 }
+};
+
+/* All recognized KDF algorithm choosing command line options. */
+static const bench_alg bench_kdf_opt[] = {
+    { "-kdf",                0xffffffff              },
+#ifdef WC_SRTP_KDF
+    { "-srtp-kdf",           BENCH_SRTP_KDF          },
 #endif
     { NULL, 0 }
 };
@@ -870,7 +897,7 @@ static const bench_alg bench_other_opt[] = {
 
 #endif /* !WOLFSSL_BENCHMARK_ALL && !NO_MAIN_DRIVER */
 
-#if defined(WOLFSSL_HAVE_LMS) && !defined(WOLFSSL_LMS_VERIFY_ONLY)
+#if defined(BENCH_PQ_STATEFUL_HBS)
 typedef struct bench_pq_hash_sig_alg {
     /* Command line option string. */
     const char* str;
@@ -880,10 +907,15 @@ typedef struct bench_pq_hash_sig_alg {
 
 static const bench_pq_hash_sig_alg bench_pq_hash_sig_opt[] = {
     { "-pq_hash_sig", 0xffffffff},
+#if defined(WOLFSSL_HAVE_LMS) && !defined(WOLFSSL_LMS_VERIFY_ONLY)
     { "-lms_hss", BENCH_LMS_HSS},
+#endif
+#if defined(WOLFSSL_HAVE_XMSS) && !defined(WOLFSSL_XMSS_VERIFY_ONLY)
+    { "-xmss_xmssmt", BENCH_XMSS_XMSSMT},
+#endif
     { NULL, 0}
 };
-#endif /* if defined(WOLFSSL_HAVE_LMS) && !defined(WOLFSSL_LMS_VERIFY_ONLY) */
+#endif /* BENCH_PQ_STATEFUL_HBS */
 
 #if defined(HAVE_PQC) && defined(HAVE_LIBOQS)
 /* The post-quantum-specific mapping of command line option to bit values and
@@ -1629,6 +1661,7 @@ static void benchmark_static_init(int force)
         bench_cipher_algs = 0;
         bench_digest_algs = 0;
         bench_mac_algs = 0;
+        bench_kdf_algs = 0;
         bench_asym_algs = 0;
         bench_pq_asym_algs = 0;
         bench_other_algs = 0;
@@ -2768,12 +2801,18 @@ static void* benchmarks_do(void* args)
             bench_pbkdf2();
         }
     #endif
-    #ifdef WOLFSSL_SIPHASH
-        if (bench_all || (bench_mac_algs & BENCH_SIPHASH)) {
-            bench_siphash();
-        }
-    #endif
 #endif /* NO_HMAC */
+#ifdef WOLFSSL_SIPHASH
+    if (bench_all || (bench_mac_algs & BENCH_SIPHASH)) {
+        bench_siphash();
+    }
+#endif
+
+#ifdef WC_SRTP_KDF
+    if (bench_all || (bench_kdf_algs & BENCH_SRTP_KDF)) {
+        bench_srtpkdf();
+    }
+#endif
 
 #ifdef HAVE_SCRYPT
     if (bench_all || (bench_other_algs & BENCH_SCRYPT))
@@ -2855,6 +2894,12 @@ static void* benchmarks_do(void* args)
         bench_lms();
     }
 #endif /* if defined(WOLFSSL_HAVE_LMS) && !defined(WOLFSSL_LMS_VERIFY_ONLY) */
+
+#if defined(WOLFSSL_HAVE_XMSS) && !defined(WOLFSSL_XMSS_VERIFY_ONLY)
+    if (bench_all || (bench_pq_hash_sig_algs & BENCH_XMSS_XMSSMT)) {
+        bench_xmss();
+    }
+#endif /* if defined(WOLFSSL_HAVE_XMSS) && !defined(WOLFSSL_XMSS_VERIFY_ONLY) */
 
 #ifdef HAVE_ECC
     if (bench_all || (bench_asym_algs & BENCH_ECC_MAKEKEY) ||
@@ -4709,6 +4754,7 @@ void bench_chacha(void)
     double start;
     int    i, count;
 
+    XMEMSET(&enc, 0, sizeof(enc));
     wc_Chacha_SetKey(&enc, bench_key, 16);
 
     bench_stats_start(&count, &start);
@@ -6697,6 +6743,68 @@ void bench_siphash(void)
 }
 #endif
 
+#ifdef WC_SRTP_KDF
+void bench_srtpkdf(void)
+{
+    double start;
+    int count;
+    int ret = 0;
+    byte keyE[32];
+    byte keyA[20];
+    byte keyS[14];
+    const byte *key = bench_key_buf;
+    const byte salt[14] = { 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+                           0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e };
+    const byte index[6] = { 0x55, 0xAA, 0x55, 0xAA, 0x55, 0xAA };
+    int kdrIdx = 0;
+    int i;
+
+    bench_stats_start(&count, &start);
+    do {
+        for (i = 0; i < numBlocks; i++) {
+            ret = wc_SRTP_KDF(key, AES_128_KEY_SIZE, salt, sizeof(salt),
+                kdrIdx, index, keyE, AES_128_KEY_SIZE, keyA, sizeof(keyA),
+                keyS, sizeof(keyS));
+        }
+        count += i;
+    } while (bench_stats_check(start));
+    bench_stats_asym_finish("KDF", 128, "SRTP", 0, count, start, ret);
+
+    bench_stats_start(&count, &start);
+    do {
+        for (i = 0; i < numBlocks; i++) {
+            ret = wc_SRTP_KDF(key, AES_256_KEY_SIZE, salt, sizeof(salt),
+                kdrIdx, index, keyE, AES_256_KEY_SIZE, keyA, sizeof(keyA),
+                keyS, sizeof(keyS));
+        }
+        count += i;
+    } while (bench_stats_check(start));
+    bench_stats_asym_finish("KDF", 256, "SRTP", 0, count, start, ret);
+
+    bench_stats_start(&count, &start);
+    do {
+        for (i = 0; i < numBlocks; i++) {
+            ret = wc_SRTCP_KDF(key, AES_128_KEY_SIZE, salt, sizeof(salt),
+                kdrIdx, index, keyE, AES_128_KEY_SIZE, keyA, sizeof(keyA),
+                keyS, sizeof(keyS));
+        }
+        count += i;
+    } while (bench_stats_check(start));
+    bench_stats_asym_finish("KDF", 128, "SRTCP", 0, count, start, ret);
+
+    bench_stats_start(&count, &start);
+    do {
+        for (i = 0; i < numBlocks; i++) {
+            ret = wc_SRTCP_KDF(key, AES_256_KEY_SIZE, salt, sizeof(salt),
+                kdrIdx, index, keyE, AES_256_KEY_SIZE, keyA, sizeof(keyA),
+                keyS, sizeof(keyS));
+        }
+        count += i;
+    } while (bench_stats_check(start));
+    bench_stats_asym_finish("KDF", 256, "SRTCP", 0, count, start, ret);
+}
+#endif
+
 #ifndef NO_RSA
 
 #if defined(WOLFSSL_KEY_GEN)
@@ -8074,6 +8182,245 @@ void bench_lms(void)
 }
 
 #endif /* if defined(WOLFSSL_HAVE_LMS) && !defined(WOLFSSL_LMS_VERIFY_ONLY) */
+
+#if defined(WOLFSSL_HAVE_XMSS) && !defined(WOLFSSL_XMSS_VERIFY_ONLY)
+
+static enum wc_XmssRc xmss_write_key_mem(const byte * priv, word32 privSz,
+    void *context)
+{
+   /* WARNING: THIS IS AN INSECURE WRITE CALLBACK THAT SHOULD ONLY
+    * BE USED FOR TESTING PURPOSES! Production applications should
+    * write only to non-volatile storage. */
+    XMEMCPY(context, priv, privSz);
+    return WC_XMSS_RC_SAVED_TO_NV_MEMORY;
+}
+
+static enum wc_XmssRc xmss_read_key_mem(byte * priv, word32 privSz,
+    void *context)
+{
+   /* WARNING: THIS IS AN INSECURE READ CALLBACK THAT SHOULD ONLY
+    * BE USED FOR TESTING PURPOSES! */
+    XMEMCPY(priv, context, privSz);
+    return WC_XMSS_RC_READ_TO_MEMORY;
+}
+
+static void bench_xmss_sign_verify(const char * params)
+{
+    WC_RNG          rng;
+    XmssKey         key;
+    word32          pkSz = 0;
+    word32          skSz = 0;
+    int             freeRng = 0;
+    int             freeKey = 0;
+    unsigned char * sk = NULL;
+    const char *    msg = "XMSS post quantum signature test";
+    word32          msgSz = (word32) XSTRLEN(msg);
+    int             ret = 0;
+    byte *          sig = NULL;
+    word32          sigSz = 0;
+    int             times = 0;
+    int             count = 0;
+    double          start = 0.0F;
+
+#ifndef HAVE_FIPS
+    ret = wc_InitRng_ex(&rng, HEAP_HINT, INVALID_DEVID);
+#else
+    ret = wc_InitRng(&rng);
+#endif
+    if (ret != 0) {
+        fprintf(stderr, "error: wc_InitRng failed: %d\n", ret);
+        goto exit_xmss_sign_verify;
+    }
+
+    freeRng = 1;
+
+    ret = wc_XmssKey_Init(&key, NULL, INVALID_DEVID);
+    if (ret != 0) {
+        fprintf(stderr, "wc_XmssKey_Init failed: %d\n", ret);
+        goto exit_xmss_sign_verify;
+    }
+
+    ret = wc_XmssKey_SetParamStr(&key, params);
+    if (ret != 0) {
+        fprintf(stderr, "wc_XmssKey_SetParamStr failed: %d\n", ret);
+        goto exit_xmss_sign_verify;
+    }
+
+    ret = wc_XmssKey_GetPubLen(&key, &pkSz);
+    if (pkSz != XMSS_SHA256_PUBLEN) {
+        fprintf(stderr, "error: xmss pub len: got %d, expected %d\n", pkSz,
+                XMSS_SHA256_PUBLEN);
+        goto exit_xmss_sign_verify;
+    }
+
+    ret = wc_XmssKey_GetPrivLen(&key, &skSz);
+    if (ret != 0 || skSz <= 0) {
+        fprintf(stderr, "error: wc_XmssKey_GetPrivLen failed\n");
+        goto exit_xmss_sign_verify;
+    }
+
+    ret = wc_XmssKey_GetSigLen(&key, &sigSz);
+    if (ret != 0 || sigSz <= 0) {
+        fprintf(stderr, "error: wc_XmssKey_GetSigLen failed\n");
+        goto exit_xmss_sign_verify;
+    }
+
+    /* Allocate secret keys.*/
+    sk = (unsigned char *)XMALLOC(skSz, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+    if (sk == NULL) {
+        fprintf(stderr, "error: allocate xmss sk failed\n");
+        goto exit_xmss_sign_verify;
+    }
+
+    /* Allocate signature array. */
+    sig = (byte *)XMALLOC(sigSz, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+    if (sig == NULL) {
+        fprintf(stderr, "error: allocate xmss sig failed\n");
+        goto exit_xmss_sign_verify;
+    }
+
+    ret = wc_XmssKey_SetWriteCb(&key, xmss_write_key_mem);
+    if (ret != 0) {
+        fprintf(stderr, "error: wc_XmssKey_SetWriteCb failed: %d\n", ret);
+        goto exit_xmss_sign_verify;
+    }
+
+    ret = wc_XmssKey_SetReadCb(&key, xmss_read_key_mem);
+    if (ret != 0) {
+        fprintf(stderr, "error: wc_XmssKey_SetReadCb failed: %d\n", ret);
+        goto exit_xmss_sign_verify;
+    }
+
+    ret = wc_XmssKey_SetContext(&key, (void *) sk);
+    if (ret != 0) {
+        fprintf(stderr, "error: wc_XmssKey_SetContext failed: %d\n", ret);
+        goto exit_xmss_sign_verify;
+    }
+
+#if defined(DEBUG_WOLFSSL) || defined(WOLFSSL_DEBUG_NONBLOCK)
+    fprintf(stderr, "params: %s\n", params);
+    fprintf(stderr, "pkSz:   %d\n", pkSz);
+    fprintf(stderr, "skSz:   %d\n", skSz);
+    fprintf(stderr, "sigSz:  %d\n", sigSz);
+#endif
+
+    /* Making the private key is the bottleneck
+     * for larger heights. Only print load time in debug builds. */
+#if defined(DEBUG_WOLFSSL)
+    bench_stats_start(&count, &start);
+#endif /* if defined DEBUG_WOLFSSL*/
+
+    ret = wc_XmssKey_MakeKey(&key, &rng);
+    if (ret != 0) {
+        printf("wc_XmssKey_MakeKey failed: %d\n", ret);
+        goto exit_xmss_sign_verify;
+    }
+
+    count +=1;
+
+#if defined(DEBUG_WOLFSSL)
+    bench_stats_check(start);
+    bench_stats_asym_finish(params, (int)skSz, "load", 0,
+                            count, start, ret);
+#endif /* if defined DEBUG_WOLFSSL*/
+
+    freeKey = 1;
+
+    count = 0;
+    bench_stats_start(&count, &start);
+
+    do {
+        /* XMSS is stateful. Async queuing not practical. */
+        for (times = 0; times < ntimes; ++times) {
+
+            ret = wc_XmssKey_Sign(&key, sig, &sigSz, (byte *) msg, msgSz);
+            if (ret) {
+                printf("wc_XmssKey_Sign failed: %d\n", ret);
+                goto exit_xmss_sign_verify;
+            }
+        }
+
+        count += times;
+    } while (bench_stats_check(start));
+
+    bench_stats_asym_finish(params, (int)sigSz, "sign", 0,
+                            count, start, ret);
+
+    count = 0;
+    bench_stats_start(&count, &start);
+
+    do {
+        /* XMSS is stateful. Async queuing not practical. */
+        for (times = 0; times < ntimes; ++times) {
+            ret = wc_XmssKey_Verify(&key, sig, sigSz, (byte *) msg, msgSz);
+            if (ret) {
+                printf("wc_XmssKey_Verify failed: %d\n", ret);
+                goto exit_xmss_sign_verify;
+            }
+        }
+
+        count += times;
+    } while (bench_stats_check(start));
+
+exit_xmss_sign_verify:
+    bench_stats_asym_finish(params, (int)sigSz, "verify", 0,
+                            count, start, ret);
+
+    /* Cleanup everything. */
+    if (sig != NULL) {
+        XFREE(sig, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+        sig = NULL;
+    }
+
+    if (sk != NULL) {
+        XFREE(sk, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+        sk = NULL;
+    }
+
+    if (freeRng) {
+        wc_FreeRng(&rng);
+        freeRng = 0;
+    }
+
+    if (freeKey) {
+        wc_XmssKey_Free(&key);
+        freeKey = 0;
+    }
+
+    return;
+}
+
+void bench_xmss(void)
+{
+    /* All NIST SP 800-208 approved SHA256 XMSS/XMSS^MT parameter
+     * sets.
+     *
+     * Note: not testing "XMSS-SHA2_16_256", "XMSS-SHA2_20_256",
+     * and "XMSSMT-SHA2_60/3_256", because their keygen can be
+     * very slow, their signatures and private keys quite large,
+     * and xmss private keys are not portable across different
+     * XMSS/XMSS^MT implementations.
+     *
+     * The bottleneck in key generation is the height of the first
+     * level tree (or h/d).
+     *
+     * h is the total height of the hyper tree, and d the number of
+     * trees.
+     * */
+                                                       /* h/d    h   d */
+    bench_xmss_sign_verify("XMSS-SHA2_10_256");        /*  10   10   1 */
+ /* bench_xmss_sign_verify("XMSS-SHA2_16_256"); */     /*  16   16   1 */
+ /* bench_xmss_sign_verify("XMSS-SHA2_20_256"); */     /*  20   20   1 */
+    bench_xmss_sign_verify("XMSSMT-SHA2_20/2_256");    /*  10   20   2 */
+    bench_xmss_sign_verify("XMSSMT-SHA2_20/4_256");    /*   5   20   4 */
+    bench_xmss_sign_verify("XMSSMT-SHA2_40/4_256");    /*  10   40   4 */
+    bench_xmss_sign_verify("XMSSMT-SHA2_40/8_256");    /*   5   40   8 */
+ /* bench_xmss_sign_verify("XMSSMT-SHA2_60/3_256"); */ /*  20   60   3 */
+    bench_xmss_sign_verify("XMSSMT-SHA2_60/6_256");    /*  10   60   6 */
+    bench_xmss_sign_verify("XMSSMT-SHA2_60/12_256");   /*   5   60  12 */
+    return;
+}
+#endif /* if defined(WOLFSSL_HAVE_XMSS) && !defined(WOLFSSL_XMSS_VERIFY_ONLY) */
 
 #ifdef HAVE_ECC
 
@@ -10398,6 +10745,8 @@ static void Usage(void)
         print_alg(bench_digest_opt[i].str, &line);
     for (i=0; bench_mac_opt[i].str != NULL; i++)
         print_alg(bench_mac_opt[i].str, &line);
+    for (i=0; bench_kdf_opt[i].str != NULL; i++)
+        print_alg(bench_kdf_opt[i].str, &line);
     for (i=0; bench_asym_opt[i].str != NULL; i++)
         print_alg(bench_asym_opt[i].str, &line);
     for (i=0; bench_other_opt[i].str != NULL; i++)
@@ -10410,10 +10759,10 @@ static void Usage(void)
         print_alg(bench_pq_asym_opt2[i].str, &line);
 #endif /* HAVE_LIBOQS && HAVE_SPHINCS */
 #endif /* HAVE_PQC */
-#if defined(WOLFSSL_HAVE_LMS) && !defined(WOLFSSL_LMS_VERIFY_ONLY)
+#if defined(BENCH_PQ_STATEFUL_HBS)
     for (i=0; bench_pq_hash_sig_opt[i].str != NULL; i++)
         print_alg(bench_pq_hash_sig_opt[i].str, &line);
-#endif /* if defined(WOLFSSL_HAVE_LMS) && !defined(WOLFSSL_LMS_VERIFY_ONLY) */
+#endif /* BENCH_PQ_STATEFUL_HBS */
     printf("\n");
 #endif /* !WOLFSSL_BENCHMARK_ALL */
     e++;
@@ -10632,6 +10981,14 @@ int wolfcrypt_benchmark_main(int argc, char** argv)
                     optMatched = 1;
                 }
             }
+            /* Known KDF algorithms */
+            for (i=0; !optMatched && bench_kdf_opt[i].str != NULL; i++) {
+                if (string_matches(argv[1], bench_kdf_opt[i].str)) {
+                    bench_kdf_algs |= bench_kdf_opt[i].val;
+                    bench_all = 0;
+                    optMatched = 1;
+                }
+            }
             /* Known asymmetric algorithms */
             for (i=0; !optMatched && bench_asym_opt[i].str != NULL; i++) {
                 if (string_matches(argv[1], bench_asym_opt[i].str)) {
@@ -10676,7 +11033,7 @@ int wolfcrypt_benchmark_main(int argc, char** argv)
                 }
             }
 
-        #if defined(WOLFSSL_HAVE_LMS) && !defined(WOLFSSL_LMS_VERIFY_ONLY)
+        #if defined(BENCH_PQ_STATEFUL_HBS)
             /* post-quantum stateful hash-based signatures */
             for (i=0; !optMatched && bench_pq_hash_sig_opt[i].str != NULL; i++) {
                 if (string_matches(argv[1], bench_pq_hash_sig_opt[i].str)) {
@@ -10685,7 +11042,7 @@ int wolfcrypt_benchmark_main(int argc, char** argv)
                     optMatched = 1;
                 }
             }
-        #endif
+        #endif /* BENCH_PQ_STATEFUL_HBS */
 #endif
             if (!optMatched) {
                 printf("Option not recognized: %s\n", argv[1]);

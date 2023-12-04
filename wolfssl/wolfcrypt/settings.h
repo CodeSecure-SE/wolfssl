@@ -1402,7 +1402,7 @@ extern void uITRON4_free(void *p) ;
     defined(WOLFSSL_STM32L4) || defined(WOLFSSL_STM32L5) || \
     defined(WOLFSSL_STM32WB) || defined(WOLFSSL_STM32H7) || \
     defined(WOLFSSL_STM32G0) || defined(WOLFSSL_STM32U5) || \
-    defined(WOLFSSL_STM32H5)
+    defined(WOLFSSL_STM32H5) || defined(WOLFSSL_STM32WL)
 
     #define SIZEOF_LONG_LONG 8
     #ifndef CHAR_BIT
@@ -1422,7 +1422,8 @@ extern void uITRON4_free(void *p) ;
         #define STM32_CRYPTO
 
         #if defined(WOLFSSL_STM32L4) || defined(WOLFSSL_STM32L5) || \
-            defined(WOLFSSL_STM32WB) || defined(WOLFSSL_STM32U5)
+            defined(WOLFSSL_STM32WB) || defined(WOLFSSL_STM32U5) || \
+            defined(WOLFSSL_STM32WL)
             #define NO_AES_192 /* hardware does not support 192-bit */
         #endif
     #endif
@@ -1453,6 +1454,8 @@ extern void uITRON4_free(void *p) ;
             #include "stm32h7xx_hal.h"
         #elif defined(WOLFSSL_STM32WB)
             #include "stm32wbxx_hal.h"
+        #elif defined(WOLFSSL_STM32WL)
+            #include "stm32wlxx_hal.h"
         #elif defined(WOLFSSL_STM32G0)
             #include "stm32g0xx_hal.h"
         #elif defined(WOLFSSL_STM32U5)
@@ -1466,6 +1469,11 @@ extern void uITRON4_free(void *p) ;
 
         #ifndef STM32_HAL_TIMEOUT
             #define STM32_HAL_TIMEOUT   0xFF
+        #endif
+
+        #if defined(WOLFSSL_STM32_PKA) && !defined(WOLFSSL_SP_INT_NEGATIVE)
+            /* enable the negative support for abs(a) |a| */
+            #define WOLFSSL_SP_INT_NEGATIVE
         #endif
     #else
         #if defined(WOLFSSL_STM32F2)
@@ -2123,6 +2131,9 @@ extern void uITRON4_free(void *p) ;
     #ifdef WOLFSSL_SP_MATH
         /* for single precision math only make sure the enabled key sizes are
          * included in the ECC curve table */
+        #if defined(WOLFSSL_SP_NO_256) && !defined(NO_ECC256)
+            #define NO_ECC256
+        #endif
         #if defined(WOLFSSL_SP_384) && !defined(HAVE_ECC384)
             #define HAVE_ECC384
         #endif
@@ -3014,6 +3025,15 @@ extern void uITRON4_free(void *p) ;
 #error Please do not define both HAVE_LIBOQS and HAVE_PQM4.
 #endif
 
+#if defined(HAVE_PQC) && defined(WOLFSSL_DTLS13) && \
+    !defined(WOLFSSL_DTLS_CH_FRAG)
+#warning "Using DTLS 1.3 + pqc without WOLFSSL_DTLS_CH_FRAG will probably" \
+         "fail.Use --enable-dtls-frag-ch to enable it."
+#endif
+#if !defined(WOLFSSL_DTLS13) && defined(WOLFSSL_DTLS_CH_FRAG)
+#error "WOLFSSL_DTLS_CH_FRAG only works with DTLS 1.3"
+#endif
+
 /* SRTP requires DTLS */
 #if defined(WOLFSSL_SRTP) && !defined(WOLFSSL_DTLS)
     #error The SRTP extension requires DTLS
@@ -3129,11 +3149,6 @@ extern void uITRON4_free(void *p) ;
 
     #ifdef NO_CERTS
         /* Turning off WOLFSSL_SYS_CA_CERTS b/c NO_CERTS is defined */
-        #undef WOLFSSL_SYS_CA_CERTS
-    #endif
-
-    #if defined(__APPLE__) && !defined(HAVE_SECURITY_SECTRUSTSETTINGS_H)
-        /* Turning off WOLFSSL_SYS_CA_CERTS b/c no Security/SecTrustSettings.h header */
         #undef WOLFSSL_SYS_CA_CERTS
     #endif
 #endif /* WOLFSSL_SYS_CA_CERTS */

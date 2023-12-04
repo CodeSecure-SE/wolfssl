@@ -70,6 +70,8 @@ ASN Options:
  * WOLFSSL_NO_OCSP_DATE_CHECK: Disable date checks for OCSP responses. This
     may be required when the system's real-time clock is not very accurate.
     It is recommended to enforce the nonce check instead if possible.
+ * WOLFSSL_NO_CRL_DATE_CHECK: Disable date checks for CRL's.
+ * WOLFSSL_NO_CRL_NEXT_DATE: Do not fail if CRL next date is missing
  * WOLFSSL_FORCE_OCSP_NONCE_CHECK: Require nonces to be available in OCSP
     responses. The nonces are optional and may not be supported by all
     responders. If it can be ensured that the used responder sends nonces this
@@ -13035,7 +13037,7 @@ static int GenerateDNSEntryRIDString(DNS_entry* entry, void* heap)
             j = 0;
             /* Append each number of dotted form. */
             for (i = 0; i < tmpSize; i++) {
-                if (j > MAX_OID_SZ) {
+                if (j >= MAX_OID_SZ) {
                     return BUFFER_E;
                 }
 
@@ -18567,7 +18569,7 @@ static int DecodeBasicCaConstraint(const byte* input, int sz, DecodedCert* cert)
     word32 idx = 0;
     byte isCA = 0;
 
-    WOLFSSL_ENTER("DecodeBasicCaConstraints");
+    WOLFSSL_ENTER("DecodeBasicCaConstraint");
 
     CALLOC_ASNGETDATA(dataASN, basicConsASN_Length, ret, cert->heap);
 
@@ -19054,9 +19056,9 @@ enum {
 #define authKeyIdASN_Length (sizeof(authKeyIdASN) / sizeof(ASNItem))
 #endif
 
-/* Decode authority information access extension in a certificate.
+/* Decode authority key identifier extension in a certificate.
  *
- * X.509: RFC 5280, 4.2.2.1 - Authority Information Access.
+ * X.509: RFC 5280, 4.2.1.1 - Authority Key Identifier.
  *
  * @param [in]      input  Buffer holding data.
  * @param [in]      sz     Size of data in buffer.
@@ -19178,7 +19180,7 @@ static int DecodeAuthKeyId(const byte* input, word32 sz, DecodedCert* cert)
 
 /* Decode subject key id extension in a certificate.
  *
- * X.509: RFC 5280, 4.2.2.1 - Authority Information Access.
+ * X.509: RFC 5280, 4.2.1.2 - Subject Key Identifier.
  *
  * @param [in]      input  Buffer holding data.
  * @param [in]      sz     Size of data in buffer.
@@ -19228,7 +19230,7 @@ enum {
 
 /* Decode key usage extension in a certificate.
  *
- * X.509: RFC 5280, 4.2.2.1 - Authority Information Access.
+ * X.509: RFC 5280, 4.2.1.3 - Key Usage.
  *
  * @param [in]      input  Buffer holding data.
  * @param [in]      sz     Size of data in buffer.
@@ -19970,7 +19972,7 @@ exit:
                     return ASN_PARSE_E;
                 }
             #ifndef WOLFSSL_DUP_CERTPOL
-                /* From RFC 5280 section 4.2.1.3 "A certificate policy OID MUST
+                /* From RFC 5280 section 4.2.1.4 "A certificate policy OID MUST
                  * NOT appear more than once in a certificate policies
                  * extension". This is a sanity check for duplicates.
                  * extCertPolicies should only have OID values, additional
@@ -20079,7 +20081,7 @@ exit:
                 }
             }
             #ifndef WOLFSSL_DUP_CERTPOL
-            /* From RFC 5280 section 4.2.1.3 "A certificate policy OID MUST
+            /* From RFC 5280 section 4.2.1.4 "A certificate policy OID MUST
              * NOT appear more than once in a certificate policies
              * extension". This is a sanity check for duplicates.
              * extCertPolicies should only have OID values, additional
@@ -20417,7 +20419,19 @@ static int DecodeExtensionType(const byte* input, word32 length, word32 oid,
         case AUTH_INFO_OID:
             VERIFY_AND_SET_OID(cert->extAuthInfoSet);
             cert->extAuthInfoCrit = critical ? 1 : 0;
-            if (DecodeAuthInfo(input, length, cert) < 0) {
+        #ifndef WOLFSSL_ALLOW_CRIT_AIA
+            /* This check is added due to RFC 5280 section 4.2.2.1
+            * stating that conforming CA's must mark this extension
+            * as non-critical. When parsing extensions check that
+            * certificate was made in compliance with this. */
+            if (critical) {
+                WOLFSSL_MSG("Critical Authority Information Access is not"
+                            "allowed");
+                WOLFSSL_MSG("Use macro WOLFSSL_ALLOW_CRIT_AIA if wanted");
+                ret = ASN_CRIT_EXT_E;
+            }
+        #endif
+            if ((ret == 0) && (DecodeAuthInfo(input, length, cert) < 0)) {
                 ret = ASN_PARSE_E;
             }
             break;
@@ -20433,17 +20447,17 @@ static int DecodeExtensionType(const byte* input, word32 length, word32 oid,
         case AUTH_KEY_OID:
             VERIFY_AND_SET_OID(cert->extAuthKeyIdSet);
             cert->extAuthKeyIdCrit = critical ? 1 : 0;
-            #ifndef WOLFSSL_ALLOW_CRIT_SKID
-                /* This check is added due to RFC 5280 section 4.2.1.1
-                 * stating that conforming CA's must mark this extension
-                 * as non-critical. When parsing extensions check that
-                 * certificate was made in compliance with this. */
-                if (critical) {
-                    WOLFSSL_MSG("Critical Auth Key ID is not allowed");
-                    WOLFSSL_MSG("Use macro WOLFSSL_ALLOW_CRIT_SKID if wanted");
-                    ret = ASN_CRIT_EXT_E;
-                }
-            #endif
+        #ifndef WOLFSSL_ALLOW_CRIT_AKID
+            /* This check is added due to RFC 5280 section 4.2.1.1
+             * stating that conforming CA's must mark this extension
+             * as non-critical. When parsing extensions check that
+             * certificate was made in compliance with this. */
+            if (critical) {
+                WOLFSSL_MSG("Critical Auth Key ID is not allowed");
+                WOLFSSL_MSG("Use macro WOLFSSL_ALLOW_CRIT_AKID if wanted");
+                ret = ASN_CRIT_EXT_E;
+            }
+        #endif
             if ((ret == 0) && (DecodeAuthKeyId(input, length, cert) < 0)) {
                 ret = ASN_PARSE_E;
             }
@@ -20453,17 +20467,17 @@ static int DecodeExtensionType(const byte* input, word32 length, word32 oid,
         case SUBJ_KEY_OID:
             VERIFY_AND_SET_OID(cert->extSubjKeyIdSet);
             cert->extSubjKeyIdCrit = critical ? 1 : 0;
-            #ifndef WOLFSSL_ALLOW_CRIT_SKID
-                /* This check is added due to RFC 5280 section 4.2.1.2
-                 * stating that conforming CA's must mark this extension
-                 * as non-critical. When parsing extensions check that
-                 * certificate was made in compliance with this. */
-                if (critical) {
-                    WOLFSSL_MSG("Critical Subject Key ID is not allowed");
-                    WOLFSSL_MSG("Use macro WOLFSSL_ALLOW_CRIT_SKID if wanted");
-                    ret = ASN_CRIT_EXT_E;
-                }
-            #endif
+        #ifndef WOLFSSL_ALLOW_CRIT_SKID
+            /* This check is added due to RFC 5280 section 4.2.1.2
+             * stating that conforming CA's must mark this extension
+             * as non-critical. When parsing extensions check that
+             * certificate was made in compliance with this. */
+            if (critical) {
+                WOLFSSL_MSG("Critical Subject Key ID is not allowed");
+                WOLFSSL_MSG("Use macro WOLFSSL_ALLOW_CRIT_SKID if wanted");
+                ret = ASN_CRIT_EXT_E;
+            }
+        #endif
 
             if ((ret == 0) && (DecodeSubjKeyId(input, length, cert) < 0)) {
                 ret = ASN_PARSE_E;
@@ -20472,21 +20486,21 @@ static int DecodeExtensionType(const byte* input, word32 length, word32 oid,
 
         /* Certificate policies. */
         case CERT_POLICY_OID:
-            #if defined(WOLFSSL_SEP) || defined(WOLFSSL_QT)
-                VERIFY_AND_SET_OID(cert->extCertPolicySet);
-                #if defined(OPENSSL_EXTRA) || \
-                    defined(OPENSSL_EXTRA_X509_SMALL)
-                    cert->extCertPolicyCrit = critical ? 1 : 0;
-                #endif
+        #if defined(WOLFSSL_SEP) || defined(WOLFSSL_QT)
+            VERIFY_AND_SET_OID(cert->extCertPolicySet);
+            #if defined(OPENSSL_EXTRA) || \
+                defined(OPENSSL_EXTRA_X509_SMALL)
+                cert->extCertPolicyCrit = critical ? 1 : 0;
             #endif
-            #if defined(WOLFSSL_SEP) || defined(WOLFSSL_CERT_EXT) || \
-                defined(WOLFSSL_QT)
-                if (DecodeCertPolicy(input, length, cert) < 0) {
-                    ret = ASN_PARSE_E;
-                }
-            #else
-                WOLFSSL_MSG("Certificate Policy extension not supported yet.");
-            #endif
+        #endif
+        #if defined(WOLFSSL_SEP) || defined(WOLFSSL_CERT_EXT) || \
+            defined(WOLFSSL_QT)
+            if (DecodeCertPolicy(input, length, cert) < 0) {
+                ret = ASN_PARSE_E;
+            }
+        #else
+            WOLFSSL_MSG("Certificate Policy extension not supported yet.");
+        #endif
             break;
 
         /* Key usage. */
@@ -28995,6 +29009,12 @@ int AddSignature(byte* buf, int bodySz, const byte* sig, int sigSz,
         /* Set signature OID and signature data. */
         SetASN_OID(&dataASN[SIGASN_IDX_SIGALGO_OID], (word32)sigAlgoType,
                    oidSigType);
+        if (dataASN[SIGASN_IDX_SIGALGO_OID].data.buffer.data == NULL) {
+            /* The OID was not found or compiled in! */
+            ret = ASN_UNKNOWN_OID_E;
+        }
+    }
+    if (ret == 0) {
         if (IsSigAlgoECC((word32)sigAlgoType)) {
             /* ECDSA and EdDSA doesn't have NULL tagged item. */
             dataASN[SIGASN_IDX_SIGALGO_NULL].noOut = 1;
@@ -33595,6 +33615,9 @@ int DecodeAsymKey(const byte* input, word32* inOutIdx, word32 inSz,
 
     if (input == NULL || inOutIdx == NULL || inSz == 0 ||
         privKey == NULL || privKeyLen == NULL) {
+    #ifdef WOLFSSL_ASN_TEMPLATE
+        FREE_ASNGETDATA(dataASN, NULL);
+    #endif
         return BAD_FUNC_ARG;
     }
 
@@ -36646,7 +36669,7 @@ static int ParseCRL_CertList(RevokedCert* rcert, DecodedCRL* dcrl,
     if (doNextDate)
 #endif
     {
-#ifndef NO_ASN_TIME
+#if !defined(NO_ASN_TIME) && !defined(WOLFSSL_NO_CRL_DATE_CHECK)
         if (verify != NO_VERIFY &&
                 !XVALIDATE_DATE(dcrl->nextDate, dcrl->nextDateFormat, AFTER)) {
             WOLFSSL_MSG("CRL after date is no longer valid");
@@ -37176,7 +37199,7 @@ end:
         dcrl->nextDateFormat = (dataASN[CRLASN_IDX_TBS_NEXTUPDATE_UTC].tag != 0)
                 ? dataASN[CRLASN_IDX_TBS_NEXTUPDATE_UTC].tag
                 : dataASN[CRLASN_IDX_TBS_NEXTUPDATE_GT].tag;
-    #ifndef NO_ASN_TIME
+    #if !defined(NO_ASN_TIME) && !defined(WOLFSSL_NO_CRL_DATE_CHECK)
         if (dcrl->nextDateFormat != 0) {
             /* Next date was set, so validate it. */
             if (verify != NO_VERIFY &&
@@ -37187,8 +37210,8 @@ end:
             }
         }
     }
-    if (ret == 0) {
-    #endif
+    if (ret == 0) { /* in "no time" cases above "ret" is not set */
+    #endif /* !NO_ASN_TIME && !WOLFSSL_NO_CRL_DATE_CHECK */
     #ifdef OPENSSL_EXTRA
         /* Parse and store the issuer name. */
         dcrl->issuerSz = GetASNItem_Length(dataASN[CRLASN_IDX_TBS_ISSUER],
@@ -37502,8 +37525,10 @@ int wc_MIME_parse_headers(char* in, int inLen, MimeHdr** headers)
             }
             else if (mimeStatus == MIME_BODYVAL && cur == ';' && pos >= 1) {
                 end = pos-1;
-                if (bodyVal != NULL)
+                if (bodyVal != NULL) {
                     XFREE(bodyVal, NULL, DYNAMIC_TYPE_PKCS7);
+                    bodyVal = NULL;
+                }
                 ret = wc_MIME_header_strip(curLine, &bodyVal, start, end);
                 if (ret) {
                     goto error;
@@ -37596,9 +37621,12 @@ error:
     if (ret != 0)
         wc_MIME_free_hdrs(curHdr);
     wc_MIME_free_hdrs(nextHdr);
-    XFREE(nameAttr, NULL, DYNAMIC_TYPE_PKCS7);
-    XFREE(bodyVal, NULL, DYNAMIC_TYPE_PKCS7);
-    XFREE(nextParam, NULL, DYNAMIC_TYPE_PKCS7);
+    if (nameAttr != NULL)
+        XFREE(nameAttr, NULL, DYNAMIC_TYPE_PKCS7);
+    if (bodyVal != NULL)
+        XFREE(bodyVal, NULL, DYNAMIC_TYPE_PKCS7);
+    if (nextParam != NULL)
+        XFREE(nextParam, NULL, DYNAMIC_TYPE_PKCS7);
 
     return ret;
 }

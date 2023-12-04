@@ -2110,7 +2110,7 @@ int wolfSSL_PEM_write_RSAPrivateKey(XFILE fp, WOLFSSL_RSA *rsa,
 {
     int ret = 1;
     byte* pem = NULL;
-    int pLen;
+    int pLen = 0;
 
     (void)cb;
     (void)arg;
@@ -3556,13 +3556,16 @@ int wolfSSL_RSA_verify_PKCS1_PSS(WOLFSSL_RSA *rsa, const unsigned char *mHash,
 
     if (ret == 1) {
         /* Calculate the salt length to use for special cases. */
-        /* TODO: use special case wolfCrypt values. */
         switch (saltLen) {
         /* Negative saltLen values are treated differently */
         case RSA_PSS_SALTLEN_DIGEST:
             saltLen = hashLen;
             break;
-        case RSA_PSS_SALTLEN_MAX_SIGN:
+        case RSA_PSS_SALTLEN_AUTO:
+        #ifdef WOLFSSL_PSS_SALT_LEN_DISCOVER
+            saltLen = RSA_PSS_SALT_LEN_DISCOVER;
+            break;
+        #endif
         case RSA_PSS_SALTLEN_MAX:
         #ifdef WOLFSSL_PSS_LONG_SALT
             saltLen = emLen - hashLen - 2;

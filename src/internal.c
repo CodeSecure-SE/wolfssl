@@ -215,8 +215,15 @@ WOLFSSL_CALLBACKS needs LARGE_STATIC_BUFFERS, please add LARGE_STATIC_BUFFERS
 
 #ifdef WOLFSSL_DTLS
     static int _DtlsCheckWindow(WOLFSSL* ssl);
-    static int _DtlsUpdateWindow(WOLFSSL* ssl);
 #endif
+
+#if defined(__APPLE__) && defined(WOLFSSL_SYS_CA_CERTS)
+#include <Security/SecCertificate.h>
+#include <Security/SecTrust.h>
+#include <Security/SecPolicy.h>
+static int DoAppleNativeCertValidation(const WOLFSSL_BUFFER_INFO* certs,
+                                            int totalCerts);
+#endif /* #if defined(__APPLE__) && defined(WOLFSSL_SYS_CA_CERTS) */
 
 #ifdef WOLFSSL_DTLS13
 #ifndef WOLFSSL_DTLS13_SEND_MOREACK_DEFAULT
@@ -271,6 +278,7 @@ static int SSL_hmac(WOLFSSL* ssl, byte* digest, const byte* in, word32 sz,
     static int  SessionSecret_callback_Tls13(WOLFSSL* ssl, int id,
                        const unsigned char* secret, int secretSz, void* ctx);
 #endif
+
 
     /* Label string for client random. */
     #define SSC_CR      "CLIENT_RANDOM"
@@ -2426,6 +2434,11 @@ int InitSSL_Ctx(WOLFSSL_CTX* ctx, WOLFSSL_METHOD* method, void* heap)
     ctx->devId = MAXQ_DEVICE_ID;
     maxq10xx_SetupPkCallbacks(ctx, &method->version);
 #endif /* WOLFSSL_MAXQ10XX_TLS */
+
+#if defined(__APPLE__) && defined(WOLFSSL_SYS_CA_CERTS)
+    /* Should only be set when wolfSSL_CTX_load_system_CA_certs() is called */
+    ctx->doAppleNativeCertValidationFlag = 0;
+#endif /* defined(__APPLE__) && defined(WOLFSSL_SYS_CA_CERTS) */
 
     return ret;
 }
@@ -6455,7 +6468,7 @@ int InitSSL_Suites(WOLFSSL* ssl)
    WOLFSSL_SUCCESS return value on success */
 int SetSSL_CTX(WOLFSSL* ssl, WOLFSSL_CTX* ctx, int writeDup)
 {
-    int ret;
+    int ret = WOLFSSL_SUCCESS; /* set default ret */
     byte newSSL;
 
     WOLFSSL_ENTER("SetSSL_CTX");
@@ -6475,38 +6488,35 @@ int SetSSL_CTX(WOLFSSL* ssl, WOLFSSL_CTX* ctx, int writeDup)
     if (!newSSL) {
         WOLFSSL_MSG("freeing old ctx to decrement reference count. Switching ctx.");
         wolfSSL_CTX_free(ssl->ctx);
-#if defined(WOLFSSL_HAPROXY)
-        wolfSSL_CTX_free(ssl->initial_ctx);
-#endif
     }
 
     /* increment CTX reference count */
-    wolfSSL_RefInc(&ctx->ref, &ret);
+    ret = wolfSSL_CTX_up_ref(ctx);
 #ifdef WOLFSSL_REFCNT_ERROR_RETURN
-    if (ret < 0) {
+    if (ret != WOLFSSL_SUCCESS) {
         return ret;
     }
 #else
     (void)ret;
 #endif
-    ret = WOLFSSL_SUCCESS; /* set default ret */
 
     ssl->ctx     = ctx; /* only for passing to calls, options could change */
     /* Don't change version on a SSL object that has already started a
      * handshake */
 #if defined(WOLFSSL_HAPROXY)
-    ret = wolfSSL_CTX_up_ref(ctx);
-    if (ret == WOLFSSL_SUCCESS) {
-        ssl->initial_ctx = ctx; /* Save access to session key materials */
+    if (ssl->initial_ctx == NULL) {
+        ret = wolfSSL_CTX_up_ref(ctx);
+        if (ret == WOLFSSL_SUCCESS) {
+            ssl->initial_ctx = ctx; /* Save access to session key materials */
+        }
+        else {
+        #ifdef WOLFSSL_REFCNT_ERROR_RETURN
+            return ret;
+        #else
+            (void)ret;
+        #endif
+        }
     }
-    else {
-    #ifdef WOLFSSL_REFCNT_ERROR_RETURN
-        return ret;
-    #else
-        (void)ret;
-    #endif
-    }
-
 #endif
     if (!ssl->msgsReceived.got_client_hello &&
             !ssl->msgsReceived.got_server_hello)
@@ -7185,13 +7195,7 @@ int InitSSL(WOLFSSL* ssl, WOLFSSL_CTX* ctx, int writeDup)
     #endif
     #if defined(WOLFSSL_SCTP) || defined(WOLFSSL_DTLS_MTU)
         ssl->dtlsMtuSz                  = ctx->dtlsMtuSz;
-        ssl->dtls_expected_rx           = ssl->dtlsMtuSz;
-    #else
-        ssl->dtls_expected_rx = MAX_MTU;
     #endif
-    /* Add some bytes so that we can operate with slight difference
-     * in set MTU size on each peer */
-    ssl->dtls_expected_rx               += DTLS_MTU_ADDITIONAL_READ_BUFFER;
     ssl->dtls_timeout_init              = DTLS_TIMEOUT_INIT;
     ssl->dtls_timeout_max               = DTLS_TIMEOUT_MAX;
     ssl->dtls_timeout                   = ssl->dtls_timeout_init;
@@ -7620,6 +7624,12 @@ int AllocKey(WOLFSSL* ssl, int type, void** pKey)
     /* Sanity check key destination */
     if (*pKey != NULL) {
         WOLFSSL_MSG("Key already present!");
+    #ifdef WOLFSSL_ASYNC_CRYPT
+        /* allow calling this again for async reentry */
+        if (ssl->error == WC_PENDING_E) {
+            return 0;
+        }
+    #endif
         return BAD_STATE_E;
     }
 
@@ -8210,7 +8220,7 @@ void SSL_ResourceFree(WOLFSSL* ssl)
         if (FreeFixedIO(ctx_heap, &(ssl_hint->inBuf)) != 1) {
             WOLFSSL_MSG("Error freeing fixed output buffer");
         }
-        if (ssl_hint->haFlag) { /* check if handshake count has been decreased*/
+        if (ssl_hint->haFlag && ctx_heap->curHa > 0) { /* check if handshake count has been decreased*/
             ctx_heap->curHa--;
         }
         wc_UnLockMutex(&(ctx_heap->memory_mutex));
@@ -8243,6 +8253,10 @@ void SSL_ResourceFree(WOLFSSL* ssl)
 #endif /* WOLFSSL_DTLS13 */
 #ifdef WOLFSSL_QUIC
     wolfSSL_quic_free(ssl);
+#endif
+#if defined(WOLFSSL_HAPROXY)
+    wolfSSL_CTX_free(ssl->initial_ctx);
+    ssl->initial_ctx = NULL;
 #endif
 }
 
@@ -8464,7 +8478,9 @@ void FreeHandshakeResources(WOLFSSL* ssl)
         if (wc_LockMutex(&(ctx_heap->memory_mutex)) != 0) {
             WOLFSSL_MSG("Bad memory_mutex lock");
         }
-        ctx_heap->curHa--;
+        if (ctx_heap->curHa > 0) {
+            ctx_heap->curHa--;
+        }
         ssl_hint->haFlag = 0; /* set to zero since handshake has been dec */
         wc_UnLockMutex(&(ctx_heap->memory_mutex));
     #ifdef WOLFSSL_HEAP_TEST
@@ -10596,13 +10612,12 @@ int CheckAvailableSize(WOLFSSL *ssl, int size)
 
 #ifdef WOLFSSL_DTLS
     if (ssl->options.dtls) {
-        if (size + ssl->buffers.outputBuffer.length >
 #if defined(WOLFSSL_SCTP) || defined(WOLFSSL_DTLS_MTU)
-                ssl->dtlsMtuSz
+        word32 mtu = (word32)ssl->dtlsMtuSz;
 #else
-                ssl->dtls_expected_rx
+        word32 mtu = MAX_MTU;
 #endif
-                ) {
+        if ((word32)size + ssl->buffers.outputBuffer.length > mtu) {
             int ret;
             WOLFSSL_MSG("CheckAvailableSize() flushing buffer "
                         "to make room for new message");
@@ -10610,12 +10625,7 @@ int CheckAvailableSize(WOLFSSL *ssl, int size)
                 return ret;
             }
         }
-        if (size > (int)
-#if defined(WOLFSSL_SCTP) || defined(WOLFSSL_DTLS_MTU)
-                ssl->dtlsMtuSz
-#else
-                ssl->dtls_expected_rx
-#endif
+        if ((word32)size > mtu
 #ifdef WOLFSSL_DTLS13
             /* DTLS1.3 uses the output buffer to store the full message and deal
                with fragmentation later in dtls13HandshakeSend() */
@@ -13349,6 +13359,7 @@ int LoadCertByIssuer(WOLFSSL_X509_STORE* store, X509_NAME* issuer, int type)
         }
 
         XFREE(filename, NULL, DYNAMIC_TYPE_OPENSSL);
+        filename = NULL;
     }
 #else
     (void) type;
@@ -13669,6 +13680,24 @@ static int ProcessPeerCertCheckKey(WOLFSSL* ssl, ProcPeerCertArgs* args)
 
     return ret;
 }
+
+#ifdef HAVE_CRL
+static int ProcessPeerCertsChainCRLCheck(WOLFSSL_CERT_MANAGER* cm, Signer* ca)
+{
+    Signer* prev = NULL;
+    int ret = 0;
+    /* End loop if no more issuers found or if we have
+     * found a self signed cert (ca == prev) */
+    for (; ret == 0 && ca != NULL && ca != prev;
+            prev = ca, ca = GetCAByName(cm, ca->issuerNameHash)) {
+        ret = CheckCertCRL_ex(cm->crl, ca->issuerNameHash, NULL, 0,
+                ca->serialHash, NULL, 0, NULL);
+        if (ret != 0)
+            break;
+    }
+    return ret;
+}
+#endif
 
 int ProcessPeerCerts(WOLFSSL* ssl, byte* input, word32* inOutIdx,
                      word32 totalSz)
@@ -14147,6 +14176,16 @@ int ProcessPeerCerts(WOLFSSL* ssl, byte* input, word32* inOutIdx,
                                     WOLFSSL_ERROR_VERBOSE(ret);
                                     WOLFSSL_MSG("\tCRL check not ok");
                                 }
+                                if (ret == 0 &&
+                                        args->certIdx == args->totalCerts-1) {
+                                    ret = ProcessPeerCertsChainCRLCheck(
+                                            SSL_CM(ssl), args->dCert->ca);
+                                    if (ret != 0) {
+                                        WOLFSSL_ERROR_VERBOSE(ret);
+                                        WOLFSSL_MSG("\tCRL chain check not ok");
+                                        args->fatal = 0;
+                                    }
+                                }
                             }
                         }
                 #endif /* HAVE_CRL */
@@ -14186,6 +14225,26 @@ int ProcessPeerCerts(WOLFSSL* ssl, byte* input, word32* inOutIdx,
                         }
                     }
                 #endif /* WOLFSSL_ALT_CERT_CHAINS */
+
+                #if defined(__APPLE__) && defined(WOLFSSL_SYS_CA_CERTS)
+                    /* If we are using native Apple CA validation, it is okay
+                     * for a CA cert to fail validation here, as we will verify
+                     * the entire chain when we hit the peer (leaf) cert */
+                    if ((ssl->ctx->doAppleNativeCertValidationFlag)
+                        && (ret == ASN_NO_SIGNER_E)) {
+
+                        WOLFSSL_MSG("Bypassing errors to allow for Apple native"
+                                    " CA validation");
+                        ret = 0; /* clear errors and continue */
+                        args->verifyErr = 0;
+                        #if defined(OPENSSL_EXTRA) \
+                            || defined(OPENSSL_EXTRA_X509_SMALL)
+                        ssl->peerVerifyRet = 0;
+                        #endif
+                        /* do not add to certificate manager */
+                        skipAddCA = 1;
+                    }
+                #endif /* defined(__APPLE__) && defined(WOLFSSL_SYS_CA_CERTS) */
 
                     /* Do verify callback */
                     ret = DoVerifyCallback(SSL_CM(ssl), ssl, ret, args);
@@ -14255,7 +14314,7 @@ int ProcessPeerCerts(WOLFSSL* ssl, byte* input, word32* inOutIdx,
                     FreeDecodedCert(args->dCert);
                     args->dCertInit = 0;
                     args->count--;
-                } /* while (count > 0 && !args->haveTrustPeer) */
+                } /* while (count > 1 && !args->haveTrustPeer) */
             } /* if (count > 0) */
 
             /* Check for error */
@@ -14376,6 +14435,7 @@ int ProcessPeerCerts(WOLFSSL* ssl, byte* input, word32* inOutIdx,
                 }
                 else {
                     WOLFSSL_MSG("Failed to verify Peer's cert");
+
                     #if defined(OPENSSL_EXTRA) || defined(OPENSSL_EXTRA_X509_SMALL)
                     if (ssl->peerVerifyRet == 0) { /* Return first cert error here */
                         if (ret == ASN_BEFORE_DATE_E) {
@@ -14393,6 +14453,7 @@ int ProcessPeerCerts(WOLFSSL* ssl, byte* input, word32* inOutIdx,
                         }
                     }
                     #endif
+
                     if (ssl->verifyCallback) {
                         WOLFSSL_MSG(
                             "\tCallback override available, will continue");
@@ -14401,6 +14462,18 @@ int ProcessPeerCerts(WOLFSSL* ssl, byte* input, word32* inOutIdx,
                         if (args->fatal)
                             DoCertFatalAlert(ssl, ret);
                     }
+                    #if defined(__APPLE__) && defined(WOLFSSL_SYS_CA_CERTS)
+                    /* Disregard failure to verify peer cert, as we will verify
+                     * the whole chain with the native API later */
+                    else if (ssl->ctx->doAppleNativeCertValidationFlag) {
+                        WOLFSSL_MSG("\tApple native CA validation override"
+                                    " available, will continue");
+                        /* check if fatal error */
+                        args->fatal = (args->verifyErr) ? 1 : 0;
+                        if (args->fatal)
+                            DoCertFatalAlert(ssl, ret);
+                    }
+                    #endif/*defined(__APPLE__)&& defined(WOLFSSL_SYS_CA_CERTS)*/
                     else {
                         WOLFSSL_MSG("\tNo callback override available, fatal");
                         args->fatal = 1;
@@ -14550,9 +14623,25 @@ int ProcessPeerCerts(WOLFSSL* ssl, byte* input, word32* inOutIdx,
                                 ssl->peerVerifyRet =
                                         ret == CRL_CERT_REVOKED
                                             ? WOLFSSL_X509_V_ERR_CERT_REVOKED
-                                            : WOLFSSL_X509_V_ERR_CERT_REJECTED;;
+                                            : WOLFSSL_X509_V_ERR_CERT_REJECTED;
                             }
                         #endif
+                        }
+                    }
+                    if (ret == 0 && doLookup && SSL_CM(ssl)->crlEnabled &&
+                            SSL_CM(ssl)->crlCheckAll && args->totalCerts == 1) {
+                        /* Check the entire cert chain */
+                        if (args->dCert->ca != NULL) {
+                            ret = ProcessPeerCertsChainCRLCheck(SSL_CM(ssl),
+                                    args->dCert->ca);
+                            if (ret != 0) {
+                                WOLFSSL_ERROR_VERBOSE(ret);
+                                WOLFSSL_MSG("\tCRL chain check not ok");
+                                args->fatal = 0;
+                            }
+                        }
+                        else {
+                            WOLFSSL_MSG("No CA signer set");
                         }
                     }
                 #endif /* HAVE_CRL */
@@ -15144,6 +15233,22 @@ int ProcessPeerCerts(WOLFSSL* ssl, byte* input, word32* inOutIdx,
             }
         #endif
 
+        #if defined(__APPLE__) && defined(WOLFSSL_SYS_CA_CERTS)
+            /* If we can't validate the peer cert chain against the CAs loaded
+             * into wolfSSL, try to validate against the system certificates
+             * using Apple's native trust APIs */
+            if ((ret != 0) && (ssl->ctx->doAppleNativeCertValidationFlag)) {
+                if (DoAppleNativeCertValidation(args->certs,
+                                                     args->totalCerts)) {
+                    WOLFSSL_MSG("Apple native cert chain validation SUCCESS");
+                    ret = 0;
+                }
+                else {
+                    WOLFSSL_MSG("Apple native cert chain validation FAIL");
+                }
+            }
+        #endif /* defined(__APPLE__) && defined(WOLFSSL_SYS_CA_CERTS) */
+
             /* Do verify callback */
             ret = DoVerifyCallback(SSL_CM(ssl), ssl, ret, args);
 
@@ -15380,6 +15485,8 @@ static int DoCertificateStatus(WOLFSSL* ssl, byte* input, word32* inOutIdx,
                         else if (idx == 1) /* server cert must be OK */
                             ret = BAD_CERTIFICATE_STATUS_ERROR;
                     }
+
+                    /* only frees 'single' if single->isDynamic is set */
                     FreeOcspResponse(response);
 
                     *inOutIdx   += status_length;
@@ -16771,6 +16878,8 @@ static WC_INLINE int Dtls13CheckWindow(WOLFSSL* ssl)
     int wordIndex;
     word32 diff;
 
+    WOLFSSL_ENTER("Dtls13CheckWindow");
+
     if (ssl->dtls13DecryptEpoch == NULL) {
         WOLFSSL_MSG("Can't find decrypting epoch");
         return 0;
@@ -16938,7 +17047,7 @@ int wolfSSL_DtlsUpdateWindow(word16 cur_hi, word32 cur_lo,
     return 1;
 }
 
-static int _DtlsUpdateWindow(WOLFSSL* ssl)
+int DtlsUpdateWindow(WOLFSSL* ssl)
 {
     WOLFSSL_DTLS_PEERSEQ* peerSeq = ssl->keys.peerSeq;
     word16 *next_hi;
@@ -17004,7 +17113,13 @@ static int _DtlsUpdateWindow(WOLFSSL* ssl)
 }
 
 #ifdef WOLFSSL_DTLS13
-static WC_INLINE int Dtls13UpdateWindow(WOLFSSL* ssl)
+
+/* Update DTLS 1.3 window
+ * Return
+ *   0 on successful update
+ *  <0 on error
+ */
+static int Dtls13UpdateWindow(WOLFSSL* ssl)
 {
     w64wrapper nextSeq, seq;
     w64wrapper diff64;
@@ -17012,14 +17127,26 @@ static WC_INLINE int Dtls13UpdateWindow(WOLFSSL* ssl)
     int wordOffset;
     int wordIndex;
     word32 diff;
+    Dtls13Epoch* e = ssl->dtls13DecryptEpoch;
+
+    WOLFSSL_ENTER("Dtls13UpdateWindow");
 
     if (ssl->dtls13DecryptEpoch == NULL) {
         WOLFSSL_MSG("Can't find decrypting Epoch");
         return BAD_STATE_E;
     }
 
-    nextSeq = ssl->dtls13DecryptEpoch->nextPeerSeqNumber;
-    window = ssl->dtls13DecryptEpoch->window;
+    if (!w64Equal(ssl->keys.curEpoch64, ssl->dtls13DecryptEpoch->epochNumber)) {
+        /* ssl->dtls13DecryptEpoch has been updated since we received the msg */
+        e = Dtls13GetEpoch(ssl, ssl->keys.curEpoch64);
+        if (e == NULL) {
+            WOLFSSL_MSG("Can't find decrypting Epoch");
+            return BAD_STATE_E;
+        }
+    }
+
+    nextSeq = e->nextPeerSeqNumber;
+    window = e->window;
     seq = ssl->keys.curSeq;
 
     /* seq < nextSeq */
@@ -17040,7 +17167,7 @@ static WC_INLINE int Dtls13UpdateWindow(WOLFSSL* ssl)
         }
 
         window[wordIndex] |= (1 << wordOffset);
-        return 1;
+        return 0;
     }
 
     /* seq >= nextSeq, seq - nextSeq */
@@ -17051,9 +17178,17 @@ static WC_INLINE int Dtls13UpdateWindow(WOLFSSL* ssl)
     _DtlsUpdateWindowGTSeq(w64GetLow32(diff64), window);
 
     w64Increment(&seq);
-    ssl->dtls13DecryptEpoch->nextPeerSeqNumber = seq;
+    e->nextPeerSeqNumber = seq;
 
-    return 1;
+    return 0;
+}
+
+int Dtls13UpdateWindowRecordRecvd(WOLFSSL* ssl)
+{
+    int ret = Dtls13UpdateWindow(ssl);
+    if (ret != 0)
+        return ret;
+    return Dtls13RecordRecvd(ssl);
 }
 #endif /* WOLFSSL_DTLS13 */
 
@@ -19807,10 +19942,16 @@ static int GetInputData(WOLFSSL *ssl, word32 size)
     inSz       = (int)(size - usedLength);      /* from last partial read */
 
 #ifdef WOLFSSL_DTLS
-    if (ssl->options.dtls) {
-        if (size < ssl->dtls_expected_rx)
-            dtlsExtra = (int)(ssl->dtls_expected_rx - size);
-        inSz = ssl->dtls_expected_rx;
+    if (ssl->options.dtls && IsDtlsNotSctpMode(ssl)) {
+        /* Add DTLS_MTU_ADDITIONAL_READ_BUFFER bytes so that we can operate with
+         * slight difference in set MTU size on each peer */
+#ifdef WOLFSSL_DTLS_MTU
+        inSz = (word32)ssl->dtlsMtuSz + DTLS_MTU_ADDITIONAL_READ_BUFFER;
+#else
+        inSz = MAX_MTU + DTLS_MTU_ADDITIONAL_READ_BUFFER;
+#endif
+        if (size < (word32)inSz)
+            dtlsExtra = (int)(inSz - size);
     }
 #endif
 
@@ -20044,20 +20185,8 @@ static int DtlsShouldDrop(WOLFSSL* ssl, int retcode)
 #ifndef NO_WOLFSSL_SERVER
     if (ssl->options.side == WOLFSSL_SERVER_END
             && ssl->curRL.type != handshake && !IsSCR(ssl)) {
-        int beforeCookieVerified = 0;
-        if (!IsAtLeastTLSv1_3(ssl->version)) {
-            beforeCookieVerified =
-                ssl->options.acceptState < ACCEPT_FIRST_REPLY_DONE;
-        }
-#ifdef WOLFSSL_DTLS13
-        else {
-            beforeCookieVerified =
-                ssl->options.acceptState < TLS13_ACCEPT_SECOND_REPLY_DONE;
-        }
-#endif /* WOLFSSL_DTLS13 */
-
-        if (beforeCookieVerified) {
-            WOLFSSL_MSG("Drop non-handshake record before handshake");
+        if (!ssl->options.dtlsStateful) {
+            WOLFSSL_MSG("Drop non-handshake record when not stateful");
             return 1;
         }
     }
@@ -20673,31 +20802,32 @@ default:
         /* the record layer is here */
         case runProcessingOneRecord:
 #ifdef WOLFSSL_DTLS13
-            if (ssl->options.dtls && IsAtLeastTLSv1_3(ssl->version)) {
+            if (ssl->options.dtls) {
+                if (IsAtLeastTLSv1_3(ssl->version)) {
+                    if (!Dtls13CheckWindow(ssl)) {
+                        /* drop packet */
+                        WOLFSSL_MSG("Dropping DTLS record outside receiving "
+                                    "window");
+                        ssl->options.processReply = doProcessInit;
+                        ssl->buffers.inputBuffer.idx += ssl->curSize;
+                        if (ssl->buffers.inputBuffer.idx >
+                                ssl->buffers.inputBuffer.length)
+                            return BUFFER_E;
 
-                if(!Dtls13CheckWindow(ssl)) {
-                    /* drop packet */
-                    WOLFSSL_MSG(
-                            "Dropping DTLS record outside receiving window");
-                    ssl->options.processReply = doProcessInit;
-                    ssl->buffers.inputBuffer.idx += ssl->curSize;
-                    if (ssl->buffers.inputBuffer.idx >
-                            ssl->buffers.inputBuffer.length)
-                        return BUFFER_E;
+                        continue;
+                    }
 
-                    continue;
+                    /* Only update the window once we enter stateful parsing */
+                    if (ssl->options.dtlsStateful) {
+                        ret = Dtls13UpdateWindowRecordRecvd(ssl);
+                        if (ret != 0) {
+                            WOLFSSL_ERROR(ret);
+                            return ret;
+                        }
+                    }
                 }
-
-                ret = Dtls13UpdateWindow(ssl);
-                if (ret != 1) {
-                    WOLFSSL_ERROR(ret);
-                    return ret;
-                }
-
-                ret = Dtls13RecordRecvd(ssl);
-                if (ret != 0) {
-                    WOLFSSL_ERROR(ret);
-                    return ret;
+                else if (IsDtlsNotSctpMode(ssl)) {
+                    DtlsUpdateWindow(ssl);
                 }
             }
 #endif /* WOLFSSL_DTLS13 */
@@ -20732,16 +20862,16 @@ default:
             }
             else
        #endif
-                /* TLS13 plaintext limit is checked earlier before decryption */
-                /* For TLS v1.1 the block size and explicit IV are added to idx,
-                 * so it needs to be included in this limit check */
-                if (!IsAtLeastTLSv1_3(ssl->version)
-                        && ssl->curSize - ssl->keys.padSz -
-                            (ssl->buffers.inputBuffer.idx - startIdx)
-                                > MAX_PLAINTEXT_SZ
+            /* TLS13 plaintext limit is checked earlier before decryption */
+            /* For TLS v1.1 the block size and explicit IV are added to idx,
+             * so it needs to be included in this limit check */
+            if (!IsAtLeastTLSv1_3(ssl->version)
+                    && ssl->curSize - ssl->keys.padSz -
+                        (ssl->buffers.inputBuffer.idx - startIdx)
+                            > MAX_PLAINTEXT_SZ
 #ifdef WOLFSSL_ASYNC_CRYPT
-                        && ssl->buffers.inputBuffer.length !=
-                                ssl->buffers.inputBuffer.idx
+                    && ssl->buffers.inputBuffer.length !=
+                            ssl->buffers.inputBuffer.idx
 #endif
                                 ) {
                 WOLFSSL_MSG("Plaintext too long");
@@ -20752,17 +20882,6 @@ default:
                 return BUFFER_ERROR;
             }
 
-#ifdef WOLFSSL_DTLS
-            if (IsDtlsNotSctpMode(ssl) && !IsAtLeastTLSv1_3(ssl->version)) {
-                _DtlsUpdateWindow(ssl);
-            }
-
-            if (ssl->options.dtls) {
-                /* Reset timeout as we have received a valid DTLS message */
-                ssl->dtls_timeout = ssl->dtls_timeout_init;
-            }
-#endif /* WOLFSSL_DTLS */
-
             WOLFSSL_MSG("received record layer msg");
 
             switch (ssl->curRL.type) {
@@ -20772,16 +20891,21 @@ default:
                     if (ssl->options.dtls) {
 #ifdef WOLFSSL_DTLS
                         if (!IsAtLeastTLSv1_3(ssl->version)) {
-                                ret = DoDtlsHandShakeMsg(ssl,
-                                                         ssl->buffers.inputBuffer.buffer,
-                                                         &ssl->buffers.inputBuffer.idx,
-                                                         ssl->buffers.inputBuffer.length);
-                                if (ret != 0) {
-                                    if (SendFatalAlertOnly(ssl, ret)
-                                            == SOCKET_ERROR_E) {
-                                        ret = SOCKET_ERROR_E;
-                                    }
+                            ret = DoDtlsHandShakeMsg(ssl,
+                                ssl->buffers.inputBuffer.buffer,
+                                &ssl->buffers.inputBuffer.idx,
+                                ssl->buffers.inputBuffer.length);
+                            if (ret == 0 || ret == WC_PENDING_E) {
+                                /* Reset timeout as we have received a valid
+                                 * DTLS handshake message */
+                                ssl->dtls_timeout = ssl->dtls_timeout_init;
+                            }
+                            else {
+                                if (SendFatalAlertOnly(ssl, ret)
+                                        == SOCKET_ERROR_E) {
+                                    ret = SOCKET_ERROR_E;
                                 }
+                            }
                         }
 #endif
 #ifdef WOLFSSL_DTLS13
@@ -34173,8 +34297,15 @@ static int DoSessionTicket(WOLFSSL* ssl, const byte* input, word32* inOutIdx,
                             "VerifyServerSuite() with MEMORY_E");
                 return 0;
             }
-            if (cs->clientKSE == NULL && searched)
+            if (cs->clientKSE == NULL && searched) {
+            #ifdef WOLFSSL_SEND_HRR_COOKIE
+                /* If the CH contains a cookie then we need to send an alert to
+                 * start from scratch. */
+                if (TLSX_Find(extensions, TLSX_COOKIE) != NULL)
+                    return INVALID_PARAMETER;
+            #endif
                 cs->doHelloRetry = 1;
+            }
         #ifdef WOLFSSL_ASYNC_CRYPT
             if (ret == WC_PENDING_E)
                 return ret;
@@ -34298,6 +34429,9 @@ static int DoSessionTicket(WOLFSSL* ssl, const byte* input, word32* inOutIdx,
 
 #if defined(WOLFSSL_TLS13) && defined(HAVE_SUPPORTED_CURVES)
         if (cs.doHelloRetry) {
+            /* Make sure we don't send HRR twice */
+            if (ssl->options.serverState == SERVER_HELLO_RETRY_REQUEST_COMPLETE)
+                return INVALID_PARAMETER;
             ssl->options.serverState = SERVER_HELLO_RETRY_REQUEST_COMPLETE;
             return TLSX_KeyShare_SetSupported(ssl, &ssl->extensions);
         }
@@ -34675,9 +34809,11 @@ static int DoSessionTicket(WOLFSSL* ssl, const byte* input, word32* inOutIdx,
 #ifdef WOLFSSL_DTLS
         /* Update the ssl->options.dtlsStateful setting `if` statement in
          * wolfSSL_accept when changing this one. */
-        if (IsDtlsNotSctpMode(ssl) && IsDtlsNotSrtpMode(ssl) && !IsSCR(ssl)) {
+        if (IsDtlsNotSctpMode(ssl) && IsDtlsNotSrtpMode(ssl) && !IsSCR(ssl) &&
+                !ssl->options.dtlsStateful) {
             DtlsSetSeqNumForReply(ssl);
-            ret = DoClientHelloStateless(ssl, input, inOutIdx, helloSz);
+            ret = DoClientHelloStateless(ssl, input + *inOutIdx, helloSz, 0,
+                    NULL);
             if (ret != 0 || !ssl->options.dtlsStateful) {
                 int alertType = TranslateErrorToAlert(ret);
                 if (alertType != invalid_alert) {
@@ -34693,6 +34829,14 @@ static int DoSessionTicket(WOLFSSL* ssl, const byte* input, word32* inOutIdx,
                 if (DtlsIgnoreError(ret))
                     ret = 0;
                 return ret;
+            }
+            if (ssl->chGoodCb != NULL) {
+                int cbret = ssl->chGoodCb(ssl, ssl->chGoodCtx);
+                if (cbret < 0) {
+                    ssl->error = cbret;
+                    WOLFSSL_MSG("ClientHello Good Cb don't continue error");
+                    return WOLFSSL_FATAL_ERROR;
+                }
             }
         }
         ssl->options.dtlsStateful = 1;
@@ -38220,6 +38364,7 @@ static int DefTicketEncCb(WOLFSSL* ssl, byte key_name[WOLFSSL_TICKET_NAME_SZ],
                     case rsa_kea:
                     {
                         RsaKey* key = (RsaKey*)ssl->hsKey;
+                        int lenErrMask;
 
                         ret = RsaDec(ssl,
                             input + args->idx,
@@ -38245,7 +38390,9 @@ static int DefTicketEncCb(WOLFSSL* ssl, byte key_name[WOLFSSL_TICKET_NAME_SZ],
                         if (ret == BAD_FUNC_ARG)
                             goto exit_dcke;
 
-                        args->lastErr = ret - (SECRET_LEN - args->sigSz);
+                        lenErrMask = 0 - (SECRET_LEN != args->sigSz);
+                        args->lastErr = (ret & (~lenErrMask)) |
+                            (RSA_PAD_E & lenErrMask);
                         ret = 0;
                         break;
                     } /* rsa_kea */
@@ -38741,14 +38888,17 @@ int wolfSSL_AsyncPop(WOLFSSL* ssl, byte* state)
             XMEMSET(&asyncDev->event, 0, sizeof(WOLF_EVENT));
             ssl->asyncDev = NULL;
         }
-    #if !defined(WOLFSSL_ASYNC_CRYPT_SW) && \
-        (defined(WOLF_CRYPTO_CB) || defined(HAVE_PK_CALLBACKS))
+        /* for crypto or PK callback, if pending remove from queue */
+    #if (defined(WOLF_CRYPTO_CB) || defined(HAVE_PK_CALLBACKS)) && \
+        !defined(WOLFSSL_ASYNC_CRYPT_SW) && !defined(HAVE_INTEL_QA) && \
+        !defined(HAVE_CAVIUM)
         else if (ret == WC_PENDING_E) {
             /* Allow the underlying crypto API to be called again to trigger the
              * crypto or PK callback. The actual callback must be called, since
              * the completion is not detected in the poll like Intel QAT or
              * Nitrox */
             ret = wolfEventQueue_Remove(&ssl->ctx->event_queue, event);
+
         }
     #endif
     }
@@ -39270,6 +39420,139 @@ int wolfSSL_sk_BY_DIR_entry_push(WOLF_STACK_OF(WOLFSSL_BY_DIR_entry)* sk,
 
 #endif /* OPENSSL_ALL */
 
+#if defined(__APPLE__) && defined(WOLFSSL_SYS_CA_CERTS)
+
+/*
+ * Converts a DER formatted certificate to a SecCertificateRef
+ *
+ * @param derCert pointer to the DER formatted certificate
+ * @param derLen length of the DER formatted cert, in bytes
+ *
+ * @return The newly created SecCertificateRef. Must be freed by caller when
+ * no longer in use
+ */
+static SecCertificateRef ConvertToSecCertificateRef(const byte* derCert,
+                                                    int derLen)
+{
+    CFDataRef         derData = NULL;
+    SecCertificateRef secCert = NULL;
+
+    WOLFSSL_ENTER("ConvertToSecCertificateRef");
+
+    /* Create a CFDataRef from the DER encoded certificate */
+    derData = CFDataCreate(kCFAllocatorDefault, derCert, derLen);
+    if (!derData) {
+        WOLFSSL_MSG("Error: can't create CFDataRef object for DER cert");
+        goto cleanup;
+    }
+
+    /* Create a SecCertificateRef from the CFDataRef */
+    secCert = SecCertificateCreateWithData(kCFAllocatorDefault, derData);
+    if (!secCert) {
+        WOLFSSL_MSG("Error: can't create SecCertificateRef from CFDataRef");
+        goto cleanup;
+    }
+
+cleanup:
+    if (derData) {
+        CFRelease(derData);
+    }
+
+    WOLFSSL_LEAVE("ConvertToSecCertificateRef", !!secCert);
+
+    return secCert;
+}
+
+
+/*
+ * Validates a chain of certificates using the Apple system trust APIs
+ *
+ * @param certs pointer to the certificate chain to validate
+ * @param totalCerts the number of certificates in certs
+ *
+ * @return 1 if chain is valid and trusted
+ * @return 0 if chain is invalid or untrusted
+ *
+ * As of MacOS 14.0 we are still able to access system certificates and load
+ * them manually into wolfSSL. For other apple devices, apple has removed the
+ * ability to obtain certificates from the trust store, so we can't use
+ * wolfSSL's built-in certificate validation mechanisms anymore. We instead
+ * must call into the Security Framework APIs to authenticate peer certificates
+ */
+static int DoAppleNativeCertValidation(const WOLFSSL_BUFFER_INFO* certs,
+                                            int totalCerts)
+{
+    int i;
+    int ret;
+    OSStatus status;
+    CFMutableArrayRef certArray = NULL;
+    SecCertificateRef secCert   = NULL;
+    SecTrustRef       trust     = NULL;
+    SecPolicyRef      policy    = NULL ;
+
+    WOLFSSL_ENTER("DoAppleNativeCertValidation");
+
+    certArray = CFArrayCreateMutable(kCFAllocatorDefault,
+                                     totalCerts,
+                                     &kCFTypeArrayCallBacks);
+    if (!certArray) {
+        WOLFSSL_MSG("Error: can't allocate CFArray for certificates");
+        ret = 0;
+        goto cleanup;
+    }
+
+    for (i = 0; i < totalCerts; i++) {
+        secCert = ConvertToSecCertificateRef(certs[i].buffer, certs[i].length);
+        if (!secCert) {
+            WOLFSSL_MSG("Error: can't convert DER cert to SecCertificateRef");
+            ret = 0;
+            goto cleanup;
+        }
+        else {
+            CFArrayAppendValue(certArray, secCert);
+            /* Release, since the array now holds the reference */
+            CFRelease(secCert);
+        }
+    }
+
+    /* Create trust object for SecCertifiate Ref */
+    policy = SecPolicyCreateSSL(true, NULL);
+    status = SecTrustCreateWithCertificates(certArray, policy, &trust);
+    if (status != errSecSuccess) {
+        WOLFSSL_MSG_EX("Error creating trust object, "
+                       "SecTrustCreateWithCertificates returned %d",status);
+        ret = 0;
+        goto cleanup;
+    }
+
+    /* Evaluate the certificate's authenticity */
+    if (SecTrustEvaluateWithError(trust, NULL) == 1) {
+        WOLFSSL_MSG("Cert chain is trusted");
+        ret = 1;
+    }
+    else {
+        WOLFSSL_MSG("Cert chain trust evaluation failed"
+                    "SecTrustEvaluateWithError returned 0");
+        ret = 0;
+    }
+
+    /* Cleanup */
+cleanup:
+    if (certArray) {
+        CFRelease(certArray);
+    }
+    if (trust) {
+        CFRelease(trust);
+    }
+    if (policy) {
+        CFRelease(policy);
+    }
+
+    WOLFSSL_LEAVE("DoAppleNativeCertValidation", ret);
+
+    return ret;
+}
+#endif /* defined(__APPLE__) && defined(WOLFSSL_SYS_CA_CERTS) */
 
 #undef ERROR_OUT
 
