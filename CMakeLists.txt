@@ -127,6 +127,7 @@ check_type_size("time_t" SIZEOF_TIME_T)
 # but we want it as 1.
 if(HAVE___UINT128_T)
     set(HAVE___UINT128_T "1" CACHE INTERNAL "Result of TRY_COMPILE" FORCE)
+    list(APPEND WOLFSSL_DEFINITIONS "-DHAVE___UINT128_T")
 endif()
 
 include(TestBigEndian)
@@ -266,6 +267,18 @@ if(NOT WOLFSSL_SINGLE_THREADED)
             "-DHAVE_PTHREAD"
             "-D_POSIX_THREADS")
     endif()
+endif()
+
+# DTLS-SRTP
+add_option("WOLFSSL_SRTP"
+    "Enables wolfSSL DTLS-SRTP (default: disabled)"
+    "no" "yes;no")
+
+if(WOLFSSL_SRTP)
+    list(APPEND WOLFSSL_DEFINITIONS
+        "-DWOLFSSL_SRTP")
+    set(WOLFSSL_DTLS "yes")
+    set(WOLFSSL_KEYING_MATERIAL "yes")
 endif()
 
 
@@ -2161,7 +2174,9 @@ endif()
 # Tests and Examples
 ####################################################
 
+enable_testing()
 if(WOLFSSL_EXAMPLES)
+
     # Build wolfSSL client example
     add_executable(client
         ${CMAKE_CURRENT_SOURCE_DIR}/examples/client/client.c)
@@ -2230,6 +2245,9 @@ if(WOLFSSL_EXAMPLES)
     set_property(TARGET unit_test
                  PROPERTY RUNTIME_OUTPUT_NAME
                  unit.test)
+    add_test(NAME unit_test
+             COMMAND $<TARGET_FILE:unit_test>
+             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 endif()
 
 if(WOLFSSL_CRYPT_TESTS)
@@ -2269,6 +2287,9 @@ if(WOLFSSL_CRYPT_TESTS)
     if(WOLFSSL_CRYPT_TESTS_HELP)
         target_compile_options(wolfcrypttest PRIVATE "-DHAVE_WOLFCRYPT_TEST_OPTIONS")
     endif()
+    add_test(NAME wolfcrypttest
+             COMMAND $<TARGET_FILE:wolfcrypttest>
+             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
     # Build wolfCrypt benchmark executable.
     add_executable(wolfcryptbench

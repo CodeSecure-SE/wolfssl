@@ -206,7 +206,7 @@ else()
                           "\"${WOLFSSL_ROOT}/wolfcrypt/src\""
                           "\"${WOLFSSL_ROOT}/wolfcrypt/src/port/Espressif\""
                           "\"${WOLFSSL_ROOT}/wolfcrypt/src/port/atmel\""
-                          # TODO: Make this a univeral makefile that detects if bechmark / test needed
+                          # TODO: Make this a universal makefile that detects if benchmark / test needed
                           # Sometimes problematic with SM; consider gating detection.
                           #"\"${WOLFSSL_ROOT}/wolfcrypt/benchmark\"" # the benchmark application
                           #"\"${WOLFSSL_ROOT}/wolfcrypt/test\"" # the test application
@@ -393,6 +393,7 @@ else()
         "\"${WOLFSSL_ROOT}/src/ssl_asn1.c\""    # included by ssl.c
         "\"${WOLFSSL_ROOT}/src/ssl_bn.c\""      # included by ssl.c
         "\"${WOLFSSL_ROOT}/src/ssl_certman.c\"" # included by ssl.c
+        "\"${WOLFSSL_ROOT}/src/ssl_crypto.c\""  # included by ssl.c
         "\"${WOLFSSL_ROOT}/src/ssl_misc.c\""    # included by ssl.c
         "\"${WOLFSSL_ROOT}/src/x509.c\""
         "\"${WOLFSSL_ROOT}/src/x509_str.c\""

@@ -96,6 +96,9 @@ ASN Options:
     cost of taking up more memory. Adds initials, givenname, dnQualifer for
     example.
  * WC_ASN_HASH_SHA256: Force use of SHA2-256 for the internal hash ID calcs.
+ * WOLFSSL_ALLOW_ENCODING_CA_FALSE: Allow encoding BasicConstraints CA:FALSE
+ *  which is discouraged by X.690 specification - default values shall not
+ *  be encoded.
 */
 
 #include <wolfssl/wolfcrypt/error-crypt.h>
@@ -12027,6 +12030,11 @@ enum {
 
 /* Number of items in ASN.1 template for header before ECC key in cert. */
 #define eccCertKeyASN_Length (sizeof(eccCertKeyASN) / sizeof(ASNItem))
+
+#ifdef WOLFSSL_CUSTOM_CURVES
+static int EccSpecifiedECDomainDecode(const byte* input, word32 inSz,
+                                      ecc_key* key, void* heap, int* curveSz);
+#endif /* WOLFSSL_CUSTOM_CURVES */
 #endif /* WOLFSSL_ASN_TEMPLATE */
 
 /* Store public ECC key in certificate object.
@@ -12140,7 +12148,18 @@ static int StoreEccKey(DecodedCert* cert, const byte* source, word32* srcIdx,
             /* Store curve OID. */
             cert->pkCurveOID = dataASN[ECCCERTKEYASN_IDX_OID].data.oid.sum;
         }
-        /* Ignore explicit parameters. */
+        else {
+    #ifdef WOLFSSL_CUSTOM_CURVES
+            /* Parse explicit parameters. */
+            ret = EccSpecifiedECDomainDecode(
+                    dataASN[ECCCERTKEYASN_IDX_PARAMS].data.ref.data,
+                    dataASN[ECCCERTKEYASN_IDX_PARAMS].data.ref.length, NULL,
+                    NULL, &cert->pkCurveSize);
+    #else
+            /* Explicit parameters not supported in build configuration. */
+            ret = ASN_PARSE_E;
+    #endif
+        }
 
     #ifdef WOLFSSL_MAXQ10XX_TLS
         cert->publicKeyIndex =
@@ -12149,10 +12168,13 @@ static int StoreEccKey(DecodedCert* cert, const byte* source, word32* srcIdx,
     #endif
 
     #ifdef HAVE_OCSP
-        /* Calculate the hash of the subject public key for OCSP. */
-        ret = CalcHashId_ex(dataASN[ECCCERTKEYASN_IDX_SUBJPUBKEY].data.ref.data,
-                         dataASN[ECCCERTKEYASN_IDX_SUBJPUBKEY].data.ref.length,
-                         cert->subjectKeyHash, HashIdAlg(cert->signatureOID));
+        if (ret == 0) {
+            /* Calculate the hash of the subject public key for OCSP. */
+            ret = CalcHashId_ex(
+                    dataASN[ECCCERTKEYASN_IDX_SUBJPUBKEY].data.ref.data,
+                    dataASN[ECCCERTKEYASN_IDX_SUBJPUBKEY].data.ref.length,
+                    cert->subjectKeyHash, HashIdAlg(cert->signatureOID));
+        }
     }
     if (ret == 0) {
     #endif
@@ -14488,6 +14510,23 @@ int GetTimeString(byte* date, int format, char* buf, int len)
 }
 #endif /* OPENSSL_ALL || WOLFSSL_MYSQL_COMPATIBLE || WOLFSSL_NGINX || WOLFSSL_HAPROXY */
 
+/* Check time struct for valid values. Returns 0 for success */
+static int ValidateGmtime(struct tm* inTime)
+{
+    int ret = 1;
+    if ((inTime != NULL) &&
+        (inTime->tm_sec >= 0) && (inTime->tm_sec <= 61) &&
+        (inTime->tm_min >= 0) && (inTime->tm_min <= 59) &&
+        (inTime->tm_hour >= 0) && (inTime->tm_hour <= 23) &&
+        (inTime->tm_mday >= 1) && (inTime->tm_mday <= 31) &&
+        (inTime->tm_mon >= 0) && (inTime->tm_mon <= 11) &&
+        (inTime->tm_wday >= 0) && (inTime->tm_wday <= 6) &&
+        (inTime->tm_yday >= 0) && (inTime->tm_yday <= 365)) {
+        ret = 0;
+    }
+
+    return ret;
+}
 
 #if !defined(NO_ASN_TIME) && !defined(USER_TIME) && \
     !defined(TIME_OVERRIDES) && (defined(OPENSSL_EXTRA) || defined(HAVE_PKCS7))
@@ -14564,7 +14603,7 @@ int GetFormattedTime(void* currTime, byte* buf, word32 len)
         return BAD_FUNC_ARG;
 
     ts = (struct tm *)XGMTIME((time_t*)currTime, tmpTime);
-    if (ts == NULL) {
+    if (ValidateGmtime(ts)) {
         WOLFSSL_MSG("failed to get time data.");
         return ASN_TIME_E;
     }
@@ -14731,7 +14770,7 @@ int wc_ValidateDate(const byte* date, byte format, int dateType)
     ltime -= (time_t)timeDiff;
     localTime = XGMTIME(&ltime, tmpTime);
 
-    if (localTime == NULL) {
+    if (ValidateGmtime(localTime)) {
         WOLFSSL_MSG("XGMTIME failed");
         return 0;
     }
@@ -18586,7 +18625,8 @@ static int DecodeBasicCaConstraint(const byte* input, int sz, DecodedCert* cert)
     if ((ret == 0) && (dataASN[BASICCONSASN_IDX_SEQ].length != 0)) {
         /* Bad encoding when CA Boolean is false
          * (default when not present). */
-#ifndef ASN_TEMPLATE_SKIP_ISCA_CHECK
+#if !defined(ASN_TEMPLATE_SKIP_ISCA_CHECK) && \
+    !defined(WOLFSSL_ALLOW_ENCODING_CA_FALSE)
         if ((dataASN[BASICCONSASN_IDX_CA].length != 0) && (!isCA)) {
             WOLFSSL_ERROR_VERBOSE(ASN_PARSE_E);
             ret = ASN_PARSE_E;
@@ -26019,10 +26059,9 @@ static int SetCaWithPathLen(byte* out, word32 outSz, byte pathLen)
     return (int)sizeof(caPathLenBasicConstASN1);
 }
 
-
-/* encode CA basic constraints true
+/* encode CA basic constraints
  * return total bytes written */
-static int SetCa(byte* out, word32 outSz)
+static int SetCaEx(byte* out, word32 outSz, byte isCa)
 {
     /* ASN1->DER sequence for Basic Constraints True */
     const byte caBasicConstASN1[] = {
@@ -26038,7 +26077,18 @@ static int SetCa(byte* out, word32 outSz)
 
     XMEMCPY(out, caBasicConstASN1, sizeof(caBasicConstASN1));
 
+    if (!isCa) {
+        out[sizeof(caBasicConstASN1)-1] = isCa;
+    }
+
     return (int)sizeof(caBasicConstASN1);
+}
+
+/* encode CA basic constraints true
+ * return total bytes written */
+static int SetCa(byte* out, word32 outSz)
+{
+    return SetCaEx(out, outSz, 1);
 }
 
 /* encode basic constraints without CA Boolean
@@ -27791,6 +27841,13 @@ static int EncodeExtensions(Cert* cert, byte* output, word32 maxSz,
                 dataASN[CERTEXTSASN_IDX_BC_PATHLEN].noOut = 1;
             }
         }
+    #ifdef WOLFSSL_ALLOW_ENCODING_CA_FALSE
+        else if (cert->isCaSet) {
+            SetASN_Boolean(&dataASN[CERTEXTSASN_IDX_BC_CA], 0);
+            SetASN_Buffer(&dataASN[CERTEXTSASN_IDX_BC_OID], bcOID, sizeof(bcOID));
+            dataASN[CERTEXTSASN_IDX_BC_PATHLEN].noOut = 1;
+        }
+    #endif
         else if (cert->basicConstSet) {
             /* Set Basic Constraints to be a non Certificate Authority. */
             SetASN_Buffer(&dataASN[CERTEXTSASN_IDX_BC_OID], bcOID, sizeof(bcOID));
@@ -28102,7 +28159,7 @@ static int SetValidity(byte* output, int daysValid)
     /* subtract 1 day of seconds for more compliance */
     then = now - 86400;
     expandedTime = XGMTIME(&then, tmpTime);
-    if (expandedTime == NULL) {
+    if (ValidateGmtime(expandedTime)) {
         WOLFSSL_MSG("XGMTIME failed");
         return 0;   /* error */
     }
@@ -28121,7 +28178,7 @@ static int SetValidity(byte* output, int daysValid)
     /* add daysValid of seconds */
     then = now + (daysValid * (time_t)86400);
     expandedTime = XGMTIME(&then, tmpTime);
-    if (expandedTime == NULL) {
+    if (ValidateGmtime(expandedTime)) {
         WOLFSSL_MSG("XGMTIME failed");
         return 0;   /* error */
     }
@@ -28170,7 +28227,7 @@ static int SetValidity(byte* before, byte* after, int daysValid)
     /* subtract 1 day of seconds for more compliance */
     then = now - 86400;
     expandedTime = XGMTIME(&then, tmpTime);
-    if (expandedTime == NULL) {
+    if (ValidateGmtime(expandedTime)) {
         WOLFSSL_MSG("XGMTIME failed");
         ret = DATE_E;
     }
@@ -28186,7 +28243,7 @@ static int SetValidity(byte* before, byte* after, int daysValid)
         /* add daysValid of seconds */
         then = now + (daysValid * (time_t)86400);
         expandedTime = XGMTIME(&then, tmpTime);
-        if (expandedTime == NULL) {
+        if (ValidateGmtime(expandedTime)) {
             WOLFSSL_MSG("XGMTIME failed");
             ret = DATE_E;
         }
@@ -28439,7 +28496,17 @@ static int EncodeCert(Cert* cert, DerCert* der, RsaKey* rsaKey, ecc_key* eccKey,
 
         der->extensionsSz += der->caSz;
     }
+#ifdef WOLFSSL_ALLOW_ENCODING_CA_FALSE
     /* Set CA */
+    else if (cert->isCaSet) {
+        der->caSz = SetCaEx(der->ca, sizeof(der->ca), cert->isCA);
+        if (der->caSz <= 0)
+            return EXTENSIONS_E;
+
+        der->extensionsSz += der->caSz;
+    }
+#endif
+    /* Set CA true */
     else if (cert->isCA) {
         der->caSz = SetCa(der->ca, sizeof(der->ca));
         if (der->caSz <= 0)
@@ -29837,7 +29904,17 @@ static int EncodeCertReq(Cert* cert, DerCert* der, RsaKey* rsaKey,
 
         der->extensionsSz += der->caSz;
     }
+#ifdef WOLFSSL_ALLOW_ENCODING_CA_FALSE
     /* Set CA */
+    else if (cert->isCaSet) {
+        der->caSz = SetCaEx(der->ca, sizeof(der->ca), cert->isCA);
+        if (der->caSz <= 0)
+            return EXTENSIONS_E;
+
+        der->extensionsSz += der->caSz;
+    }
+#endif
+    /* Set CA true */
     else if (cert->isCA) {
         der->caSz = SetCa(der->ca, sizeof(der->ca));
         if (der->caSz <= 0)
@@ -30944,6 +31021,9 @@ int wc_SetSubjectKeyId(Cert *cert, const char* file)
     wc_ecc_free(eckey);
     XFREE(eckey, cert->heap, DYNAMIC_TYPE_ECC);
 #endif
+#if defined(NO_RSA) && !defined(HAVE_ECC)
+    (void)idx;
+#endif
     return ret;
 }
 
@@ -31982,6 +32062,14 @@ int StoreECC_DSA_Sig_Bin(byte* out, word32* outLen, const byte* r, word32 rLen,
 
     /* Clear dynamic data and set buffers for r and s */
     XMEMSET(dataASN, 0, sizeof(dataASN));
+    while ((rLen > 1) && (r[0] == 0)) {
+        rLen--;
+        r++;
+    }
+    while ((sLen > 1) && (s[0] == 0)) {
+        sLen--;
+        s++;
+    }
     SetASN_Buffer(&dataASN[DSASIGASN_IDX_R], r, rLen);
     SetASN_Buffer(&dataASN[DSASIGASN_IDX_S], s, sLen);
 
@@ -32155,7 +32243,7 @@ int DecodeECC_DSA_Sig_Ex(const byte* sig, word32 sigLen, mp_int* r, mp_int* s,
 
 
 #ifdef WOLFSSL_ASN_TEMPLATE
-#ifdef WOLFSSL_CUSTOM_CURVES
+#if defined(HAVE_ECC) && defined(WOLFSSL_CUSTOM_CURVES)
 /* Convert data to hex string.
  *
  * Big-endian byte array is converted to big-endian hexadecimal string.
@@ -32271,7 +32359,7 @@ static const char ecSetCustomName[] = "Custom";
 
 /* Explicit EC parameter values. */
 static int EccSpecifiedECDomainDecode(const byte* input, word32 inSz,
-                                      ecc_key* key)
+                                      ecc_key* key, void* heap, int* curveSz)
 {
     DECL_ASNGETDATA(dataASN, eccSpecifiedASN_Length);
     int ret = 0;
@@ -32283,8 +32371,8 @@ static int EccSpecifiedECDomainDecode(const byte* input, word32 inSz,
     word32 baseLen;
 
     /* Allocate a new parameter set. */
-    curve = (ecc_set_type*)XMALLOC(sizeof(*curve), key->heap,
-                                                       DYNAMIC_TYPE_ECC_BUFFER);
+    curve = (ecc_set_type*)XMALLOC(sizeof(*curve), heap,
+                DYNAMIC_TYPE_ECC_BUFFER);
     if (curve == NULL) {
         ret = MEMORY_E;
     }
@@ -32293,7 +32381,7 @@ static int EccSpecifiedECDomainDecode(const byte* input, word32 inSz,
         XMEMSET(curve, 0, sizeof(*curve));
     }
 
-    CALLOC_ASNGETDATA(dataASN, eccSpecifiedASN_Length, ret, key->heap);
+    CALLOC_ASNGETDATA(dataASN, eccSpecifiedASN_Length, ret, heap);
 
     if (ret == 0) {
         /* Set name to be: "Custom" */
@@ -32356,13 +32444,13 @@ static int EccSpecifiedECDomainDecode(const byte* input, word32 inSz,
     if (ret == 0) {
         /* Base X-ordinate */
         ret = DataToHexStringAlloc(base + 1, (word32)curve->size,
-                                   (char**)&curve->Gx, key->heap,
+                                   (char**)&curve->Gx, heap,
                                    DYNAMIC_TYPE_ECC_BUFFER);
     }
     if (ret == 0) {
         /* Base Y-ordinate */
         ret = DataToHexStringAlloc(base + 1 + curve->size, (word32)curve->size,
-                                   (char**)&curve->Gy, key->heap,
+                                   (char**)&curve->Gy, heap,
                                    DYNAMIC_TYPE_ECC_BUFFER);
     }
     if (ret == 0) {
@@ -32370,28 +32458,28 @@ static int EccSpecifiedECDomainDecode(const byte* input, word32 inSz,
         ret = DataToHexStringAlloc(
                 dataASN[ECCSPECIFIEDASN_IDX_PRIME_P].data.ref.data,
                 dataASN[ECCSPECIFIEDASN_IDX_PRIME_P].data.ref.length,
-                (char**)&curve->prime, key->heap, DYNAMIC_TYPE_ECC_BUFFER);
+                (char**)&curve->prime, heap, DYNAMIC_TYPE_ECC_BUFFER);
     }
     if (ret == 0) {
         /* Parameter A */
         ret = DataToHexStringAlloc(
                 dataASN[ECCSPECIFIEDASN_IDX_PARAM_A].data.ref.data,
                 dataASN[ECCSPECIFIEDASN_IDX_PARAM_A].data.ref.length,
-                (char**)&curve->Af, key->heap, DYNAMIC_TYPE_ECC_BUFFER);
+                (char**)&curve->Af, heap, DYNAMIC_TYPE_ECC_BUFFER);
     }
     if (ret == 0) {
         /* Parameter B */
         ret = DataToHexStringAlloc(
                 dataASN[ECCSPECIFIEDASN_IDX_PARAM_B].data.ref.data,
                 dataASN[ECCSPECIFIEDASN_IDX_PARAM_B].data.ref.length,
-                (char**)&curve->Bf, key->heap, DYNAMIC_TYPE_ECC_BUFFER);
+                (char**)&curve->Bf, heap, DYNAMIC_TYPE_ECC_BUFFER);
     }
     if (ret == 0) {
         /* Order of curve */
         ret = DataToHexStringAlloc(
                 dataASN[ECCSPECIFIEDASN_IDX_ORDER].data.ref.data,
                 dataASN[ECCSPECIFIEDASN_IDX_ORDER].data.ref.length,
-                (char**)&curve->order, key->heap, DYNAMIC_TYPE_ECC_BUFFER);
+                (char**)&curve->order, heap, DYNAMIC_TYPE_ECC_BUFFER);
     }
     #else
     if (ret == 0) {
@@ -32418,26 +32506,31 @@ static int EccSpecifiedECDomainDecode(const byte* input, word32 inSz,
     }
     #endif /* WOLFSSL_ECC_CURVE_STATIC */
 
-    /* Store parameter set in key. */
-    if ((ret == 0) && (wc_ecc_set_custom_curve(key, curve) < 0)) {
-        ret = ASN_PARSE_E;
+    if (key) {
+        /* Store parameter set in key. */
+        if ((ret == 0) && (wc_ecc_set_custom_curve(key, curve) < 0)) {
+            ret = ASN_PARSE_E;
+        }
+        if (ret == 0) {
+            /* The parameter set was allocated.. */
+            key->deallocSet = 1;
+        }
     }
-    if (ret == 0) {
-        /* The parameter set was allocated.. */
-        key->deallocSet = 1;
+
+    if (curveSz) {
+        *curveSz = curve->size;
     }
 
     if ((ret != 0) && (curve != NULL)) {
         /* Failed to set parameters so free parameter set. */
-        wc_ecc_free_curve(curve, key->heap);
+        wc_ecc_free_curve(curve, heap);
     }
 
-    FREE_ASNGETDATA(dataASN, key->heap);
+    FREE_ASNGETDATA(dataASN, heap);
     return ret;
 }
 #endif /* WOLFSSL_CUSTOM_CURVES */
 #endif /* WOLFSSL_ASN_TEMPLATE */
-
 #ifdef HAVE_ECC
 
 #ifdef WOLFSSL_ASN_TEMPLATE
@@ -32665,7 +32758,8 @@ int wc_EccPrivateKeyDecode(const byte* input, word32* inOutIdx, ecc_key* key,
             /* Parse explicit parameters. */
             ret = EccSpecifiedECDomainDecode(
                     dataASN[ECCKEYASN_IDX_CURVEPARAMS].data.ref.data,
-                    dataASN[ECCKEYASN_IDX_CURVEPARAMS].data.ref.length, key);
+                    dataASN[ECCKEYASN_IDX_CURVEPARAMS].data.ref.length, key,
+                    key->heap, NULL);
     #else
             /* Explicit parameters not supported in build configuration. */
             ret = ASN_PARSE_E;
@@ -33100,7 +33194,8 @@ int wc_EccPublicKeyDecode(const byte* input, word32* inOutIdx,
         #ifdef WOLFSSL_CUSTOM_CURVES
             /* Parse explicit parameters. */
             ret = EccSpecifiedECDomainDecode(dataASN[specIdx].data.ref.data,
-                                         dataASN[specIdx].data.ref.length, key);
+                                         dataASN[specIdx].data.ref.length, key,
+                                         key->heap, NULL);
         #else
             /* Explicit parameters not supported in build configuration. */
             ret = ASN_PARSE_E;

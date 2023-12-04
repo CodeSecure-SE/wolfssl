@@ -4903,6 +4903,17 @@ void wolfSSL_GENERAL_NAMES_free(WOLFSSL_GENERAL_NAMES *gens)
     wolfSSL_sk_GENERAL_NAME_free(gens);
 }
 
+void wolfSSL_EXTENDED_KEY_USAGE_free(WOLFSSL_STACK * sk)
+{
+    WOLFSSL_ENTER("wolfSSL_EXTENDED_KEY_USAGE_free");
+
+    if (sk == NULL) {
+        return;
+    }
+
+    wolfSSL_sk_X509_pop_free(sk, NULL);
+}
+
 #if defined(OPENSSL_ALL) && !defined(NO_BIO)
 /* Outputs name string of the given WOLFSSL_GENERAL_NAME_OBJECT to WOLFSSL_BIO.
  * Can handle following GENERAL_NAME_OBJECT types:
@@ -5207,7 +5218,7 @@ static WOLFSSL_X509* loadX509orX509REQFromBuffer(
     const unsigned char* buf, int sz, int format, int type)
 {
 
-    int ret;
+    int ret = 0;
     WOLFSSL_X509* x509 = NULL;
     DerBuffer* der = NULL;
 
@@ -5215,7 +5226,8 @@ static WOLFSSL_X509* loadX509orX509REQFromBuffer(
 
     if (format == WOLFSSL_FILETYPE_PEM) {
     #ifdef WOLFSSL_PEM_TO_DER
-        if (PemToDer(buf, sz, type, &der, NULL, NULL, NULL) != 0) {
+        ret = PemToDer(buf, sz, type, &der, NULL, NULL, NULL);
+        if (ret != 0) {
             FreeDer(&der);
         }
     #else
@@ -5241,19 +5253,27 @@ static WOLFSSL_X509* loadX509orX509REQFromBuffer(
     #ifdef WOLFSSL_SMALL_STACK
         cert = (DecodedCert*)XMALLOC(sizeof(DecodedCert), NULL,
                                      DYNAMIC_TYPE_DCERT);
-        if (cert != NULL)
+        if (cert == NULL) {
+            ret = MEMORY_ERROR;
+        }
+        else
     #endif
         {
             InitDecodedCert(cert, der->buffer, der->length, NULL);
-            if (ParseCertRelative(cert, type, 0, NULL) == 0) {
+            ret = ParseCertRelative(cert, type, 0, NULL);
+            if (ret == 0) {
                 x509 = (WOLFSSL_X509*)XMALLOC(sizeof(WOLFSSL_X509), NULL,
                                                              DYNAMIC_TYPE_X509);
                 if (x509 != NULL) {
                     InitX509(x509, 1, NULL);
-                    if (CopyDecodedToX509(x509, cert) != 0) {
+                    ret = CopyDecodedToX509(x509, cert);
+                    if (ret != 0) {
                         wolfSSL_X509_free(x509);
                         x509 = NULL;
                     }
+                }
+                else {
+                    ret = MEMORY_ERROR;
                 }
             }
 
@@ -5264,6 +5284,10 @@ static WOLFSSL_X509* loadX509orX509REQFromBuffer(
         }
 
         FreeDer(&der);
+    }
+
+    if (ret != 0) {
+        WOLFSSL_ERROR(ret);
     }
 
     return x509;
