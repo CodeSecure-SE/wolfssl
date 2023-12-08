@@ -55,11 +55,11 @@ jobs:
       - name: Download results
         run: |
           echo $CSONAR_HUB_PASSWORD > hubpwfile
-          $CSONAR_CSHOME/codesonar/bin/codesonar dump_warnings.py --project-file $PROJECT_NAME.prj --visible-warnings "active"\
-          -auth password -hubuser $CSONAR_HUB_USER -hubpwfile hubpwfile  --hub $CSONAR_HUB_URL --gained-since-previous-analysis --sarif --sarif-detail brief -o diff.sarif
-          $CSONAR_CSHOME/codesonar/bin/codesonar dump_warnings.py --project-file $PROJECT_NAME.prj --visible-warnings "active" \
+          $CSONAR_CSHOME/codesonar/bin/codesonar dump_warnings.py --project-file $PROJECT_NAME.prj \
+          -auth password -hubuser $CSONAR_HUB_USER -hubpwfile hubpwfile  --hub $CSONAR_HUB_URL --gained-since-previous-analysis --visible-warnings "active" --sarif --sarif-detail brief -o diff.sarif
+          $CSONAR_CSHOME/codesonar/bin/codesonar dump_warnings.py --project-file $PROJECT_NAME.prj  \
           -auth password -hubuser $CSONAR_HUB_USER -hubpwfile hubpwfile  --hub $CSONAR_HUB_URL \
-          --sort "ascending:priority" --sort "descending:score" --gained-since-previous-analysis --csv -o diff.csv
+          --sort "ascending:priority" --sort "descending:score" --visible-warnings "active" --gained-since-previous-analysis --csv -o diff.csv
 
           sed -i 's#/warninginstance#https://partnerdemo.codesonar.com/warninginstance#' diff.csv
           sed -i 's#.txt$#.html#' diff.csv
