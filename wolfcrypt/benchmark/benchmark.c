@@ -10350,6 +10350,9 @@ exit_enc:
 
     RESET_MULTI_VALUE_STATS_VARS();
 
+    if (ret != 0)
+        goto exit;
+
     bench_stats_start(&count, &start);
     do {
         for (i = 0; i < ntimes; i++) {
@@ -11788,7 +11791,7 @@ void bench_falconKeySign(byte level)
                     x = FALCON_LEVEL5_SIG_SIZE;
                 }
 
-                ret = wc_falcon_sign_msg(msg, sizeof(msg), sig, &x, &key);
+                ret = wc_falcon_sign_msg(msg, sizeof(msg), sig, &x, &key, GLOBAL_RNG);
                 if (ret != 0) {
                     printf("wc_falcon_sign_msg failed\n");
                 }
@@ -11909,7 +11912,7 @@ void bench_dilithiumKeySign(byte level)
                     x = DILITHIUM_LEVEL5_SIG_SIZE;
                 }
 
-                ret = wc_dilithium_sign_msg(msg, sizeof(msg), sig, &x, &key);
+                ret = wc_dilithium_sign_msg(msg, sizeof(msg), sig, &x, &key, GLOBAL_RNG);
                 if (ret != 0) {
                     printf("wc_dilithium_sign_msg failed\n");
                 }
@@ -12055,7 +12058,7 @@ void bench_sphincsKeySign(byte level, byte optim)
                     x = SPHINCS_SMALL_LEVEL5_SIG_SIZE;
                 }
 
-                ret = wc_sphincs_sign_msg(msg, sizeof(msg), sig, &x, &key);
+                ret = wc_sphincs_sign_msg(msg, sizeof(msg), sig, &x, &key, GLOBAL_RNG);
                 if (ret != 0) {
                     printf("wc_sphincs_sign_msg failed\n");
                 }
