@@ -21160,11 +21160,11 @@ default:
                 ssl->keys.decryptedCur = 1;
 #ifdef WOLFSSL_TLS13
                 if (ssl->options.tls1_3) {
-                    /* end of plaintext */
-                    word16 i = (word16)(ssl->buffers.inputBuffer.idx +
-                                 ssl->curSize - ssl->specs.aead_mac_size);
-
-                    if (i > ssl->buffers.inputBuffer.length) {
+                    word32 i = (ssl->buffers.inputBuffer.idx +
+                        ssl->curSize - ssl->specs.aead_mac_size);
+                    /* check that the end of the logical length doesn't extend
+                     * past the real buffer */
+                    if (i > ssl->buffers.inputBuffer.length || i == 0) {
                         WOLFSSL_ERROR(BUFFER_ERROR);
                         return BUFFER_ERROR;
                     }
@@ -23985,7 +23985,9 @@ int SendData(WOLFSSL* ssl, const void* data, int sz)
     }
 
 #ifdef WOLFSSL_EARLY_DATA
-    if (ssl->earlyData != no_early_data) {
+    if (ssl->options.side == WOLFSSL_CLIENT_END &&
+            ssl->earlyData != no_early_data &&
+            ssl->earlyData != done_early_data) {
         if (ssl->options.handShakeState == HANDSHAKE_DONE) {
             WOLFSSL_MSG("handshake complete, trying to send early data");
             ssl->error = BUILD_MSG_ERROR;
@@ -24079,7 +24081,9 @@ int SendData(WOLFSSL* ssl, const void* data, int sz)
                 return ssl->error = BAD_STATE_E;
 
 #ifdef WOLFSSL_EARLY_DATA
-            isEarlyData = ssl->earlyData != no_early_data;
+            isEarlyData = ssl->options.side == WOLFSSL_CLIENT_END &&
+                    ssl->earlyData != no_early_data &&
+                    ssl->earlyData != done_early_data;
 #endif
 
             if (isEarlyData) {
@@ -24247,7 +24251,8 @@ int ReceiveData(WOLFSSL* ssl, byte* output, int sz, int peek)
     }
 
 #ifdef WOLFSSL_EARLY_DATA
-    if (ssl->earlyData != no_early_data) {
+    if (ssl->options.side == WOLFSSL_SERVER_END &&
+          ssl->earlyData > early_data_ext && ssl->earlyData < done_early_data) {
     }
     else
 #endif

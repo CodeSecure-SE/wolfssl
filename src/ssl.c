@@ -3240,20 +3240,6 @@ int wolfSSL_write(WOLFSSL* ssl, const void* data, int sz)
         return BAD_FUNC_ARG;
     }
 #endif
-#ifdef WOLFSSL_EARLY_DATA
-    if (IsAtLeastTLSv1_3(ssl->version) &&
-            ssl->options.side == WOLFSSL_SERVER_END &&
-            ssl->options.acceptState >= TLS13_ACCEPT_FINISHED_SENT) {
-        /* We can send data without waiting on peer finished msg */
-        WOLFSSL_MSG("server sending data before receiving client finished");
-    }
-    else if (ssl->earlyData != no_early_data &&
-            (ret = wolfSSL_negotiate(ssl)) < 0) {
-        ssl->error = ret;
-        return WOLFSSL_FATAL_ERROR;
-    }
-    ssl->earlyData = no_early_data;
-#endif
 
 #ifdef HAVE_WRITE_DUP
     { /* local variable scope */
@@ -14475,6 +14461,9 @@ WOLFSSL_SESSION* ClientSessionToSession(const WOLFSSL_SESSION* session)
             WOLFSSL_MSG("Client cache serverRow or serverIdx invalid");
             error = -1;
         }
+        /* Prevent memory access before clientSession->serverRow and
+         * clientSession->serverIdx are sanitized. */
+        XFENCE();
         if (error == 0) {
             /* Lock row */
             sessRow = &SessionCache[clientSession->serverRow];
