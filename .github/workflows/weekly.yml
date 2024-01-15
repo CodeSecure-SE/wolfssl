@@ -27,10 +27,10 @@ jobs:
           $CSONAR_CSHOME/codesonar/bin/codesonar dump_warnings.py --project-name "/WolfSSL-Projects/WolfSSL-GitHub/release/VelvetShadow"  \
           -auth password -hubuser $CSONAR_HUB_USER -hubpwfile hubpwfile  --hub $CSONAR_HUB_URL \
           --sort "ascending:priority" --sort "descending:score" --visible-warnings "active" --csv -o diff.csv
-          sed -i 's#/warninginstance#https://partnerdemo.codesonar.com/warninginstance#' diff.csv
-          sed -i 's#.txt$#.html#' diff.csv
-          cut -d, -f1,2,3,4,5,6,7,8,9,15 diff.csv > diff2.csv
-          csv2md diff2.csv > diff.md
+          #sed -i 's#/warninginstance#https://partnerdemo.codesonar.com/warninginstance#' diff.csv
+          #sed -i 's#.txt$#.html#' diff.csv
+          #cut -d, -f1,2,3,4,5,6,7,8,9,15 diff.csv > diff2.csv
+          #csv2md diff2.csv > diff.md
       - name: Email results
         uses: dawidd6/action-send-mail@v3
         with:
@@ -39,8 +39,8 @@ jobs:
           username: ${{ secrets.GMAIL_USERNAME }}
           password: ${{ secrets.GMAIL_PASSWORD }}
           subject: CodeSonar weekly results for ${{ github.repository }}
-          body: file://diff.md
+          body: file://diff.csv
           convert_markdown: true
           from: "CodeSonar Analyzer"
-          to: "mark@hermeling.org, andras@wolfssl.com <andras@wolfssl.com>"
+          to: "mark@hermeling.org
           reply_to: "mark@hermeling.org"
