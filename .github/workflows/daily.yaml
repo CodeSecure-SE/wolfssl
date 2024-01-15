@@ -1,11 +1,20 @@
-name: CodeSonar run
+name: Generate full report
 on:
   schedule:
     - cron: '17 2 * * *'
+  push:
+    branches:
+      - 'release/**'
 
 jobs:
-  Hello-job:
-    runs-on: ubuntu-latest
+  Report:
+    permissions: write-all
+    runs-on: self-hosted
+    container:
+      image: canuckmh/wolfssl-cso-builder:8.0p0
+      credentials:
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        password: ${{ secrets.DOCKERHUB_TOKEN }}
     steps:
       - name: Say Hello
         run: echo "Hello World!"
