@@ -39,7 +39,7 @@ jobs:
           username: ${{ secrets.GMAIL_USERNAME }}
           password: ${{ secrets.GMAIL_PASSWORD }}
           subject: CodeSonar weekly results for ${{ github.repository }}
-          body: file://diff.csv
+          body: file://diff.md
           convert_markdown: true
           from: "CodeSonar Analyzer"
           to: "mark@hermeling.org"
