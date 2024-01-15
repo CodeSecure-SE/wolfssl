@@ -24,7 +24,7 @@ jobs:
       - name: Download results
         run: |
           echo $CSONAR_HUB_PASSWORD > hubpwfile
-          $CSONAR_CSHOME/codesonar/bin/codesonar dump_warnings.py --project-name "WolfSSL-Projects\WolfSSL-GitHub\release\VelvetShadow"  \
+          $CSONAR_CSHOME/codesonar/bin/codesonar dump_warnings.py --project-name "/WolfSSL-Projects/WolfSSL-GitHub/release/VelvetShadow"  \
           -auth password -hubuser $CSONAR_HUB_USER -hubpwfile hubpwfile  --hub $CSONAR_HUB_URL \
           --sort "ascending:priority" --sort "descending:score" --visible-warnings "active" --csv -o diff.csv
           sed -i 's#/warninginstance#https://partnerdemo.codesonar.com/warninginstance#' diff.csv
