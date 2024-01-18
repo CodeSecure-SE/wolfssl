@@ -4019,11 +4019,11 @@ static word32 SetBitString16Bit(word16 val, byte* output)
 #endif /* HAVE_ED448 */
 #ifdef HAVE_PQC
 #ifdef HAVE_FALCON
-    /* Falcon Level 1: 1 3 9999 3 1 */
-    static const byte sigFalcon_Level1Oid[] = {43, 206, 15, 3, 1};
+    /* Falcon Level 1: 1 3 9999 3 6 */
+    static const byte sigFalcon_Level1Oid[] = {43, 206, 15, 3, 6};
 
-    /* Falcon Level 5: 1 3 9999 3 4 */
-    static const byte sigFalcon_Level5Oid[] = {43, 206, 15, 3, 4};
+    /* Falcon Level 5: 1 3 9999 3 9 */
+    static const byte sigFalcon_Level5Oid[] = {43, 206, 15, 3, 9};
 #endif /* HAVE_FACON */
 #ifdef HAVE_DILITHIUM
     /* Dilithium Level 2: 1.3.6.1.4.1.2.267.7.4.4 */
@@ -4095,11 +4095,11 @@ static word32 SetBitString16Bit(word16 val, byte* output)
 #endif /* !NO_DH */
 #ifdef HAVE_PQC
 #ifdef HAVE_FALCON
-    /* Falcon Level 1: 1 3 9999 3 1 */
-    static const byte keyFalcon_Level1Oid[] = {43, 206, 15, 3, 1};
+    /* Falcon Level 1: 1 3 9999 3 6 */
+    static const byte keyFalcon_Level1Oid[] = {43, 206, 15, 3, 6};
 
-    /* Falcon Level 5: 1 3 9999 3 4 */
-    static const byte keyFalcon_Level5Oid[] = {43, 206, 15, 3, 4};
+    /* Falcon Level 5: 1 3 9999 3 9 */
+    static const byte keyFalcon_Level5Oid[] = {43, 206, 15, 3, 9};
 #endif /* HAVE_FALCON */
 #ifdef HAVE_DILITHIUM
     /* Dilithium Level 2: 1.3.6.1.4.1.2.267.7.4.4 */
@@ -32149,6 +32149,11 @@ int DecodeECC_DSA_Sig_Ex(const byte* sig, word32 sigLen, mp_int* r, mp_int* s,
     /* Decode the DSA signature. */
     ret = GetASN_Items(dsaSigASN, dataASN, dsaSigASN_Length, 0, sig, &idx,
                        sigLen);
+
+    if (ret != 0) {
+        ret = ASN_ECC_KEY_E;
+    }
+
 #ifndef NO_STRICT_ECDSA_LEN
     /* sanity check that the index has been advanced all the way to the end of
      * the buffer */
