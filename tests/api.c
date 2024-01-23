@@ -11589,6 +11589,7 @@ static int test_wolfSSL_PKCS12(void)
                    * Password Key
                    */
 #if defined(OPENSSL_EXTRA) && !defined(NO_DES3) && !defined(NO_FILESYSTEM) && \
+    !defined(NO_STDIO_FILESYSTEM) && \
     !defined(NO_ASN) && !defined(NO_PWDBASED) && !defined(NO_RSA) && \
     !defined(NO_SHA) && defined(HAVE_PKCS12) && !defined(NO_BIO)
     byte buf[6000];
@@ -37686,6 +37687,7 @@ static int test_wolfSSL_BN(void)
     ExpectIntLT(BN_cmp(a, c), 0);
     ExpectIntGT(BN_cmp(c, b), 0);
 
+#if !defined(NO_FILESYSTEM) && !defined(NO_STDIO_FILESYSTEM)
     ExpectIntEQ(BN_print_fp(XBADFILE, NULL), 0);
     ExpectIntEQ(BN_print_fp(XBADFILE, &emptyBN), 0);
     ExpectIntEQ(BN_print_fp(stderr, NULL), 0);
@@ -37693,6 +37695,7 @@ static int test_wolfSSL_BN(void)
     ExpectIntEQ(BN_print_fp(XBADFILE, a), 0);
 
     ExpectIntEQ(BN_print_fp(stderr, a), 1);
+#endif
 
     BN_clear(a);
 
@@ -43332,7 +43335,8 @@ static int test_wolfSSL_OBJ(void)
     EXPECT_DECLS;
 #if defined(OPENSSL_EXTRA) && !defined(NO_SHA256) && !defined(NO_ASN) && \
     !defined(HAVE_FIPS) && !defined(NO_SHA) && defined(WOLFSSL_CERT_EXT) && \
-    defined(WOLFSSL_CERT_GEN) && !defined(NO_BIO)
+    defined(WOLFSSL_CERT_GEN) && !defined(NO_BIO) && \
+    !defined(NO_FILESYSTEM) && !defined(NO_STDIO_FILESYSTEM)
     ASN1_OBJECT *obj = NULL;
     ASN1_OBJECT *obj2 = NULL;
     char buf[50];
@@ -54728,7 +54732,7 @@ static int test_wolfSSL_X509_load_crl_file(void)
 {
     EXPECT_DECLS;
 #if defined(OPENSSL_EXTRA) && defined(HAVE_CRL) && !defined(NO_FILESYSTEM) && \
-    !defined(NO_RSA) && !defined(NO_BIO)
+    !defined(NO_STDIO_FILESYSTEM) && !defined(NO_RSA) && !defined(NO_BIO)
     int i;
     char pem[][100] = {
         "./certs/crl/crl.pem",
@@ -57130,6 +57134,7 @@ static int test_wolfSSL_RSA_print(void)
 {
     EXPECT_DECLS;
 #if defined(OPENSSL_EXTRA) && !defined(NO_FILESYSTEM) && \
+   !defined(NO_STDIO_FILESYSTEM) && \
    !defined(NO_RSA) && defined(WOLFSSL_KEY_GEN) && \
    !defined(NO_BIO) && defined(XFPRINTF)
     BIO *bio = NULL;
@@ -59850,7 +59855,8 @@ static int test_wolfSSL_EC_POINT(void)
     /* check bn2hex */
     hexStr = BN_bn2hex(k);
     ExpectStrEQ(hexStr, kTest);
-#if !defined(NO_FILESYSTEM) && defined(XFPRINTF)
+#if !defined(NO_FILESYSTEM) && !defined(NO_STDIO_FILESYSTEM) && \
+     defined(XFPRINTF)
     BN_print_fp(stderr, k);
     fprintf(stderr, "\n");
 #endif
@@ -59858,7 +59864,8 @@ static int test_wolfSSL_EC_POINT(void)
 
     hexStr = BN_bn2hex(Gx);
     ExpectStrEQ(hexStr, kGx);
-#if !defined(NO_FILESYSTEM) && defined(XFPRINTF)
+#if !defined(NO_FILESYSTEM) && !defined(NO_STDIO_FILESYSTEM) && \
+     defined(XFPRINTF)
     BN_print_fp(stderr, Gx);
     fprintf(stderr, "\n");
 #endif
@@ -59866,7 +59873,8 @@ static int test_wolfSSL_EC_POINT(void)
 
     hexStr = BN_bn2hex(Gy);
     ExpectStrEQ(hexStr, kGy);
-#if !defined(NO_FILESYSTEM) && defined(XFPRINTF)
+#if !defined(NO_FILESYSTEM) && !defined(NO_STDIO_FILESYSTEM) && \
+     defined(XFPRINTF)
     BN_print_fp(stderr, Gy);
     fprintf(stderr, "\n");
 #endif
@@ -69179,6 +69187,54 @@ static int test_self_signed_stapling(void)
     return EXPECT_RESULT();
 }
 
+static int test_tls_multi_handshakes_one_record(void)
+{
+    EXPECT_DECLS;
+#if defined(HAVE_MANUAL_MEMIO_TESTS_DEPENDENCIES) && !defined(WOLFSSL_NO_TLS12)
+    struct test_memio_ctx test_ctx;
+    WOLFSSL_CTX *ctx_c = NULL, *ctx_s = NULL;
+    WOLFSSL *ssl_c = NULL, *ssl_s = NULL;
+    int newRecIdx = RECORD_HEADER_SZ;
+    int idx = 0;
+
+    XMEMSET(&test_ctx, 0, sizeof(test_ctx));
+
+    ExpectIntEQ(test_memio_setup(&test_ctx, &ctx_c, &ctx_s, &ssl_c, &ssl_s,
+            wolfTLS_client_method, wolfTLSv1_2_server_method), 0);
+
+    ExpectIntEQ(wolfSSL_connect(ssl_c), -1);
+    ExpectIntEQ(wolfSSL_get_error(ssl_c, -1), WOLFSSL_ERROR_WANT_READ);
+    ExpectIntEQ(wolfSSL_accept(ssl_s), -1);
+    ExpectIntEQ(wolfSSL_get_error(ssl_s, -1), WOLFSSL_ERROR_WANT_READ);
+
+    /* Combine server handshake msgs into one record */
+    while (idx < test_ctx.c_len) {
+        word16 recLen;
+
+        ato16(((RecordLayerHeader*)(test_ctx.c_buff + idx))->length, &recLen);
+        idx += RECORD_HEADER_SZ;
+
+        XMEMMOVE(test_ctx.c_buff + newRecIdx, test_ctx.c_buff + idx,
+                (size_t)recLen);
+
+        newRecIdx += recLen;
+        idx += recLen;
+    }
+    c16toa(newRecIdx - RECORD_HEADER_SZ,
+            ((RecordLayerHeader*)test_ctx.c_buff)->length);
+    test_ctx.c_len = newRecIdx;
+
+    ExpectIntEQ(wolfSSL_connect(ssl_c), -1);
+    ExpectIntEQ(wolfSSL_get_error(ssl_c, -1), WOLFSSL_ERROR_WANT_READ);
+
+    wolfSSL_free(ssl_c);
+    wolfSSL_free(ssl_s);
+    wolfSSL_CTX_free(ctx_c);
+    wolfSSL_CTX_free(ctx_s);
+#endif
+    return EXPECT_RESULT();
+}
+
 /*----------------------------------------------------------------------------*
  | Main
  *----------------------------------------------------------------------------*/
@@ -70481,6 +70537,7 @@ TEST_CASE testCases[] = {
     TEST_DECL(test_dtls_empty_keyshare_with_cookie),
     TEST_DECL(test_tls13_pq_groups),
     TEST_DECL(test_tls13_early_data),
+    TEST_DECL(test_tls_multi_handshakes_one_record),
     /* This test needs to stay at the end to clean up any caches allocated. */
     TEST_DECL(test_wolfSSL_Cleanup)
 };
