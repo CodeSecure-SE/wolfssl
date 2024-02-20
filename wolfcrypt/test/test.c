@@ -28354,7 +28354,9 @@ done:
 #endif
 
 #if defined(HAVE_ECC_DHE) && !defined(WC_NO_RNG) && \
-    !defined(WOLF_CRYPTO_CB_ONLY_ECC)
+    !defined(WOLF_CRYPTO_CB_ONLY_ECC) && !defined(WOLFSSL_ATECC508A) && \
+    !defined(WOLFSSL_ATECC608A) && !defined(PLUTON_CRYPTO_ECC) && \
+    !defined(WOLFSSL_CRYPTOCELL)
 static wc_test_ret_t ecc_ssh_test(ecc_key* key, WC_RNG* rng)
 {
     wc_test_ret_t ret;
@@ -36876,7 +36878,7 @@ static const byte xmss_pub[XMSS_SHA256_PUBLEN] =
     0xC9,0xB7,0x39,0x4E
 };
 
-static const byte xmss_msg[32] =
+static /* not const */ byte xmss_msg[32] =
 {
     0x07,0x9F,0x80,0x86,0xDB,0x76,0x27,0xDF,
     0xED,0x5B,0x2A,0x81,0x60,0x60,0x7D,0xB4,
@@ -36886,7 +36888,7 @@ static const byte xmss_msg[32] =
 
 /* This was actually the 5th signature produced from
  * xmss_fast test in xmss-reference. */
-static const byte xmss_sig[2500] =
+static /* not const */ byte xmss_sig[2500] =
 {
     0x00,0x00,0x00,0x05,0xF0,0x15,0x34,0xBA,
     0x92,0x03,0x6A,0xB9,0xA5,0x23,0x86,0x11,
