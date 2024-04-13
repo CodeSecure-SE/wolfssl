@@ -265,6 +265,23 @@
 /* Uncomment next line if using MAXQ108x */
 /* #define WOLFSSL_MAXQ108X */
 
+/* Check PLATFORMIO first, as it may define other known environments. */
+#ifdef PLATFORMIO
+    #ifdef ESP_PLATFORM
+        /* Turn on the wolfSSL ESPIDF flag for the PlatformIO ESP-IDF detect */
+        #define WOLFSSL_ESPIDF
+    #endif /* ESP_PLATFORM */
+
+    /* Ensure all PlatformIO boards have the wolfSSL user_setting.h enabled. */
+    #ifndef WOLFSSL_USER_SETTINGS
+        #define WOLFSSL_USER_SETTINGS
+    #endif /* WOLFSSL_USER_SETTINGS */
+
+    /* Similar to Arduino we have limited build control, so suppress warning */
+    #undef  WOLFSSL_IGNORE_FILE_WARN
+    #define WOLFSSL_IGNORE_FILE_WARN
+#endif
+
 #if defined(ARDUINO)
     /* Due to limited build control, we'll ignore file warnings. */
     /* See https://github.com/arduino/arduino-cli/issues/631     */
@@ -1034,8 +1051,14 @@ extern void uITRON4_free(void *p) ;
 
 
 #ifdef FREERTOS
-    #include "FreeRTOS.h"
-    #include <task.h>
+
+    #ifdef PLATFORMIO
+        #include <freertos/FreeRTOS.h>
+        #include <freertos/task.h>
+    #else
+        #include "FreeRTOS.h"
+        #include <task.h>
+    #endif
 
     #if !defined(XMALLOC_USER) && !defined(NO_WOLFSSL_MEMORY) && \
         !defined(WOLFSSL_STATIC_MEMORY) && !defined(WOLFSSL_TRACK_MEMORY)
@@ -3352,9 +3375,17 @@ extern void uITRON4_free(void *p) ;
 
 /* (D)TLS v1.3 requires 64-bit number wrappers as does XMSS and LMS. */
 #if defined(WOLFSSL_TLS13) || defined(WOLFSSL_DTLS_DROP_STATS) || \
-    defined(WOLFSSL_WC_XMSS) || defined(WOLFSSL_WC_LMS)
+    (defined(WOLFSSL_WC_XMSS) && (!defined(WOLFSSL_XMSS_MAX_HEIGHT) || \
+    WOLFSSL_XMSS_MAX_HEIGHT > 32)) || (defined(WOLFSSL_WC_LMS) && \
+    !defined(WOLFSSL_LMS_VERIFY_ONLY))
     #undef WOLFSSL_W64_WRAPPER
     #define WOLFSSL_W64_WRAPPER
+#endif
+
+/* wc_xmss and wc_lms require these misc.c functions. */
+#if defined(WOLFSSL_WC_XMSS) || defined(WOLFSSL_WC_LMS)
+    #undef  WOLFSSL_NO_INT_ENCODE
+    #undef  WOLFSSL_NO_INT_DECODE
 #endif
 
 /* DTLS v1.3 requires AES ECB if using AES */
