@@ -1529,7 +1529,7 @@ static void ProcessBufferCertSetHave(WOLFSSL_CTX* ctx, WOLFSSL* ssl,
     if (ssl != NULL) {
         ssl->pkCurveOID = cert->pkCurveOID;
     }
-    else {
+    else if (ctx) {
         ctx->pkCurveOID = cert->pkCurveOID;
     }
     #endif
@@ -1540,7 +1540,7 @@ static void ProcessBufferCertSetHave(WOLFSSL_CTX* ctx, WOLFSSL* ssl,
     if (ssl != NULL) {
         ssl->options.haveECC = ssl->options.haveECDSAsig;
     }
-    else {
+    else if (ctx) {
         ctx->haveECC = ctx->haveECDSAsig;
     }
 #endif /* !WC_STRICT_SIG */
@@ -2872,7 +2872,7 @@ static int LoadSystemCaCertsWindows(WOLFSSL_CTX* ctx, byte* loaded)
         ret = 0;
     }
 
-    for (i = 0; (ret == 0) && (i < sizeof(storeNames)/sizeof(*storeNames));
+    for (i = 0; (ret == 1) && (i < sizeof(storeNames)/sizeof(*storeNames));
          ++i) {
         handle = CertOpenSystemStoreA(hProv, storeNames[i]);
         if (handle != NULL) {
