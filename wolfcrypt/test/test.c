@@ -9908,7 +9908,8 @@ static wc_test_ret_t aes_xts_128_test(void)
     if (XMEMCMP(c2, buf, sizeof(c2)))
         ERROR_OUT(WC_TEST_RET_ENC_NC, out);
 
-#if defined(DEBUG_VECTOR_REGISTER_ACCESS) && defined(WC_AES_C_DYNAMIC_FALLBACK)
+#if defined(DEBUG_VECTOR_REGISTER_ACCESS_AESXTS) && \
+        defined(WC_AES_C_DYNAMIC_FALLBACK)
     WC_DEBUG_SET_VECTOR_REGISTERS_RETVAL(SYSLIB_FAILED_E);
     ret = wc_AesXtsEncrypt(aes, buf, p2, sizeof(p2), i2, sizeof(i2));
 #if defined(WOLFSSL_ASYNC_CRYPT)
@@ -9935,7 +9936,8 @@ static wc_test_ret_t aes_xts_128_test(void)
     if (XMEMCMP(c1, buf, AES_BLOCK_SIZE))
         ERROR_OUT(WC_TEST_RET_ENC_NC, out);
 
-#if defined(DEBUG_VECTOR_REGISTER_ACCESS) && defined(WC_AES_C_DYNAMIC_FALLBACK)
+#if defined(DEBUG_VECTOR_REGISTER_ACCESS_AESXTS) && \
+        defined(WC_AES_C_DYNAMIC_FALLBACK)
     WC_DEBUG_SET_VECTOR_REGISTERS_RETVAL(SYSLIB_FAILED_E);
     ret = wc_AesXtsEncrypt(aes, buf, p1, sizeof(p1), i1, sizeof(i1));
 #if defined(WOLFSSL_ASYNC_CRYPT)
@@ -9959,7 +9961,8 @@ static wc_test_ret_t aes_xts_128_test(void)
     if (XMEMCMP(cp2, cipher, sizeof(cp2)))
         ERROR_OUT(WC_TEST_RET_ENC_NC, out);
 
-#if defined(DEBUG_VECTOR_REGISTER_ACCESS) && defined(WC_AES_C_DYNAMIC_FALLBACK)
+#if defined(DEBUG_VECTOR_REGISTER_ACCESS_AESXTS) && \
+        defined(WC_AES_C_DYNAMIC_FALLBACK)
     WC_DEBUG_SET_VECTOR_REGISTERS_RETVAL(SYSLIB_FAILED_E);
     XMEMSET(cipher, 0, sizeof(cipher));
     ret = wc_AesXtsEncrypt(aes, cipher, pp, sizeof(pp), i1, sizeof(i1));
@@ -9991,7 +9994,8 @@ static wc_test_ret_t aes_xts_128_test(void)
     if (XMEMCMP(pp, buf, sizeof(pp)))
         ERROR_OUT(WC_TEST_RET_ENC_NC, out);
 
-#if defined(DEBUG_VECTOR_REGISTER_ACCESS) && defined(WC_AES_C_DYNAMIC_FALLBACK)
+#if defined(DEBUG_VECTOR_REGISTER_ACCESS_AESXTS) && \
+        defined(WC_AES_C_DYNAMIC_FALLBACK)
     WC_DEBUG_SET_VECTOR_REGISTERS_RETVAL(SYSLIB_FAILED_E);
     XMEMSET(buf, 0, sizeof(buf));
     ret = wc_AesXtsDecrypt(aes, buf, cipher, sizeof(pp), i1, sizeof(i1));
@@ -10024,7 +10028,8 @@ static wc_test_ret_t aes_xts_128_test(void)
     if (XMEMCMP(p1, buf, AES_BLOCK_SIZE))
         ERROR_OUT(WC_TEST_RET_ENC_NC, out);
 
-#if defined(DEBUG_VECTOR_REGISTER_ACCESS) && defined(WC_AES_C_DYNAMIC_FALLBACK)
+#if defined(DEBUG_VECTOR_REGISTER_ACCESS_AESXTS) && \
+        defined(WC_AES_C_DYNAMIC_FALLBACK)
     WC_DEBUG_SET_VECTOR_REGISTERS_RETVAL(SYSLIB_FAILED_E);
     XMEMSET(buf, 0, sizeof(buf));
     ret = wc_AesXtsDecrypt(aes, buf, c1, sizeof(c1), i1, sizeof(i1));
@@ -32902,6 +32907,88 @@ done:
 }
 #endif /* WOLFSSL_TEST_CERT */
 
+#if defined(HAVE_ED25519_KEY_IMPORT)
+static wc_test_ret_t ed25519_test_check_key(void)
+{
+    /* Fails to find x-ordinate from this y-ordinate. */
+    WOLFSSL_SMALL_STACK_STATIC const byte key_bad_y[] = {
+        0x40,
+        0x02,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+        0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+        0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+        0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+    };
+    /* Y-ordinate value larger than prime. */
+    WOLFSSL_SMALL_STACK_STATIC const byte key_bad_y_max[] = {
+        0x40,
+        0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+        0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+        0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+        0xff,0xff,0xff,0xff,0xff,0xff,0xff,0x7f,
+    };
+    /* Y-ordinate value equal to prime. */
+    WOLFSSL_SMALL_STACK_STATIC const byte key_bad_y_is_p[] = {
+        0x40,
+        0xed,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+        0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+        0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+        0xff,0xff,0xff,0xff,0xff,0xff,0xff,0x7f,
+    };
+    /* Y-ordinate value equal to prime - 1. */
+    WOLFSSL_SMALL_STACK_STATIC const byte key_y_is_p_minus_1[] = {
+        0x40,
+        0xec,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+        0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+        0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+        0xff,0xff,0xff,0xff,0xff,0xff,0xff,0x7f,
+    };
+    ed25519_key key;
+    int ret;
+    int res = 0;
+
+    /* Initialize key for use. */
+    ret = wc_ed25519_init_ex(&key, HEAP_HINT, devId);
+    if (ret != 0) {
+        return WC_TEST_RET_ENC_NC;
+    }
+
+    /* Load bad public key only and perform checks. */
+    ret = wc_ed25519_import_public(key_bad_y, ED25519_PUB_KEY_SIZE + 1, &key);
+    if (ret != PUBLIC_KEY_E) {
+        res = WC_TEST_RET_ENC_NC;
+    }
+    if (res == 0) {
+        /* Load bad public key only and perform checks. */
+        ret = wc_ed25519_import_public(key_bad_y_max, ED25519_PUB_KEY_SIZE + 1,
+            &key);
+        if (ret != PUBLIC_KEY_E) {
+            res = WC_TEST_RET_ENC_NC;
+        }
+    }
+    if (res == 0) {
+        /* Load bad public key only and perform checks. */
+        ret = wc_ed25519_import_public(key_bad_y_is_p, ED25519_PUB_KEY_SIZE + 1,
+            &key);
+        if (ret != PUBLIC_KEY_E) {
+            res = WC_TEST_RET_ENC_NC;
+        }
+    }
+    if (res == 0) {
+        /* Load good public key only and perform checks. */
+        ret = wc_ed25519_import_public(key_y_is_p_minus_1,
+            ED25519_PUB_KEY_SIZE + 1, &key);
+        if (ret != 0) {
+            res = WC_TEST_RET_ENC_NC;
+        }
+    }
+
+    /* Dispose of key. */
+    wc_ed25519_free(&key);
+
+    return res;
+}
+#endif
+
 #if defined(HAVE_ED25519_SIGN) && defined(HAVE_ED25519_KEY_EXPORT) && \
     defined(HAVE_ED25519_KEY_IMPORT)
 static wc_test_ret_t ed25519ctx_test(void)
@@ -33735,6 +33822,9 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t ed25519_test(void)
     (void)keySz;
     (void)sigSz;
 
+    ret = ed25519_test_check_key();
+    if (ret < 0)
+        return ret;
 #ifdef WOLFSSL_TEST_CERT
     ret = ed25519_test_cert();
     if (ret < 0)
@@ -34259,6 +34349,104 @@ done:
     return ret;
 }
 #endif /* WOLFSSL_TEST_CERT */
+
+#if defined(HAVE_ED448_KEY_IMPORT)
+static wc_test_ret_t ed448_test_check_key(void)
+{
+    /* Fails to find x-ordinate from this y-ordinate. */
+    WOLFSSL_SMALL_STACK_STATIC const byte key_bad_y[] = {
+        0x40,
+        0x02,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+        0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+        0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+        0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+        0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+        0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+        0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+        0x00
+    };
+    /* Y-ordinate value larger than prime. */
+    WOLFSSL_SMALL_STACK_STATIC const byte key_bad_y_max[] = {
+        0x40,
+        0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+        0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+        0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+        0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+        0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+        0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+        0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+        0xff
+    };
+    /* Y-ordinate value equal to prime. */
+    WOLFSSL_SMALL_STACK_STATIC const byte key_bad_y_is_p[] = {
+        0x40,
+        0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+        0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+        0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+        0xff,0xff,0xff,0xff,0xfe,0xff,0xff,0xff,
+        0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+        0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+        0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+        0xff
+    };
+    /* Y-ordinate value equal to prime - 1. */
+    WOLFSSL_SMALL_STACK_STATIC const byte key_y_is_p_minus_1[] = {
+        0x40,
+        0xfe,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+        0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+        0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+        0xff,0xff,0xff,0xff,0xfe,0xff,0xff,0xff,
+        0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+        0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+        0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+        0xff
+    };
+    ed448_key key;
+    int ret;
+    int res = 0;
+
+    /* Initialize key for use. */
+    ret = wc_ed448_init_ex(&key, HEAP_HINT, devId);
+    if (ret != 0) {
+        return WC_TEST_RET_ENC_NC;
+    }
+
+    /* Load bad public key only and perform checks. */
+    ret = wc_ed448_import_public(key_bad_y, ED448_PUB_KEY_SIZE + 1, &key);
+    if (ret != PUBLIC_KEY_E) {
+        res = WC_TEST_RET_ENC_NC;
+    }
+    if (ret == 0) {
+        /* Load bad public key only and perform checks. */
+        ret = wc_ed448_import_public(key_bad_y_max, ED448_PUB_KEY_SIZE + 1,
+            &key);
+        if (ret != PUBLIC_KEY_E) {
+            res = WC_TEST_RET_ENC_NC;
+        }
+    }
+    if (res == 0) {
+        /* Load bad public key only and perform checks. */
+        ret = wc_ed448_import_public(key_bad_y_is_p, ED448_PUB_KEY_SIZE + 1,
+            &key);
+        if (ret != PUBLIC_KEY_E) {
+            res = WC_TEST_RET_ENC_NC;
+        }
+    }
+    if (res == 0) {
+        /* Load good public key only and perform checks. */
+        ret = wc_ed448_import_public(key_y_is_p_minus_1, ED448_PUB_KEY_SIZE + 1,
+            &key);
+        if (ret != 0) {
+            res = WC_TEST_RET_ENC_NC;
+        }
+    }
+
+    /* Dispose of key. */
+    wc_ed448_free(&key);
+
+    return res;
+}
+#endif
 
 #if defined(HAVE_ED448_SIGN) && defined(HAVE_ED448_KEY_EXPORT) && \
     defined(HAVE_ED448_KEY_IMPORT)
@@ -35258,6 +35446,9 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t ed448_test(void)
     (void)keySz;
     (void)sigSz;
 
+    ret = ed448_test_check_key();
+    if (ret < 0)
+        return ret;
 #ifdef WOLFSSL_TEST_CERT
     ret = ed448_test_cert();
     if (ret < 0)
