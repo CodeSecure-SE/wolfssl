@@ -86,6 +86,6 @@ jobs:
           convert_markdown: true
           from: "CodeSonar Analyzer"
           to: "mark@hermeling.org"
-          reply_to: "mark@hermeling.org"
+          reply_to: "mark@hermeling.org, testing@wolfssl.com"
       - name: cleanup
         run: rm hubpwfile
