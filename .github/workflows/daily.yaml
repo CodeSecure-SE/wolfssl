@@ -40,7 +40,7 @@ jobs:
         run: |
           echo "PARALLEL=`nproc`" >> $GITHUB_ENV
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
       - name: Fix ownership warning
         run: git config --global --add safe.directory /__w/wolfssl/wolfssl
       - name: configure
@@ -85,7 +85,7 @@ jobs:
           body: file://diff.md
           convert_markdown: true
           from: "CodeSonar Analyzer"
-          to: "mark@hermeling.org"
-          reply_to: "mark@hermeling.org, testing@wolfssl.com"
+          to: "mark@hermeling.org, testing@wolfssl.com"
+          reply_to: "mark@hermeling.org"
       - name: cleanup
         run: rm hubpwfile
