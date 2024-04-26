@@ -8236,6 +8236,75 @@ int wolfSSL_set_session_secret_cb(WOLFSSL* ssl, SessionSecretCb cb, void* ctx)
     return WOLFSSL_SUCCESS;
 }
 
+int wolfSSL_set_secret_cb(WOLFSSL* ssl, TlsSecretCb cb, void* ctx)
+{
+    WOLFSSL_ENTER("wolfSSL_set_secret_cb");
+    if (ssl == NULL)
+        return WOLFSSL_FATAL_ERROR;
+
+    ssl->tlsSecretCb = cb;
+    ssl->tlsSecretCtx = ctx;
+
+    return WOLFSSL_SUCCESS;
+}
+
+#ifdef SHOW_SECRETS
+int tlsShowSecrets(WOLFSSL* ssl, void* secret, int secretSz,
+        void* ctx)
+{
+    /* Wireshark Pre-Master-Secret Format:
+     *  CLIENT_RANDOM <clientrandom> <mastersecret>
+     */
+    const char* CLIENT_RANDOM_LABEL = "CLIENT_RANDOM";
+    int i, pmsPos = 0;
+    char pmsBuf[13 + 1 + 64 + 1 + 96 + 1 + 1];
+    byte clientRandom[RAN_LEN];
+    int clientRandomSz;
+
+    (void)ctx;
+
+    clientRandomSz = (int)wolfSSL_get_client_random(ssl, clientRandom,
+        sizeof(clientRandom));
+
+    if (clientRandomSz <= 0) {
+        printf("Error getting server random %d\n", clientRandomSz);
+        return BAD_FUNC_ARG;
+    }
+
+    XSNPRINTF(&pmsBuf[pmsPos], sizeof(pmsBuf) - pmsPos, "%s ",
+        CLIENT_RANDOM_LABEL);
+    pmsPos += XSTRLEN(CLIENT_RANDOM_LABEL) + 1;
+    for (i = 0; i < clientRandomSz; i++) {
+        XSNPRINTF(&pmsBuf[pmsPos], sizeof(pmsBuf) - pmsPos, "%02x",
+            clientRandom[i]);
+        pmsPos += 2;
+    }
+    XSNPRINTF(&pmsBuf[pmsPos], sizeof(pmsBuf) - pmsPos, " ");
+    pmsPos += 1;
+    for (i = 0; i < secretSz; i++) {
+        XSNPRINTF(&pmsBuf[pmsPos], sizeof(pmsBuf) - pmsPos, "%02x",
+            ((byte*)secret)[i]);
+        pmsPos += 2;
+    }
+    XSNPRINTF(&pmsBuf[pmsPos], sizeof(pmsBuf) - pmsPos, "\n");
+    pmsPos += 1;
+
+    /* print master secret */
+    puts(pmsBuf);
+
+    #if !defined(NO_FILESYSTEM) && defined(WOLFSSL_SSLKEYLOGFILE)
+    {
+        FILE* f = XFOPEN(WOLFSSL_SSLKEYLOGFILE_OUTPUT, "a");
+        if (f != XBADFILE) {
+            XFWRITE(pmsBuf, 1, pmsPos, f);
+            XFCLOSE(f);
+        }
+    }
+    #endif
+    return 0;
+}
+#endif /* SHOW_SECRETS */
+
 #endif
 
 
@@ -8957,6 +9026,7 @@ int wolfSSL_DTLS_SetCookieSecret(WOLFSSL* ssl,
         return m;
     }
 
+    #ifndef NO_OLD_TLS
     #ifdef WOLFSSL_ALLOW_SSLV3
     WOLFSSL_METHOD* wolfSSLv3_method(void)
     {
@@ -8977,6 +9047,7 @@ int wolfSSL_DTLS_SetCookieSecret(WOLFSSL* ssl,
 
         return m;
     }
+    #endif
     #endif
 #endif /* OPENSSL_EXTRA || WOLFSSL_EITHER_SIDE */
 
