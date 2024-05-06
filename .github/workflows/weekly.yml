@@ -9,7 +9,7 @@ on:
 jobs:
   Report:
     permissions: write-all
-    runs-on: self-hosted
+    runs-on: wolfssl-runner-set
     container:
       image: canuckmh/wolfssl-cso-builder:8.0p0
       credentials:
