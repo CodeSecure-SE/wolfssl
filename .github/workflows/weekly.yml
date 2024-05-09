@@ -2,9 +2,7 @@ name: Generate full report
 on:
   schedule:
     - cron: '17 17 * * 0'
-  push:
-    branches:
-      - 'release/**'
+
 
 jobs:
   Report:
