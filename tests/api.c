@@ -26100,8 +26100,10 @@ static int test_wc_ecc_sm2_create_digest(void)
         hashType, hash, sizeof(hash), NULL), BAD_FUNC_ARG);
 
     /* Bad hash type. */
+    /* // NOLINTBEGIN(clang-analyzer-optin.core.EnumCastOutOfRange) */
     ExpectIntEQ(wc_ecc_sm2_create_digest(id, sizeof(id), msg, sizeof(msg),
         -1, hash, 0, key), BAD_FUNC_ARG);
+    /* // NOLINTEND(clang-analyzer-optin.core.EnumCastOutOfRange) */
     /* Bad hash size. */
     ExpectIntEQ(wc_ecc_sm2_create_digest(id, sizeof(id), msg, sizeof(msg),
         hashType, hash, 0, key), BUFFER_E);
@@ -26800,6 +26802,58 @@ static int test_wc_Ed448PrivateKeyToDer(void)
 #endif
     return EXPECT_RESULT();
 } /* End test_wc_Ed448PrivateKeyToDer*/
+
+/*
+ * Testing wc_Curve448PrivateKeyToDer
+ */
+static int test_wc_Curve448PrivateKeyToDer(void)
+{
+    EXPECT_DECLS;
+#if defined(HAVE_CURVE448) && defined(HAVE_CURVE448_KEY_EXPORT) && \
+    (defined(WOLFSSL_CERT_GEN) || defined(WOLFSSL_KEY_GEN))
+    byte      output[ONEK_BUF];
+    curve448_key curve448PrivKey;
+    WC_RNG    rng;
+    word32    inLen;
+
+    XMEMSET(&curve448PrivKey, 0, sizeof(curve448PrivKey));
+    XMEMSET(&rng, 0, sizeof(WC_RNG));
+
+    ExpectIntEQ(wc_curve448_init(&curve448PrivKey), 0);
+    ExpectIntEQ(wc_InitRng(&rng), 0);
+    ExpectIntEQ(wc_curve448_make_key(&rng, CURVE448_KEY_SIZE, &curve448PrivKey),
+        0);
+    inLen = (word32)sizeof(output);
+
+    /* Bad Cases */
+    ExpectIntEQ(wc_Curve448PrivateKeyToDer(NULL, NULL, 0), BAD_FUNC_ARG);
+    ExpectIntEQ(wc_Curve448PrivateKeyToDer(NULL, output, inLen), BAD_FUNC_ARG);
+    ExpectIntEQ(wc_Curve448PrivateKeyToDer(&curve448PrivKey, output, 0),
+        BAD_FUNC_ARG);
+    /* Good cases */
+    /* length only */
+    ExpectIntGT(wc_Curve448PrivateKeyToDer(&curve448PrivKey, NULL, inLen), 0);
+    ExpectIntGT(wc_Curve448PrivateKeyToDer(&curve448PrivKey, output, inLen), 0);
+
+    /* Bad Cases */
+    ExpectIntEQ(wc_Curve448PublicKeyToDer(NULL, NULL, 0, 0), BAD_FUNC_ARG);
+    ExpectIntEQ(wc_Curve448PublicKeyToDer(NULL, output, inLen, 0), BAD_FUNC_ARG);
+    ExpectIntEQ(wc_Curve448PublicKeyToDer(&curve448PrivKey, output, 0, 0),
+        BUFFER_E);
+    ExpectIntEQ(wc_Curve448PublicKeyToDer(&curve448PrivKey, output, 0, 1),
+        BUFFER_E);
+    /* Good cases */
+    /* length only */
+    ExpectIntGT(wc_Curve448PublicKeyToDer(&curve448PrivKey, NULL, inLen, 0), 0);
+    ExpectIntGT(wc_Curve448PublicKeyToDer(&curve448PrivKey, NULL, inLen, 1), 0);
+    ExpectIntGT(wc_Curve448PublicKeyToDer(&curve448PrivKey, output, inLen, 0), 0);
+    ExpectIntGT(wc_Curve448PublicKeyToDer(&curve448PrivKey, output, inLen, 1), 0);
+
+    DoExpectIntEQ(wc_FreeRng(&rng), 0);
+    wc_curve448_free(&curve448PrivKey);
+#endif
+    return EXPECT_RESULT();
+} /* End wc_Curve448PrivateKeyToDer*/
 
 /*
  * Testing wc_SetSubjectBuffer
@@ -40475,6 +40529,89 @@ static int test_wolfSSL_set1_curves_list(void)
     return EXPECT_RESULT();
 }
 
+#if defined(HAVE_SSL_MEMIO_TESTS_DEPENDENCIES) && \
+        (defined(OPENSSL_EXTRA) || defined(HAVE_CURL)) && defined(HAVE_ECC)
+static int test_wolfSSL_curves_mismatch_ctx_ready(WOLFSSL_CTX* ctx)
+{
+    static int counter = 0;
+    EXPECT_DECLS;
+
+    if (counter % 2) {
+        ExpectIntEQ(wolfSSL_CTX_set1_curves_list(ctx, "P-256"),
+                WOLFSSL_SUCCESS);
+    }
+    else {
+        ExpectIntEQ(wolfSSL_CTX_set1_curves_list(ctx, "P-384"),
+                WOLFSSL_SUCCESS);
+    }
+
+    /* Ciphersuites that require curves */
+    wolfSSL_CTX_set_cipher_list(ctx, "TLS13-AES256-GCM-SHA384:"
+            "TLS13-CHACHA20-POLY1305-SHA256:TLS13-AES128-GCM-SHA256:"
+            "ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:"
+            "ECDHE-ECDSA-AES128-GCM-SHA256:"
+            "ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-CHACHA20-POLY1305:"
+            "ECDHE-ECDSA-CHACHA20-POLY1305");
+
+    counter++;
+    return EXPECT_RESULT();
+}
+#endif
+
+static int test_wolfSSL_curves_mismatch(void)
+{
+    EXPECT_DECLS;
+#if defined(HAVE_SSL_MEMIO_TESTS_DEPENDENCIES) && \
+        (defined(OPENSSL_EXTRA) || defined(HAVE_CURL)) && defined(HAVE_ECC)
+    test_ssl_cbf func_cb_client;
+    test_ssl_cbf func_cb_server;
+    size_t i;
+    struct {
+        method_provider client_meth;
+        method_provider server_meth;
+        const char* desc;
+        int client_last_err;
+        int server_last_err;
+    } test_params[] = {
+#ifdef WOLFSSL_TLS13
+        {wolfTLSv1_3_client_method, wolfTLSv1_3_server_method, "TLS 1.3",
+                FATAL_ERROR, BAD_KEY_SHARE_DATA},
+#endif
+#ifndef WOLFSSL_NO_TLS12
+        {wolfTLSv1_2_client_method, wolfTLSv1_2_server_method, "TLS 1.2",
+                FATAL_ERROR, MATCH_SUITE_ERROR},
+#endif
+#ifndef NO_OLD_TLS
+        {wolfTLSv1_1_client_method, wolfTLSv1_1_server_method, "TLS 1.1",
+                FATAL_ERROR, MATCH_SUITE_ERROR},
+#endif
+    };
+
+    for (i = 0; i < XELEM_CNT(test_params) && !EXPECT_FAIL(); i++) {
+        XMEMSET(&func_cb_client, 0, sizeof(func_cb_client));
+        XMEMSET(&func_cb_server, 0, sizeof(func_cb_server));
+
+        printf("\tTesting with %s...\n", test_params[i].desc);
+
+        func_cb_client.ctx_ready = &test_wolfSSL_curves_mismatch_ctx_ready;
+        func_cb_server.ctx_ready = &test_wolfSSL_curves_mismatch_ctx_ready;
+
+        func_cb_client.method = test_params[i].client_meth;
+        func_cb_server.method = test_params[i].server_meth;
+
+        ExpectIntEQ(test_wolfSSL_client_server_nofail_memio(&func_cb_client,
+            &func_cb_server, NULL), TEST_FAIL);
+        ExpectIntEQ(func_cb_client.last_err, test_params[i].client_last_err);
+        ExpectIntEQ(func_cb_server.last_err, test_params[i].server_last_err);
+
+        if (!EXPECT_SUCCESS())
+            break;
+        printf("\t%s passed\n", test_params[i].desc);
+    }
+#endif
+    return EXPECT_RESULT();
+}
+
 static int test_wolfSSL_set1_sigalgs_list(void)
 {
     EXPECT_DECLS;
@@ -47112,7 +47249,7 @@ static int test_wolfSSL_sigalg_info(void)
     word16 idx = 0;
     int allSigAlgs = SIG_ECDSA | SIG_RSA | SIG_SM2 | SIG_FALCON | SIG_DILITHIUM;
 
-    InitSuitesHashSigAlgo_ex2(hashSigAlgo, allSigAlgs, 1, 0xFFFFFFFF, &len);
+    InitSuitesHashSigAlgo(hashSigAlgo, allSigAlgs, 1, 0xFFFFFFFF, &len);
     for (idx = 0; idx < len; idx += 2) {
         int hashAlgo = 0;
         int sigAlgo = 0;
@@ -47124,7 +47261,7 @@ static int test_wolfSSL_sigalg_info(void)
         ExpectIntNE(sigAlgo, 0);
     }
 
-    InitSuitesHashSigAlgo_ex2(hashSigAlgo, allSigAlgs | SIG_ANON, 1,
+    InitSuitesHashSigAlgo(hashSigAlgo, allSigAlgs | SIG_ANON, 1,
             0xFFFFFFFF, &len);
     for (idx = 0; idx < len; idx += 2) {
         int hashAlgo = 0;
@@ -54505,6 +54642,7 @@ static int test_wolfSSL_PEM_write_bio_PKCS7(void)
 }
 
 #ifdef HAVE_SMIME
+/* // NOLINTBEGIN(clang-analyzer-unix.Stream) */
 static int test_wolfSSL_SMIME_read_PKCS7(void)
 {
     EXPECT_DECLS;
@@ -54530,7 +54668,10 @@ static int test_wolfSSL_SMIME_read_PKCS7(void)
     ExpectNotNull(pkcs7);
     ExpectIntEQ(wolfSSL_PKCS7_verify(pkcs7, NULL, NULL, bcont, NULL,
         PKCS7_NOVERIFY), SSL_SUCCESS);
-    XFCLOSE(smimeTestFile);
+    if (smimeTestFile != XBADFILE) {
+        XFCLOSE(smimeTestFile);
+        smimeTestFile = XBADFILE;
+    }
     if (bcont) BIO_free(bcont);
     bcont = NULL;
     wolfSSL_PKCS7_free(pkcs7);
@@ -54538,12 +54679,16 @@ static int test_wolfSSL_SMIME_read_PKCS7(void)
 
     /* smime-test-multipart.p7s */
     smimeTestFile = XFOPEN("./certs/test/smime-test-multipart.p7s", "r");
+    ExpectFalse(smimeTestFile == XBADFILE);
     ExpectIntEQ(wolfSSL_BIO_set_fp(bio, smimeTestFile, BIO_CLOSE), SSL_SUCCESS);
     pkcs7 = wolfSSL_SMIME_read_PKCS7(bio, &bcont);
     ExpectNotNull(pkcs7);
     ExpectIntEQ(wolfSSL_PKCS7_verify(pkcs7, NULL, NULL, bcont, NULL,
         PKCS7_NOVERIFY), SSL_SUCCESS);
-    XFCLOSE(smimeTestFile);
+    if (smimeTestFile != XBADFILE) {
+        XFCLOSE(smimeTestFile);
+        smimeTestFile = XBADFILE;
+    }
     if (bcont) BIO_free(bcont);
     bcont = NULL;
     wolfSSL_PKCS7_free(pkcs7);
@@ -54551,12 +54696,16 @@ static int test_wolfSSL_SMIME_read_PKCS7(void)
 
     /* smime-test-multipart-badsig.p7s */
     smimeTestFile = XFOPEN("./certs/test/smime-test-multipart-badsig.p7s", "r");
+    ExpectFalse(smimeTestFile == XBADFILE);
     ExpectIntEQ(wolfSSL_BIO_set_fp(bio, smimeTestFile, BIO_CLOSE), SSL_SUCCESS);
     pkcs7 = wolfSSL_SMIME_read_PKCS7(bio, &bcont);
     ExpectNotNull(pkcs7); /* can read in the unverified smime bundle */
     ExpectIntEQ(wolfSSL_PKCS7_verify(pkcs7, NULL, NULL, bcont, NULL,
         PKCS7_NOVERIFY), SSL_FAILURE);
-    XFCLOSE(smimeTestFile);
+    if (smimeTestFile != XBADFILE) {
+        XFCLOSE(smimeTestFile);
+        smimeTestFile = XBADFILE;
+    }
     if (bcont) BIO_free(bcont);
     bcont = NULL;
     wolfSSL_PKCS7_free(pkcs7);
@@ -54564,12 +54713,16 @@ static int test_wolfSSL_SMIME_read_PKCS7(void)
 
     /* smime-test-canon.p7s */
     smimeTestFile = XFOPEN("./certs/test/smime-test-canon.p7s", "r");
+    ExpectFalse(smimeTestFile == XBADFILE);
     ExpectIntEQ(wolfSSL_BIO_set_fp(bio, smimeTestFile, BIO_CLOSE), SSL_SUCCESS);
     pkcs7 = wolfSSL_SMIME_read_PKCS7(bio, &bcont);
     ExpectNotNull(pkcs7);
     ExpectIntEQ(wolfSSL_PKCS7_verify(pkcs7, NULL, NULL, bcont, NULL,
         PKCS7_NOVERIFY), SSL_SUCCESS);
-    XFCLOSE(smimeTestFile);
+    if (smimeTestFile != XBADFILE) {
+        XFCLOSE(smimeTestFile);
+        smimeTestFile = XBADFILE;
+    }
     if (bcont) BIO_free(bcont);
     bcont = NULL;
     wolfSSL_PKCS7_free(pkcs7);
@@ -54577,6 +54730,7 @@ static int test_wolfSSL_SMIME_read_PKCS7(void)
 
     /* Test PKCS7_TEXT, PKCS7_verify() should remove Content-Type: text/plain */
     smimeTestFile = XFOPEN("./certs/test/smime-test-canon.p7s", "r");
+    ExpectFalse(smimeTestFile == XBADFILE);
     ExpectIntEQ(wolfSSL_BIO_set_fp(bio, smimeTestFile, BIO_CLOSE), SSL_SUCCESS);
     pkcs7 = wolfSSL_SMIME_read_PKCS7(bio, &bcont);
     ExpectNotNull(pkcs7);
@@ -54596,6 +54750,7 @@ static int test_wolfSSL_SMIME_read_PKCS7(void)
 #endif
     return EXPECT_RESULT();
 }
+/* // NOLINTEND(clang-analyzer-unix.Stream) */
 
 static int test_wolfSSL_SMIME_write_PKCS7(void)
 {
@@ -55131,15 +55286,21 @@ static int test_tls13_apis(void)
 #endif
 #if defined(OPENSSL_EXTRA) && defined(HAVE_ECC)
     char         groupList[] =
+#ifdef HAVE_CURVE25519
+            "X25519:"
+#endif
+#ifdef HAVE_CURVE448
+            "X448:"
+#endif
 #ifndef NO_ECC_SECP
 #if (defined(HAVE_ECC521) || defined(HAVE_ALL_CURVES)) && ECC_MIN_KEY_SZ <= 521
-            "P-521:"
+            "P-521:secp521r1:"
 #endif
 #if (defined(HAVE_ECC384) || defined(HAVE_ALL_CURVES)) && ECC_MIN_KEY_SZ <= 384
-            "P-384:"
+            "P-384:secp384r1:"
 #endif
 #if (!defined(NO_ECC256)  || defined(HAVE_ALL_CURVES)) && ECC_MIN_KEY_SZ <= 256
-            "P-256"
+            "P-256:secp256r1"
 #if defined(HAVE_PQC) && defined(HAVE_LIBOQS)
             ":P256_KYBER_LEVEL1"
 #endif
@@ -55435,7 +55596,7 @@ static int test_tls13_apis(void)
 #ifndef NO_WOLFSSL_CLIENT
 #ifndef WOLFSSL_NO_TLS12
     ExpectIntEQ(wolfSSL_CTX_set_groups(clientTls12Ctx, groups, numGroups),
-        BAD_FUNC_ARG);
+        WOLFSSL_SUCCESS);
 #endif
     ExpectIntEQ(wolfSSL_CTX_set_groups(clientCtx, groups,
         WOLFSSL_MAX_GROUP_COUNT + 1), BAD_FUNC_ARG);
@@ -55459,7 +55620,7 @@ static int test_tls13_apis(void)
 #ifndef NO_WOLFSSL_CLIENT
 #ifndef WOLFSSL_NO_TLS12
     ExpectIntEQ(wolfSSL_set_groups(clientTls12Ssl, groups, numGroups),
-        BAD_FUNC_ARG);
+        WOLFSSL_SUCCESS);
 #endif
     ExpectIntEQ(wolfSSL_set_groups(clientSsl, groups,
         WOLFSSL_MAX_GROUP_COUNT + 1), BAD_FUNC_ARG);
@@ -55486,7 +55647,7 @@ static int test_tls13_apis(void)
 #ifndef NO_WOLFSSL_CLIENT
 #ifndef WOLFSSL_NO_TLS12
     ExpectIntEQ(wolfSSL_CTX_set1_groups_list(clientTls12Ctx, groupList),
-        WOLFSSL_FAILURE);
+        WOLFSSL_SUCCESS);
 #endif
     ExpectIntEQ(wolfSSL_CTX_set1_groups_list(clientCtx, groupList),
         WOLFSSL_SUCCESS);
@@ -55504,7 +55665,7 @@ static int test_tls13_apis(void)
 #ifndef NO_WOLFSSL_CLIENT
 #ifndef WOLFSSL_NO_TLS12
     ExpectIntEQ(wolfSSL_set1_groups_list(clientTls12Ssl, groupList),
-        WOLFSSL_FAILURE);
+        WOLFSSL_SUCCESS);
 #endif
     ExpectIntEQ(wolfSSL_set1_groups_list(clientSsl, groupList),
         WOLFSSL_SUCCESS);
@@ -72064,6 +72225,7 @@ TEST_CASE testCases[] = {
     TEST_DECL(test_wc_Ed448PublicKeyToDer),
     TEST_DECL(test_wc_Ed448KeyToDer),
     TEST_DECL(test_wc_Ed448PrivateKeyToDer),
+    TEST_DECL(test_wc_Curve448PrivateKeyToDer),
 
     /* Signature API */
     TEST_DECL(test_wc_SignatureGetSize_ecc),
@@ -72345,6 +72507,7 @@ TEST_CASE testCases[] = {
     TEST_DECL(test_wolfSSL_configure_args),
     TEST_DECL(test_wolfSSL_sk_SSL_CIPHER),
     TEST_DECL(test_wolfSSL_set1_curves_list),
+    TEST_DECL(test_wolfSSL_curves_mismatch),
     TEST_DECL(test_wolfSSL_set1_sigalgs_list),
 
     TEST_DECL(test_wolfSSL_OtherName),
