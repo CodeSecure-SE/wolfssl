@@ -11243,8 +11243,8 @@ static int test_wolfSSL_UseMaxFragment(void)
   #endif
     WOLFSSL     *ssl = NULL;
   #ifdef OPENSSL_EXTRA
-    int (*UseMaxFragment)(SSL *s, uint8_t mode);
-    int (*CTX_UseMaxFragment)(SSL_CTX *c, uint8_t mode);
+    int (*UseMaxFragment)(SSL *s, unsigned char mode);
+    int (*CTX_UseMaxFragment)(SSL_CTX *c, unsigned char mode);
   #else
     int (*UseMaxFragment)(WOLFSSL *s, unsigned char mode);
     int (*CTX_UseMaxFragment)(WOLFSSL_CTX *c, unsigned char mode);
@@ -46339,13 +46339,13 @@ static int test_othername_and_SID_ext(void) {
     /* SID extension. SID data format explained here:
      * https://blog.qdsecurity.se/2022/05/27/manually-injecting-a-sid-in-a-certificate/
      */
-    uint8_t SidExtension[] = {
+    byte SidExtension[] = {
     48, 64, 160, 62, 6,  10, 43, 6,  1,  4,  1,  130, 55, 25, 2,  1,  160,
     48, 4,  46,  83, 45, 49, 45, 53, 45, 50, 49, 45,  50, 56, 52, 51, 57,
     48, 55, 52,  49, 56, 45, 51, 57, 50, 54, 50, 55,  55, 52, 50, 49, 45,
     51, 56, 49,  53, 57, 57, 51, 57, 55, 50, 45, 52,  54, 48, 49};
 
-    uint8_t expectedAltName[] = {
+    byte expectedAltName[] = {
     0x30, 0x27, 0xA0, 0x25, 0x06, 0x0A, 0x2B, 0x06, 0x01, 0x04, 0x01, 0x82,
     0x37, 0x14, 0x02, 0x03, 0xA0, 0x17, 0x0C, 0x15, 0x6F, 0x74, 0x68, 0x65,
     0x72, 0x6E, 0x61, 0x6D, 0x65, 0x40, 0x77, 0x6F, 0x6C, 0x66, 0x73, 0x73,
@@ -68416,6 +68416,67 @@ static int test_extra_alerts_wrong_cs(void)
 }
 #endif
 
+#if defined(WOLFSSL_TLS13) && !defined(WOLFSSL_NO_TLS12) &&   \
+    defined(HAVE_MANUAL_MEMIO_TESTS_DEPENDENCIES)
+
+#define TEST_CS_DOWNGRADE_CLIENT "ECDHE-RSA-AES256-GCM-SHA384"
+
+byte test_wrong_cs_downgrade_sh[] = {
+  0x16, 0x03, 0x03, 0x00, 0x56, 0x02, 0x00, 0x00, 0x52, 0x03, 0x03, 0x10,
+  0x2c, 0x88, 0xd9, 0x7a, 0x23, 0xc9, 0xbd, 0x11, 0x3b, 0x64, 0x24, 0xab,
+  0x5b, 0x45, 0x33, 0xf6, 0x2c, 0x34, 0xe4, 0xcf, 0xf4, 0x78, 0xc8, 0x62,
+  0x06, 0xc7, 0xe5, 0x30, 0x39, 0xbf, 0xa1, 0x20, 0xa3, 0x06, 0x74, 0xc3,
+  0xa9, 0x74, 0x52, 0x8a, 0xfb, 0xae, 0xf0, 0xd8, 0x6f, 0xb2, 0x9d, 0xfe,
+  0x78, 0xf0, 0x3f, 0x51, 0x8f, 0x9c, 0xcf, 0xbe, 0x61, 0x43, 0x9d, 0xf8,
+  0x85, 0xe5, 0x2f, 0x54,
+  0xc0, 0x2f, /* ECDHE-RSA-AES128-GCM-SHA256 */
+  0x00, 0x00, 0x0a, 0x00, 0x0b, 0x00,
+  0x02, 0x01, 0x00, 0x00, 0x17, 0x00, 0x00
+};
+
+static int test_wrong_cs_downgrade(void)
+{
+    EXPECT_DECLS;
+#ifdef BUILD_TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+    struct test_memio_ctx test_ctx;
+    WOLFSSL_CTX *ctx_c = NULL;
+    WOLFSSL *ssl_c = NULL;
+
+    XMEMSET(&test_ctx, 0, sizeof(test_ctx));
+    ExpectIntEQ(test_memio_setup(&test_ctx, &ctx_c, NULL, &ssl_c, NULL,
+        wolfSSLv23_client_method, NULL), 0);
+
+    ExpectIntEQ(wolfSSL_set_cipher_list(ssl_c, TEST_CS_DOWNGRADE_CLIENT),
+        WOLFSSL_SUCCESS);
+
+    /* CH */
+    ExpectIntNE(wolfSSL_connect(ssl_c), WOLFSSL_SUCCESS);
+    ExpectIntEQ(wolfSSL_get_error(ssl_c, WOLFSSL_FATAL_ERROR),
+        WOLFSSL_ERROR_WANT_READ);
+
+    /* consume CH */
+    test_ctx.s_len = 0;
+    /* inject SH */
+    XMEMCPY(test_ctx.c_buff, test_wrong_cs_downgrade_sh,
+        sizeof(test_wrong_cs_downgrade_sh));
+    test_ctx.c_len = sizeof(test_wrong_cs_downgrade_sh);
+
+    ExpectIntNE(wolfSSL_connect(ssl_c), WOLFSSL_SUCCESS);
+    ExpectIntNE(wolfSSL_get_error(ssl_c, WOLFSSL_FATAL_ERROR),
+        WOLFSSL_ERROR_WANT_READ);
+
+    wolfSSL_free(ssl_c);
+    wolfSSL_CTX_free(ctx_c);
+#endif
+    return EXPECT_RESULT();
+}
+#else
+static int test_wrong_cs_downgrade(void)
+{
+    return TEST_SKIPPED;
+}
+#endif
+
 #if !defined(WOLFSSL_NO_TLS12) && defined(WOLFSSL_EXTRA_ALERTS) &&             \
     defined(HAVE_MANUAL_MEMIO_TESTS_DEPENDENCIES) && !defined(WOLFSSL_SP_MATH)
 
@@ -72244,7 +72305,7 @@ static int test_read_write_hs(void)
     WOLFSSL_CTX *ctx_s = NULL, *ctx_c = NULL;
     WOLFSSL *ssl_s = NULL, *ssl_c = NULL;
     struct test_memio_ctx test_ctx;
-    uint8_t test_buffer[16];
+    byte test_buffer[16];
     unsigned int test;
 
     /* test == 0 : client writes, server reads */
@@ -74020,6 +74081,7 @@ TEST_CASE testCases[] = {
     TEST_DECL(test_ticket_nonce_malloc),
 #endif
     TEST_DECL(test_ticket_ret_create),
+    TEST_DECL(test_wrong_cs_downgrade),
     TEST_DECL(test_extra_alerts_wrong_cs),
     TEST_DECL(test_extra_alerts_skip_hs),
     TEST_DECL(test_extra_alerts_bad_psk),
