@@ -1130,6 +1130,7 @@ AC_ARG_WITH([liboqs],
         AS_IF([ test "$ENABLED_EXPERIMENTAL" != "yes" ],[ AC_MSG_ERROR([LIBOQS requires --enable-experimental.]) ])
         AC_MSG_CHECKING([for liboqs])
         LIBS="$LIBS -loqs"
+        AM_CFLAGS="$AM_CFLAGS -pthread"
 
         AC_LINK_IFELSE([AC_LANG_PROGRAM([[#include <oqs/common.h>]], [[ OQS_init(); ]])], [ liboqs_linked=yes ],[ liboqs_linked=no ])
 
@@ -2808,7 +2809,7 @@ then
             esac
             AC_MSG_NOTICE([64bit ARMv8 found, setting mcpu to generic+crypto])
             ;;
-        armv7a*)
+        armv7a* | armv7l*)
             AM_CPPFLAGS="$AM_CPPFLAGS -march=armv7-a -mfpu=neon -DWOLFSSL_ARM_ARCH=7 -marm"
             # Include options.h
             AM_CCASFLAGS="$AM_CCASFLAGS -DEXTERNAL_OPTS_OPENVPN"
@@ -2816,6 +2817,14 @@ then
             ENABLED_AESGCM_STREAM=no # not yet implemented
             ENABLED_ARMASM_NEON=yes
             AC_MSG_NOTICE([32bit ARMv7-a found, setting mfpu to neon])
+            if test "$ENABLED_FIPS" != "no" ||
+                test "$HAVE_FIPS_VERSION_MAJOR" -ge 5;
+            then
+                # Use inline ASM with FIPS because of known "issue" with the
+                # assembly code
+                ENABLED_ARMASM_INLINE=yes
+                AC_MSG_NOTICE([32bit ARMv7-a found, setting inline for FIPS])
+            fi
             ;;
         armv7m*)
             # QEMU doesn't work with armv7-m
@@ -2826,6 +2835,14 @@ then
             ENABLED_AESGCM_STREAM=no # not yet implemented
             ENABLED_ARMASM_NEON=no
             AC_MSG_NOTICE([32bit ARMv7-m found])
+            if test "$ENABLED_FIPS" != "no" ||
+                test "$HAVE_FIPS_VERSION_MAJOR" -ge 5;
+            then
+                # Use inline ASM with FIPS because of known "issue" with the
+                # assembly code
+                ENABLED_ARMASM_INLINE=yes
+                AC_MSG_NOTICE([32bit ARMv7-m found, setting inline for FIPS])
+            fi
             ;;
         armv6*)
             AM_CPPFLAGS="$AM_CPPFLAGS -march=armv6 -fomit-frame-pointer -DWOLFSSL_ARMASM_NO_HW_CRYPTO -DWOLFSSL_ARM_ARCH=6"
@@ -8080,7 +8097,7 @@ if test "$ENABLED_SP_ASM" = "yes" && test "$ENABLED_SP" = "yes"; then
     AM_CCASFLAGS="$AM_CCASFLAGS -DWOLFSSL_SP_ARM64_ASM"
     ENABLED_SP_ARM64_ASM=yes
     ;;
-  *armv7a*)
+  *armv7a* | *armv7l*)
     if test "$ENABLED_ARMASM" = "no"; then
       AM_CPPFLAGS="$AM_CPPFLAGS -march=armv7-a -mfpu=neon -DWOLFSSL_ARM_ARCH=7 -marm"
     fi
