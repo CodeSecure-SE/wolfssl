@@ -4206,17 +4206,17 @@ static word32 SetBitString16Bit(word16 val, byte* output)
     static const byte sigFalcon_Level5Oid[] = {43, 206, 15, 3, 9};
 #endif /* HAVE_FACON */
 #ifdef HAVE_DILITHIUM
-    /* Dilithium Level 2: 1.3.6.1.4.1.2.267.7.4.4 */
+    /* Dilithium Level 2: 1.3.6.1.4.1.2.267.12.4.4 */
     static const byte sigDilithium_Level2Oid[] =
-        {43, 6, 1, 4, 1, 2, 130, 11, 7, 4, 4};
+        {43, 6, 1, 4, 1, 2, 130, 11, 12, 4, 4};
 
-    /* Dilithium Level 3: 1.3.6.1.4.1.2.267.7.6.5 */
+    /* Dilithium Level 3: 1.3.6.1.4.1.2.267.12.6.5 */
     static const byte sigDilithium_Level3Oid[] =
-        {43, 6, 1, 4, 1, 2, 130, 11, 7, 6, 5};
+        {43, 6, 1, 4, 1, 2, 130, 11, 12, 6, 5};
 
-    /* Dilithium Level 5: 1.3.6.1.4.1.2.267.7.8.7 */
+    /* Dilithium Level 5: 1.3.6.1.4.1.2.267.12.8.7 */
     static const byte sigDilithium_Level5Oid[] =
-        {43, 6, 1, 4, 1, 2, 130, 11, 7, 8, 7};
+        {43, 6, 1, 4, 1, 2, 130, 11, 12, 8, 7};
 #endif /* HAVE_DILITHIUM */
 #ifdef HAVE_SPHINCS
     /* Sphincs Fast Level 1: 1 3 9999 6 7 4 */
@@ -4280,17 +4280,17 @@ static word32 SetBitString16Bit(word16 val, byte* output)
     static const byte keyFalcon_Level5Oid[] = {43, 206, 15, 3, 9};
 #endif /* HAVE_FALCON */
 #ifdef HAVE_DILITHIUM
-    /* Dilithium Level 2: 1.3.6.1.4.1.2.267.7.4.4 */
+    /* Dilithium Level 2: 1.3.6.1.4.1.2.267.12.4.4 */
     static const byte keyDilithium_Level2Oid[] =
-        {43, 6, 1, 4, 1, 2, 130, 11, 7, 4, 4};
+        {43, 6, 1, 4, 1, 2, 130, 11, 12, 4, 4};
 
-    /* Dilithium Level 3: 1.3.6.1.4.1.2.267.7.6.5 */
+    /* Dilithium Level 3: 1.3.6.1.4.1.2.267.12.6.5 */
     static const byte keyDilithium_Level3Oid[] =
-        {43, 6, 1, 4, 1, 2, 130, 11, 7, 6, 5};
+        {43, 6, 1, 4, 1, 2, 130, 11, 12, 6, 5};
 
-    /* Dilithium Level 5: 1.3.6.1.4.1.2.267.7.8.7 */
+    /* Dilithium Level 5: 1.3.6.1.4.1.2.267.12.8.7 */
     static const byte keyDilithium_Level5Oid[] =
-        {43, 6, 1, 4, 1, 2, 130, 11, 7, 8, 7};
+        {43, 6, 1, 4, 1, 2, 130, 11, 12, 8, 7};
 #endif /* HAVE_DILITHIUM */
 #ifdef HAVE_SPHINCS
     /* Sphincs Fast Level 1: 1 3 9999 6 7 4 */
@@ -13903,6 +13903,18 @@ static int GetCertName(DecodedCert* cert, char* full, byte* hash, int nameType,
                 return ASN_PARSE_E;
             }
 
+        #ifndef WOLFSSL_NO_ASN_STRICT
+            /* RFC 5280 section 4.1.2.4 lists a DirecotryString as being
+             * 1..MAX in length */
+            if (strLen < 1) {
+                WOLFSSL_MSG("Non conforming DirectoryString of length 0 was"
+                            " found");
+                WOLFSSL_MSG("Use WOLFSSL_NO_ASN_STRICT if wanting to allow"
+                            " empty DirectoryString's");
+                return ASN_PARSE_E;
+            }
+        #endif
+
             if (id == ASN_COMMON_NAME) {
                 if (nameType == SUBJECT) {
                     cert->subjectCN = (char *)&input[srcIdx];
@@ -14532,6 +14544,18 @@ static int GetCertName(DecodedCert* cert, char* full, byte* hash, int nameType,
 
                 /* Get string reference. */
                 GetASN_GetRef(&dataASN[RDNASN_IDX_ATTR_VAL], &str, &strLen);
+
+            #ifndef WOLFSSL_NO_ASN_STRICT
+                /* RFC 5280 section 4.1.2.4 lists a DirecotryString as being
+                 * 1..MAX in length */
+                if (ret == 0 && strLen < 1) {
+                    WOLFSSL_MSG("Non conforming DirectoryString of length 0 was"
+                                " found");
+                    WOLFSSL_MSG("Use WOLFSSL_NO_ASN_STRICT if wanting to allow"
+                                " empty DirectoryString's");
+                    ret = ASN_PARSE_E;
+                }
+            #endif
 
                 /* Convert BER tag to a OpenSSL type. */
                 switch (tag) {
