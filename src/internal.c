@@ -11449,7 +11449,20 @@ static int GetRecordHeader(WOLFSSL* ssl, word32* inOutIdx,
             }
         }
 #endif /* WOLFSSL_DTLS13 */
-        else {
+        /* Don't care about protocol version being lower than expected on alerts
+         * sent back before version negotitation. */
+        else if (!(ssl->options.side == WOLFSSL_CLIENT_END &&
+                            ssl->options.connectState == CLIENT_HELLO_SENT &&
+                            rh->type == alert &&
+                            rh->pvMajor == ssl->version.major &&
+        #ifdef WOLFSSL_DTLS
+                            ((ssl->options.dtls && rh->pvMinor == DTLS_MINOR) ||
+                             (!ssl->options.dtls &&
+                              rh->pvMinor < ssl->version.minor))
+        #else
+                            rh->pvMinor < ssl->version.minor
+        #endif
+                   )) {
             WOLFSSL_MSG("SSL version error");
             WOLFSSL_ERROR_VERBOSE(VERSION_ERROR);
             return VERSION_ERROR;              /* only use requested version */
@@ -26526,8 +26539,11 @@ static int ParseCipherList(Suites* suites,
         return 0;
     }
 
-    if (next[0] == 0 || XSTRCMP(next, "ALL") == 0 ||
-        XSTRCMP(next, "DEFAULT") == 0 || XSTRCMP(next, "HIGH") == 0) {
+    if (next[0] == '\0' ||
+        XSTRCMP(next, "ALL") == 0 ||
+        XSTRCMP(next, "DEFAULT") == 0 ||
+        XSTRCMP(next, "HIGH") == 0)
+    {
         /* Add all ciphersuites except anonymous and null ciphers. Prefer RSA */
 #ifndef NO_RSA
         haveRSA = 1;
@@ -26539,7 +26555,8 @@ static int ParseCipherList(Suites* suites,
                 0,
 #endif
                 haveRSA, 1, 1, !haveRSA, 1, haveRSA, !haveRSA, 1, 1, 0, 0,
-                side);
+                side
+        );
         return 1; /* wolfSSL default */
     }
 
@@ -26559,6 +26576,8 @@ static int ParseCipherList(Suites* suites,
             if (length > currLen) {
                 length = currLen;
             }
+            if (currLen == 0)
+                break;
         }
 
     #if defined(OPENSSL_EXTRA) || defined(OPENSSL_ALL)
@@ -26880,7 +26899,7 @@ static int ParseCipherList(Suites* suites,
             }
         }
     }
-    while (next++); /* ++ needed to skip ':' */
+    while (next++); /* increment to skip ':' */
 
     if (ret) {
         int keySz = 0;

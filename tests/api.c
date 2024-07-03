@@ -581,7 +581,8 @@ static int testDevId = INVALID_DEVID;
 #endif
 
 #if !defined(NO_FILESYSTEM) && !defined(NO_CERTS) && !defined(NO_RSA) && \
-    !defined(NO_WOLFSSL_SERVER) && !defined(NO_WOLFSSL_CLIENT)
+    !defined(NO_WOLFSSL_SERVER) && !defined(NO_WOLFSSL_CLIENT) && \
+    !defined(WOLFSSL_TIRTOS)
 #define HAVE_SSL_MEMIO_TESTS_DEPENDENCIES
 #endif
 
@@ -8820,8 +8821,7 @@ static int test_wolfSSL_reuse_WOLFSSLobj(void)
     return EXPECT_RESULT();
 }
 
-#if defined(OPENSSL_EXTRA) && !defined(WOLFSSL_TIRTOS) && \
-    defined(HAVE_SSL_MEMIO_TESTS_DEPENDENCIES)
+#if defined(OPENSSL_EXTRA) && defined(HAVE_SSL_MEMIO_TESTS_DEPENDENCIES)
 static int test_wolfSSL_CTX_verifyDepth_ServerClient_1_ctx_ready(
     WOLFSSL_CTX* ctx)
 {
@@ -8835,8 +8835,7 @@ static int test_wolfSSL_CTX_verifyDepth_ServerClient_1_ctx_ready(
 static int test_wolfSSL_CTX_verifyDepth_ServerClient_1(void)
 {
     EXPECT_DECLS;
-#if defined(OPENSSL_EXTRA) && !defined(WOLFSSL_TIRTOS) && \
-    defined(HAVE_SSL_MEMIO_TESTS_DEPENDENCIES)
+#if defined(OPENSSL_EXTRA) && defined(HAVE_SSL_MEMIO_TESTS_DEPENDENCIES)
     test_ssl_cbf client_cbf;
     test_ssl_cbf server_cbf;
 
@@ -8855,14 +8854,12 @@ static int test_wolfSSL_CTX_verifyDepth_ServerClient_1(void)
 
     ExpectIntEQ(client_cbf.return_code, TEST_SUCCESS);
     ExpectIntEQ(server_cbf.return_code, TEST_SUCCESS);
-#endif /* OPENSSL_EXTRA && !WOLFSSL_TIRTOS &&
-        * HAVE_SSL_MEMIO_TESTS_DEPENDENCIES */
+#endif /* OPENSSL_EXTRA && HAVE_SSL_MEMIO_TESTS_DEPENDENCIES */
 
     return EXPECT_RESULT();
 }
 
-#if defined(OPENSSL_EXTRA) && !defined(WOLFSSL_TIRTOS) && \
-    defined(HAVE_SSL_MEMIO_TESTS_DEPENDENCIES)
+#if defined(OPENSSL_EXTRA) && defined(HAVE_SSL_MEMIO_TESTS_DEPENDENCIES)
 static int test_wolfSSL_CTX_verifyDepth_ServerClient_2_ctx_ready(
     WOLFSSL_CTX* ctx)
 {
@@ -8876,8 +8873,7 @@ static int test_wolfSSL_CTX_verifyDepth_ServerClient_2_ctx_ready(
 static int test_wolfSSL_CTX_verifyDepth_ServerClient_2(void)
 {
     EXPECT_DECLS;
-#if defined(OPENSSL_EXTRA) && !defined(WOLFSSL_TIRTOS) && \
-    defined(HAVE_SSL_MEMIO_TESTS_DEPENDENCIES)
+#if defined(OPENSSL_EXTRA) && defined(HAVE_SSL_MEMIO_TESTS_DEPENDENCIES)
     test_ssl_cbf client_cbf;
     test_ssl_cbf server_cbf;
 
@@ -8900,14 +8896,12 @@ static int test_wolfSSL_CTX_verifyDepth_ServerClient_2(void)
 
     ExpectIntEQ(client_cbf.return_code, TEST_SUCCESS);
     ExpectIntEQ(server_cbf.return_code, TEST_SUCCESS);
-#endif /* OPENSSL_EXTRA && !WOLFSSL_TIRTOS &&
-        * HAVE_SSL_MEMIO_TESTS_DEPENDENCIES */
+#endif /* OPENSSL_EXTRA && HAVE_SSL_MEMIO_TESTS_DEPENDENCIES */
 
     return EXPECT_RESULT();
 }
 
-#if defined(OPENSSL_EXTRA) && !defined(WOLFSSL_TIRTOS) && \
-    defined(HAVE_SSL_MEMIO_TESTS_DEPENDENCIES)
+#if defined(OPENSSL_EXTRA) && defined(HAVE_SSL_MEMIO_TESTS_DEPENDENCIES)
 static int test_wolfSSL_CTX_verifyDepth_ServerClient_3_ctx_ready(
     WOLFSSL_CTX* ctx)
 {
@@ -8921,8 +8915,7 @@ static int test_wolfSSL_CTX_verifyDepth_ServerClient_3_ctx_ready(
 static int test_wolfSSL_CTX_verifyDepth_ServerClient_3(void)
 {
     EXPECT_DECLS;
-#if defined(OPENSSL_EXTRA) && !defined(WOLFSSL_TIRTOS) && \
-    defined(HAVE_SSL_MEMIO_TESTS_DEPENDENCIES)
+#if defined(OPENSSL_EXTRA) && defined(HAVE_SSL_MEMIO_TESTS_DEPENDENCIES)
     test_ssl_cbf client_cbf;
     test_ssl_cbf server_cbf;
 
@@ -8947,15 +8940,14 @@ static int test_wolfSSL_CTX_verifyDepth_ServerClient_3(void)
     ExpectIntEQ(server_cbf.return_code, TEST_FAIL);
     ExpectIntEQ(client_cbf.last_err, MAX_CHAIN_ERROR);
     ExpectIntEQ(server_cbf.last_err, FATAL_ERROR);
-#endif /* OPENSSL_EXTRA && !WOLFSSL_TIRTOS &&
-        * HAVE_SSL_MEMIO_TESTS_DEPENDENCIES */
+#endif /* OPENSSL_EXTRA && HAVE_SSL_MEMIO_TESTS_DEPENDENCIES */
 
     return EXPECT_RESULT();
 }
 
 #if defined(OPENSSL_ALL) && defined(HAVE_SSL_MEMIO_TESTS_DEPENDENCIES) && \
-    !defined(WOLFSSL_TIRTOS) && !defined(NO_AES) && !defined(WOLFSSL_NO_TLS12) \
-    && !defined(NO_SHA256) && defined(HAVE_ECC)
+    !defined(WOLFSSL_NO_TLS12) && \
+    defined(HAVE_ECC) && !defined(NO_AES) && !defined(NO_SHA256)
 static int test_wolfSSL_CTX_set_cipher_list_server_ctx_ready(WOLFSSL_CTX* ctx)
 {
     EXPECT_DECLS;
@@ -8975,8 +8967,9 @@ static int test_wolfSSL_CTX_set_cipher_list(void)
 {
     EXPECT_DECLS;
 #if defined(OPENSSL_ALL) && defined(HAVE_SSL_MEMIO_TESTS_DEPENDENCIES) && \
-    !defined(WOLFSSL_TIRTOS) && !defined(NO_AES) && !defined(WOLFSSL_NO_TLS12) \
-    && !defined(NO_SHA256) && defined(HAVE_ECC)
+    defined(HAVE_ECC) && !defined(NO_AES) && !defined(NO_SHA256)
+
+    #if !defined(WOLFSSL_NO_TLS12)
     WOLFSSL_CTX* ctxClient = NULL;
     WOLFSSL*     sslClient = NULL;
     test_ssl_cbf client_cbf;
@@ -8998,7 +8991,8 @@ static int test_wolfSSL_CTX_set_cipher_list(void)
 
     /* check with cipher string that has '+' */
     ExpectNotNull((ctxClient = wolfSSL_CTX_new(wolfTLSv1_2_client_method())));
-    ExpectTrue(wolfSSL_CTX_set_cipher_list(ctxClient, "ECDHE+AESGCM"));
+    /* Use trailing : with nothing to test for ASAN */
+    ExpectTrue(wolfSSL_CTX_set_cipher_list(ctxClient, "ECDHE+AESGCM:"));
     ExpectNotNull((sslClient = wolfSSL_new(ctxClient)));
 
     /* check for the existence of an ECDHE ECDSA cipher suite */
@@ -9026,6 +9020,8 @@ static int test_wolfSSL_CTX_set_cipher_list(void)
 
     wolfSSL_free(sslClient);
     wolfSSL_CTX_free(ctxClient);
+
+    #endif /* !WOLFSSL_NO_TLS12 */
 #endif
     return EXPECT_RESULT();
 }
@@ -72168,6 +72164,34 @@ static int test_dtls_no_extensions(void)
     return EXPECT_RESULT();
 }
 
+static int test_tls_alert_no_server_hello(void)
+{
+    EXPECT_DECLS;
+#if defined(HAVE_MANUAL_MEMIO_TESTS_DEPENDENCIES) && !defined(WOLFSSL_NO_TLS12)
+    WOLFSSL *ssl_c = NULL;
+    WOLFSSL_CTX *ctx_c = NULL;
+    struct test_memio_ctx test_ctx;
+    unsigned char alert_msg[] = { 0x15, 0x03, 0x01, 0x00, 0x02, 0x02, 0x28 };
+
+    XMEMSET(&test_ctx, 0, sizeof(test_ctx));
+    ssl_c = NULL;
+    ctx_c = NULL;
+
+    ExpectIntEQ(test_memio_setup(&test_ctx, &ctx_c, NULL, &ssl_c, NULL,
+        wolfTLSv1_2_client_method, NULL), 0);
+
+    XMEMCPY(test_ctx.c_buff, alert_msg, sizeof(alert_msg));
+    test_ctx.c_len = sizeof(alert_msg);
+
+    ExpectIntEQ(wolfSSL_connect(ssl_c), -1);
+    ExpectIntEQ(wolfSSL_get_error(ssl_c, -1), FATAL_ERROR);
+
+    wolfSSL_free(ssl_c);
+    wolfSSL_CTX_free(ctx_c);
+#endif
+    return EXPECT_RESULT();
+}
+
 static int test_TLSX_CA_NAMES_bad_extension(void)
 {
     EXPECT_DECLS;
@@ -75755,6 +75779,7 @@ TEST_CASE testCases[] = {
     TEST_DECL(test_dtls_ipv6_check),
     TEST_DECL(test_wolfSSL_SCR_after_resumption),
     TEST_DECL(test_dtls_no_extensions),
+    TEST_DECL(test_tls_alert_no_server_hello),
     TEST_DECL(test_TLSX_CA_NAMES_bad_extension),
     TEST_DECL(test_dtls_1_0_hvr_downgrade),
     TEST_DECL(test_session_ticket_no_id),
