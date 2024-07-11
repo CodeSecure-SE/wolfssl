@@ -34565,6 +34565,7 @@ static int test_wc_dilithium_make_key_from_seed(void)
     ExpectIntEQ(XMEMCMP(key->k, sk_87, sizeof(sk_87)), 0);
 #endif
 
+    wc_dilithium_free(key);
     XFREE(key, NULL, DYNAMIC_TYPE_TMP_BUFFER);
 #endif
     return EXPECT_RESULT();
@@ -36710,6 +36711,7 @@ static int test_wc_dilithium_verify_kats(void)
     ExpectIntEQ(res, 1);
 #endif
 
+    wc_dilithium_free(key);
     XFREE(key, NULL, DYNAMIC_TYPE_TMP_BUFFER);
 #endif
     return EXPECT_RESULT();
@@ -65624,7 +65626,7 @@ static int test_RsaSigFailure_cm(void)
     size_t cert_sz = 0;
 
     ExpectIntEQ(load_file(server_cert, &cert_buf, &cert_sz), 0);
-    if (cert_buf != NULL) {
+    if ((cert_buf != NULL) && (cert_sz > 0)) {
         /* corrupt DER - invert last byte, which is signature */
         cert_buf[cert_sz-1] = ~cert_buf[cert_sz-1];
         /* test bad cert */
@@ -76914,8 +76916,13 @@ static int test_wolfSSL_CTX_StaticMemory_SSL(WOLFSSL_CTX* ctx)
 
     ExpectNotNull((ssl1 = wolfSSL_new(ctx)));
     ExpectNotNull((ssl2 = wolfSSL_new(ctx)));
+
+#ifndef WOLFSSL_STATIC_MEMORY_LEAN
     /* this should fail because kMaxCtxClients == 2 */
     ExpectNull((ssl3 = wolfSSL_new(ctx)));
+#else
+    (void)ssl3;
+#endif
 
     if (wolfSSL_is_static_memory(ssl1, &ssl_stats) == 1) {
     #if defined(DEBUG_WOLFSSL) && !defined(WOLFSSL_STATIC_MEMORY_LEAN)
@@ -77618,6 +77625,7 @@ static int send_new_session_ticket(WOLFSSL *ssl, byte nonceLength, byte filler)
 
     sz = BuildTls13Message(ssl, buf, 2048, buf+5, idx - 5,
         handshake, 0, 0, 0);
+    AssertIntGT(sz, 0);
     test_ctx = (struct test_memio_ctx*)wolfSSL_GetIOWriteCtx(ssl);
     AssertNotNull(test_ctx);
     ret = test_memio_write_cb(ssl, (char*)buf, sz, test_ctx);
@@ -77716,8 +77724,16 @@ static int test_ticket_nonce_malloc(void)
     }
 
     small = TLS13_TICKET_NONCE_STATIC_SZ;
-    medium = small + 20 <= 255 ? small + 20 : 255;
-    big = medium + 20 <= 255 ? small + 20 : 255;
+#if TLS13_TICKET_NONCE_STATIC_SZ + 20 <= 255
+    medium = small + 20;
+#else
+    medium = 255;
+#endif
+#if TLS13_TICKET_NONCE_STATIC_SZ + 20 + 20 <= 255
+    big = small + 20;
+#else
+    big = 255;
+#endif
 
     ExpectIntEQ(test_ticket_nonce_malloc_do(ssl_s, ssl_c, small), TEST_SUCCESS);
     ExpectPtrEq(ssl_c->session->ticketNonce.data,
