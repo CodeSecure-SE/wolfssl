@@ -1,6 +1,6 @@
 /* internal.h
  *
- * Copyright (C) 2006-2023 wolfSSL Inc.
+ * Copyright (C) 2006-2024 wolfSSL Inc.
  *
  * This file is part of wolfSSL.
  *
@@ -1329,6 +1329,10 @@ enum {
     #endif
 #endif
 
+#ifndef MAX_PSK_KEY_LEN
+    #define MAX_PSK_KEY_LEN 64
+#endif
+
 #ifndef MAX_EARLY_DATA_SZ
     /* maximum early data size */
     #define MAX_EARLY_DATA_SZ  4096
@@ -1421,7 +1425,7 @@ enum {
     #define ENCRYPT_BASE_BITS    (256 * 2)
 #else
     /* No secret from public key operation but PSK key plus length used. */
-    #define ENCRYPT_BASE_BITS  ((MAX_PSK_ID_LEN + 2) * 8)
+    #define ENCRYPT_BASE_BITS  ((MAX_PSK_KEY_LEN + 2) * 8)
 #endif
 
 #ifdef WOLFSSL_DTLS_CID
@@ -1561,7 +1565,7 @@ enum Misc {
                                  * hybridization with other algs. */
 #else
 #ifndef NO_PSK
-    ENCRYPT_LEN     = (ENCRYPT_BASE_BITS / 8) + MAX_PSK_ID_LEN + 2,
+    ENCRYPT_LEN     = (ENCRYPT_BASE_BITS / 8) + MAX_PSK_KEY_LEN + 2,
 #else
     ENCRYPT_LEN     = (ENCRYPT_BASE_BITS / 8),
 #endif
@@ -1828,7 +1832,6 @@ enum Misc {
     DTLS_TIMEOUT_MULTIPLIER =  2, /* default timeout multiplier for DTLS recv */
 
     NULL_TERM_LEN        =   1,  /* length of null '\0' termination character */
-    MAX_PSK_KEY_LEN      =  64,  /* max psk key supported */
     MIN_PSK_ID_LEN       =   6,  /* min length of identities */
     MIN_PSK_BINDERS_LEN  =  33,  /* min length of binders */
 
@@ -2750,7 +2753,16 @@ struct WOLFSSL_BIO {
     WOLFSSL_BIO* next;          /* next in chain */
     WOLFSSL_BIO* pair;          /* BIO paired with */
     void*        heap;          /* user heap hint */
-    void*        ptr;           /* WOLFSSL, file descriptor, MD, or mem buf */
+    union {
+        byte*    mem_buf_data;
+#ifndef WOLFCRYPT_ONLY
+        WOLFSSL* ssl;
+        WOLFSSL_EVP_MD_CTX* md_ctx;
+#endif
+#ifndef NO_FILESYSTEM
+        XFILE    fh;
+#endif
+    } ptr;
     void*        usrCtx;        /* user set pointer */
     char*        ip;            /* IP address for wolfIO_TcpConnect */
     word16       port;          /* Port for wolfIO_TcpConnect */
@@ -2761,7 +2773,10 @@ struct WOLFSSL_BIO {
     int          wrIdx;         /* current index for write buffer */
     int          rdIdx;         /* current read index */
     int          readRq;        /* read request */
-    int          num;           /* socket num or length */
+    union {
+        SOCKET_T fd;
+        size_t   length;
+    } num;
     int          eof;           /* eof flag */
     int          flags;
     byte         type;          /* method type */
@@ -3385,6 +3400,13 @@ typedef struct InternalTicket {
     byte            sessionCtx[ID_LEN];    /* app specific context id */
 #endif /* OPENSSL_EXTRA */
 } InternalTicket;
+
+#ifndef WOLFSSL_TICKET_ENC_CBC_HMAC
+    #define WOLFSSL_INTERNAL_TICKET_LEN     sizeof(InternalTicket)
+#else
+    #define WOLFSSL_INTERNAL_TICKET_LEN     \
+        (((sizeof(InternalTicket) + 15) / 16) * 16)
+#endif
 
 #ifndef WOLFSSL_TICKET_EXTRA_PADDING_SZ
 #define WOLFSSL_TICKET_EXTRA_PADDING_SZ 32

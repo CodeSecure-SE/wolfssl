@@ -1,6 +1,6 @@
 /* tls13.c
  *
- * Copyright (C) 2006-2023 wolfSSL Inc.
+ * Copyright (C) 2006-2024 wolfSSL Inc.
  *
  * This file is part of wolfSSL.
  *
@@ -8918,7 +8918,7 @@ static int SendTls13CertificateVerify(WOLFSSL* ssl)
             if (ssl->buffers.key == NULL) {
             #ifdef HAVE_PK_CALLBACKS
                 if (wolfSSL_CTX_IsPrivatePkSet(ssl->ctx))
-                    args->length = (word16)GetPrivateKeySigSize(ssl);
+                    args->sigLen = (word16)GetPrivateKeySigSize(ssl);
                 else
             #endif
                     ERROR_OUT(NO_PRIVATE_KEY, exit_scv);

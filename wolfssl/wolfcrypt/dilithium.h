@@ -1,6 +1,6 @@
 /* dilithium.h
  *
- * Copyright (C) 2006-2023 wolfSSL Inc.
+ * Copyright (C) 2006-2024 wolfSSL Inc.
  *
  * This file is part of wolfSSL.
  *
@@ -539,6 +539,8 @@ struct dilithium_key {
     byte pubKeySet;
     byte prvKeySet;
     byte level; /* 2,3 or 5 */
+
+    void* heap; /* heap hint */
 
 #ifdef WOLF_CRYPTO_CB
     void* devCtx;

@@ -1,6 +1,6 @@
 /* asn_public.h
  *
- * Copyright (C) 2006-2023 wolfSSL Inc.
+ * Copyright (C) 2006-2024 wolfSSL Inc.
  *
  * This file is part of wolfSSL.
  *
@@ -177,7 +177,8 @@ enum CertType {
     SPHINCS_SMALL_LEVEL3_TYPE,
     SPHINCS_SMALL_LEVEL5_TYPE,
     ECC_PARAM_TYPE,
-    CHAIN_CERT_TYPE
+    CHAIN_CERT_TYPE,
+    PKCS7_TYPE
 };
 
 
