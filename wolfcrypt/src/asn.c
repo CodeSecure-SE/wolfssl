@@ -21410,6 +21410,17 @@ int wc_SetUnknownExtCallback(DecodedCert* cert,
     cert->unknownExtCallback = cb;
     return 0;
 }
+
+int wc_SetUnknownExtCallbackEx(DecodedCert* cert,
+                               wc_UnknownExtCallbackEx cb, void *ctx) {
+    if (cert == NULL) {
+        return BAD_FUNC_ARG;
+    }
+
+    cert->unknownExtCallbackEx = cb;
+    cert->unknownExtCallbackExCtx = ctx;
+    return 0;
+}
 #endif
 
 /*
@@ -21565,7 +21576,8 @@ end:
             ret = DecodeExtensionType(input + idx, length, oid, critical, cert,
                                       &isUnknownExt);
 #if defined(WOLFSSL_CUSTOM_OID) && defined(HAVE_OID_DECODING)
-            if (isUnknownExt && (cert->unknownExtCallback != NULL)) {
+            if (isUnknownExt && (cert->unknownExtCallback != NULL ||
+                                 cert->unknownExtCallbackEx != NULL)) {
                 word16 decOid[MAX_OID_SZ];
                 word32 decOidSz = sizeof(decOid);
                 ret = DecodeObjectId(
@@ -21579,9 +21591,18 @@ end:
                     WOLFSSL_ERROR(ret);
                 }
 
-                ret = cert->unknownExtCallback(decOid, decOidSz, critical,
-                          dataASN[CERTEXTASN_IDX_VAL].data.buffer.data,
-                          dataASN[CERTEXTASN_IDX_VAL].length);
+                if ((ret == 0) && (cert->unknownExtCallback != NULL)) {
+                    ret = cert->unknownExtCallback(decOid, decOidSz, critical,
+                              dataASN[CERTEXTASN_IDX_VAL].data.buffer.data,
+                              dataASN[CERTEXTASN_IDX_VAL].length);
+                }
+
+                if ((ret == 0) && (cert->unknownExtCallbackEx != NULL)) {
+                    ret = cert->unknownExtCallbackEx(decOid, decOidSz, critical,
+                              dataASN[CERTEXTASN_IDX_VAL].data.buffer.data,
+                              dataASN[CERTEXTASN_IDX_VAL].length,
+                              cert->unknownExtCallbackExCtx);
+                }
             }
 #endif
             (void)isUnknownExt;
@@ -33720,9 +33741,9 @@ static int EccSpecifiedECDomainDecode(const byte* input, word32 inSz,
     #else
     if (ret == 0) {
         /* Base X-ordinate */
-        DataToHexString(base + 1, curve->size, curve->Gx);
+        DataToHexString(base + 1, (word32)curve->size, curve->Gx);
         /* Base Y-ordinate */
-        DataToHexString(base + 1 + curve->size, curve->size, curve->Gy);
+        DataToHexString(base + 1 + curve->size, (word32)curve->size, curve->Gy);
         /* Prime */
         DataToHexString(dataASN[ECCSPECIFIEDASN_IDX_PRIME_P].data.ref.data,
                         dataASN[ECCSPECIFIEDASN_IDX_PRIME_P].data.ref.length,
