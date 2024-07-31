@@ -33388,7 +33388,7 @@ static int test_wc_dilithium_der(void)
     ExpectIntEQ(wc_Dilithium_PublicKeyToDer(NULL, der , DILITHIUM_MAX_DER_SIZE,
         0), BAD_FUNC_ARG);
     ExpectIntEQ(wc_Dilithium_PublicKeyToDer(key , der , 0                     ,
-        0), BUFFER_E);
+        0), BUFFER_E    );
     /* Get length only. */
     ExpectIntEQ(wc_Dilithium_PublicKeyToDer(key , NULL, 0                     ,
         0), pubLen);
@@ -33401,8 +33401,8 @@ static int test_wc_dilithium_der(void)
 
     ExpectIntEQ(wc_Dilithium_PrivateKeyToDer(NULL, NULL,
         0                     ), BAD_FUNC_ARG);
-    ExpectIntEQ(wc_Dilithium_PrivateKeyToDer(key , NULL,
-        0                     ), BAD_FUNC_ARG);
+    ExpectIntGT(wc_Dilithium_PrivateKeyToDer(key , NULL,
+        0                     ), 0);
     ExpectIntEQ(wc_Dilithium_PrivateKeyToDer(NULL, der ,
         0                     ), BAD_FUNC_ARG);
     ExpectIntEQ(wc_Dilithium_PrivateKeyToDer(NULL, NULL,
@@ -33410,15 +33410,15 @@ static int test_wc_dilithium_der(void)
     ExpectIntEQ(wc_Dilithium_PrivateKeyToDer(NULL, der ,
         DILITHIUM_MAX_DER_SIZE), BAD_FUNC_ARG);
     ExpectIntEQ(wc_Dilithium_PrivateKeyToDer(key , der ,
-        0                     ), BAD_FUNC_ARG);
+        0                     ), BUFFER_E);
     /* Get length only. */
     ExpectIntEQ(wc_Dilithium_PrivateKeyToDer(key , NULL,
         DILITHIUM_MAX_DER_SIZE), privDerLen);
 
     ExpectIntEQ(wc_Dilithium_KeyToDer(NULL, NULL, 0                     ),
         BAD_FUNC_ARG);
-    ExpectIntEQ(wc_Dilithium_KeyToDer(key , NULL, 0                     ),
-        BAD_FUNC_ARG);
+    ExpectIntGT(wc_Dilithium_KeyToDer(key , NULL, 0                     ),
+        0           );
     ExpectIntEQ(wc_Dilithium_KeyToDer(NULL, der , 0                     ),
         BAD_FUNC_ARG);
     ExpectIntEQ(wc_Dilithium_KeyToDer(NULL, NULL, DILITHIUM_MAX_DER_SIZE),
@@ -33426,7 +33426,7 @@ static int test_wc_dilithium_der(void)
     ExpectIntEQ(wc_Dilithium_KeyToDer(NULL, der , DILITHIUM_MAX_DER_SIZE),
         BAD_FUNC_ARG);
     ExpectIntEQ(wc_Dilithium_KeyToDer(key , der , 0                     ),
-        BAD_FUNC_ARG);
+        BUFFER_E    );
     /* Get length only. */
     ExpectIntEQ(wc_Dilithium_KeyToDer(key , NULL, DILITHIUM_MAX_DER_SIZE),
         keyDerLen);
@@ -49570,20 +49570,19 @@ static THREAD_RETURN WOLFSSL_THREAD server_task_ech(void* args)
 #endif /* HAVE_ECH && WOLFSSL_TLS13 */
 
 #if defined(OPENSSL_EXTRA) && defined(HAVE_SECRET_CALLBACK)
-static void keyLog_callback(const WOLFSSL* ssl, const char* line )
+static void keyLog_callback(const WOLFSSL* ssl, const char* line)
 {
+    XFILE fp;
+    const byte lf = '\n';
 
     AssertNotNull(ssl);
     AssertNotNull(line);
 
-    XFILE fp;
-    const byte  lf = '\n';
     fp = XFOPEN("./MyKeyLog.txt", "a");
-    XFWRITE( line, 1, strlen(line),fp);
-    XFWRITE( (void*)&lf,1,1,fp);
+    XFWRITE(line, 1, XSTRLEN(line), fp);
+    XFWRITE((void*)&lf, 1, 1, fp);
     XFFLUSH(fp);
     XFCLOSE(fp);
-
 }
 #endif /* OPENSSL_EXTRA && HAVE_SECRET_CALLBACK */
 static int test_wolfSSL_CTX_set_keylog_callback(void)
@@ -49631,12 +49630,14 @@ static int test_wolfSSL_Tls12_Key_Logging_test(void)
 {
     EXPECT_DECLS;
 #if defined(OPENSSL_EXTRA) && defined(HAVE_SECRET_CALLBACK)
-/* This test is intended for checking whether keylog callback is called
- * in client during TLS handshake between the client and a server.
- */
+    /* This test is intended for checking whether keylog callback is called
+     * in client during TLS handshake between the client and a server.
+     */
     test_ssl_cbf server_cbf;
     test_ssl_cbf client_cbf;
     XFILE fp = XBADFILE;
+    char  buff[500];
+    int   found = 0;
 
     XMEMSET(&server_cbf, 0, sizeof(test_ssl_cbf));
     XMEMSET(&client_cbf, 0, sizeof(test_ssl_cbf));
@@ -49653,16 +49654,12 @@ static int test_wolfSSL_Tls12_Key_Logging_test(void)
 
     ExpectIntEQ(test_wolfSSL_client_server_nofail_memio(&client_cbf,
         &server_cbf, NULL), TEST_SUCCESS);
-    XSLEEP_MS(100);
 
     /* check if the keylog file exists */
-
-    char  buff[300] = {0};
-    int  found = 0;
-
     ExpectTrue((fp = XFOPEN("./MyKeyLog.txt", "r")) != XBADFILE);
     XFFLUSH(fp); /* Just to make sure any buffers get flushed */
 
+    XMEMSET(buff, 0, sizeof(buff));
     while (EXPECT_SUCCESS() && XFGETS(buff, (int)sizeof(buff), fp) != NULL) {
         if (0 == strncmp(buff,"CLIENT_RANDOM ", sizeof("CLIENT_RANDOM ")-1)) {
             found = 1;
@@ -84319,6 +84316,60 @@ static int test_wolfSSL_SendUserCanceled(void)
 #endif
     return EXPECT_RESULT();
 }
+#if defined(HAVE_MANUAL_MEMIO_TESTS_DEPENDENCIES) && \
+    defined(HAVE_OCSP) && \
+    defined(HAVE_CERTIFICATE_STATUS_REQUEST) && \
+    !defined(WOLFSSL_NO_TLS12)
+static int test_ocsp_callback_fails_cb(void* ctx, const char* url, int urlSz,
+                        byte* ocspReqBuf, int ocspReqSz, byte** ocspRespBuf)
+{
+    (void)ctx;
+    (void)url;
+    (void)urlSz;
+    (void)ocspReqBuf;
+    (void)ocspReqSz;
+    (void)ocspRespBuf;
+    return -1;
+}
+static int test_ocsp_callback_fails(void)
+{
+    WOLFSSL_CTX *ctx_c = NULL;
+    WOLFSSL_CTX *ctx_s = NULL;
+    WOLFSSL *ssl_c = NULL;
+    WOLFSSL *ssl_s = NULL;
+    struct test_memio_ctx test_ctx;
+    EXPECT_DECLS;
+
+    XMEMSET(&test_ctx, 0, sizeof(test_ctx));
+    ExpectIntEQ(test_memio_setup(&test_ctx, &ctx_c, &ctx_s, &ssl_c, &ssl_s,
+            wolfTLSv1_2_client_method, wolfTLSv1_2_server_method), 0);
+    ExpectIntEQ(wolfSSL_CTX_EnableOCSPStapling(ctx_c), WOLFSSL_SUCCESS);
+    ExpectIntEQ(wolfSSL_CTX_EnableOCSPStapling(ctx_s), WOLFSSL_SUCCESS);
+    ExpectIntEQ(wolfSSL_UseOCSPStapling(ssl_c, WOLFSSL_CSR_OCSP,0), WOLFSSL_SUCCESS);
+    /* override URL to avoid exing from SendCertificateStatus because of no AuthInfo on the certificate */
+    ExpectIntEQ(wolfSSL_CTX_SetOCSP_OverrideURL(ctx_s, "http://dummy.test"), WOLFSSL_SUCCESS);
+    ExpectIntEQ(wolfSSL_CTX_EnableOCSP(ctx_s, WOLFSSL_OCSP_NO_NONCE    | WOLFSSL_OCSP_URL_OVERRIDE), WOLFSSL_SUCCESS);
+    ExpectIntEQ(wolfSSL_CTX_load_verify_locations(ctx_s, caCertFile, 0), WOLFSSL_SUCCESS);
+    ExpectIntEQ(wolfSSL_SetOCSP_Cb(ssl_s, test_ocsp_callback_fails_cb, NULL, NULL), WOLFSSL_SUCCESS);
+    ExpectIntEQ(test_memio_do_handshake(ssl_c, ssl_s, 10, NULL), -1);
+    ExpectIntEQ(wolfSSL_get_error(ssl_s, -1), OCSP_INVALID_STATUS);
+
+    wolfSSL_free(ssl_c);
+    wolfSSL_free(ssl_s);
+    wolfSSL_CTX_free(ctx_c);
+    wolfSSL_CTX_free(ctx_s);
+
+    return EXPECT_RESULT();
+}
+#else
+static int test_ocsp_callback_fails(void)
+{
+    return TEST_SKIPPED;
+}
+#endif /* defined(HAVE_MANUAL_MEMIO_TESTS_DEPENDENCIES) && \
+    defined(HAVE_OCSP) && \
+    defined(HAVE_CERTIFICATE_STATUS_REQUEST) */
+
 
 /*----------------------------------------------------------------------------*
  | Main
@@ -85559,6 +85610,7 @@ TEST_CASE testCases[] = {
     TEST_DECL(test_wolfSSL_UseOCSPStapling),
     TEST_DECL(test_wolfSSL_UseOCSPStaplingV2),
     TEST_DECL(test_self_signed_stapling),
+    TEST_DECL(test_ocsp_callback_fails),
 
     /* Multicast */
     TEST_DECL(test_wolfSSL_mcast),
