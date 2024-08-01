@@ -7521,19 +7521,11 @@ int wolfSSL_i2d_X509(WOLFSSL_X509* x509, unsigned char** out)
 int wc_GeneratePreTBS(DecodedCert* cert, byte *der, int derSz) {
     int ret = 0;
     WOLFSSL_X509 *x = NULL;
-    byte certOwnsAltNames = 0;
     byte certIsCSR = 0;
 
     if ((cert == NULL) || (der == NULL) || (derSz <= 0)) {
         return BAD_FUNC_ARG;
     }
-
-    /* The call to CopyDecodedToX509() transfers ownership of the altNames in
-     * the DecodedCert to the temporary X509 object, causing the list to be
-     * freed in wolfSSL_X509_free(). As this is an unintended side-effect, we
-     * have to save the ownerFlag here and transfer ownership back to the
-     * DecodedCert prior to freeing the X509 object. */
-    certOwnsAltNames = cert->weOwnAltNames;
 
 #ifdef WOLFSSL_CERT_REQ
     certIsCSR = cert->isCSR;
@@ -7546,9 +7538,6 @@ int wc_GeneratePreTBS(DecodedCert* cert, byte *der, int derSz) {
     else {
         ret = CopyDecodedToX509(x, cert);
     }
-
-    /* CopyDecodedToX509() clears cert->weOwnAltNames. Restore it. */
-    cert->weOwnAltNames = certOwnsAltNames;
 
     if (ret == 0) {
         /* Remove the altsigval extension. */
@@ -7565,9 +7554,6 @@ int wc_GeneratePreTBS(DecodedCert* cert, byte *der, int derSz) {
     }
 
     if (x != NULL) {
-        /* Safe the altNames list from being freed unitentionally. */
-        x->altNames = NULL;
-
         wolfSSL_X509_free(x);
     }
 
@@ -14510,11 +14496,12 @@ int wolfSSL_X509_REQ_add1_attr_by_NID(WOLFSSL_X509 *req,
                 req->reqAttributes->type = STACK_TYPE_X509_REQ_ATTR;
             }
         }
-        ret = wolfSSL_sk_push(req->reqAttributes, attr);
-        if ((ret != WOLFSSL_SUCCESS) || (req->reqAttributes->type == STACK_TYPE_CIPHER)) {
-            /* CIPHER type makes a copy */
+        if (req->reqAttributes->type == STACK_TYPE_X509_REQ_ATTR)
+            ret = wolfSSL_sk_push(req->reqAttributes, attr);
+        else
+            ret = WOLFSSL_FAILURE;
+        if (ret != WOLFSSL_SUCCESS)
             wolfSSL_X509_ATTRIBUTE_free(attr);
-        }
     }
 
     return ret;
