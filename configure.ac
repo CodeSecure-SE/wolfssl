@@ -69,7 +69,7 @@ AS_IF([ test -n "$CFLAG_VISIBILITY" ], [
        AM_CFLAGS="$AM_CFLAGS $CFLAG_VISIBILITY"
        ])
 
-WOLFSSL_BUILD_DATE=$(date -R)
+WOLFSSL_BUILD_DATE=$(LC_TIME=C date +"%a, %d %b %Y %T %z")
 AC_SUBST([WOLFSSL_BUILD_DATE])
 
 
@@ -10436,6 +10436,10 @@ if test -n "$WITH_MAX_ECC_BITS"; then
     fi
 fi
 
+if test "$silent" != "yes"; then
+
 echo "---"
 echo "Note: Make sure your application includes \"wolfssl/options.h\" before any other wolfSSL headers."
 echo "      You can define \"WOLFSSL_USE_OPTIONS_H\" in your application to include this automatically."
+
+fi
