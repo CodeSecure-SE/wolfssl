@@ -59747,9 +59747,9 @@ static int test_wolfSSL_SESSION(void)
 
     /* TLS v1.3 requires session tickets */
     /* CHACHA and POLY1305 required for myTicketEncCb */
-#if defined(WOLFSSL_TLS13) && (!defined(HAVE_SESSION_TICKET) && \
-    !defined(WOLFSSL_NO_TLS12) || !(defined(HAVE_CHACHA) && \
-            defined(HAVE_POLY1305) && !defined(HAVE_AESGCM)))
+#if !defined(WOLFSSL_NO_TLS12) && (!defined(WOLFSSL_TLS13) || \
+    !(defined(HAVE_SESSION_TICKET) && ((defined(HAVE_CHACHA) && \
+            defined(HAVE_POLY1305)) || defined(HAVE_AESGCM))))
     ExpectNotNull(ctx = wolfSSL_CTX_new(wolfTLSv1_2_client_method()));
 #else
     ExpectNotNull(ctx = wolfSSL_CTX_new(wolfSSLv23_client_method()));
@@ -70719,6 +70719,9 @@ static int test_wolfssl_EVP_chacha20_poly1305(void)
     EVP_CIPHER_CTX* ctx = NULL;
     int outSz;
 
+    XMEMSET(key, 0, sizeof(key));
+    XMEMSET(iv, 0, sizeof(iv));
+
     /* Encrypt. */
     ExpectNotNull((ctx = EVP_CIPHER_CTX_new()));
     ExpectIntEQ(EVP_EncryptInit_ex(ctx, EVP_chacha20_poly1305(), NULL, NULL,
@@ -81186,6 +81189,90 @@ static int test_extra_alerts_bad_psk(void)
 }
 #endif
 
+#if defined(OPENSSL_EXTRA) && defined(HAVE_MANUAL_MEMIO_TESTS_DEPENDENCIES) && !defined(WOLFSSL_NO_TLS12)
+/*
+ * Emulates wolfSSL_shutdown that goes on EAGAIN,
+ * by returning on output WOLFSSL_ERROR_WANT_WRITE.*/
+static int custom_wolfSSL_shutdown(WOLFSSL *ssl, char *buf,
+        int sz, void *ctx)
+{
+    (void)ssl;
+    (void)buf;
+    (void)ctx;
+    (void)sz;
+
+    return WOLFSSL_CBIO_ERR_WANT_WRITE;
+}
+
+static int test_multiple_alerts_EAGAIN(void)
+{
+    EXPECT_DECLS;
+    size_t size_of_last_packet = 0;
+
+    /* declare wolfSSL objects */
+    struct test_memio_ctx test_ctx;
+    WOLFSSL_CTX *ctx_c = NULL, *ctx_s = NULL;
+    WOLFSSL *ssl_c = NULL, *ssl_s = NULL;
+
+    XMEMSET(&test_ctx, 0, sizeof(test_ctx));
+
+    /* Create and initialize WOLFSSL_CTX and WOLFSSL objects */
+#ifdef USE_TLSV13
+    ExpectIntEQ(test_memio_setup(&test_ctx, &ctx_c, &ctx_s, &ssl_c, &ssl_s,
+          wolfTLSv1_3_client_method,  wolfTLSv1_3_server_method), 0);
+#else
+    ExpectIntEQ(test_memio_setup(&test_ctx, &ctx_c, &ctx_s, &ssl_c, &ssl_s,
+         wolfTLSv1_2_client_method, wolfTLSv1_2_server_method), 0);
+#endif
+    ExpectNotNull(ctx_c);
+    ExpectNotNull(ssl_c);
+    ExpectNotNull(ctx_s);
+    ExpectNotNull(ssl_s);
+
+    /* Load client certificates into WOLFSSL_CTX */
+    ExpectIntEQ(wolfSSL_CTX_load_verify_locations(ctx_c, "./certs/ca-cert.pem", NULL), WOLFSSL_SUCCESS);
+
+    ExpectIntEQ(test_memio_do_handshake(ssl_c, ssl_s, 10, NULL), 0);
+
+    /*
+     * We set the custom callback for the IO to emulate multiple EAGAINs
+     * on shutdown, so we can check that we don't send multiple packets.
+     * */
+    wolfSSL_SSLSetIOSend(ssl_c, custom_wolfSSL_shutdown);
+
+    /*
+     * We call wolfSSL_shutdown multiple times to reproduce the behaviour,
+     * to check that it doesn't add the CLOSE_NOTIFY packet multiple times
+     * on the output buffer.
+     * */
+    wolfSSL_shutdown(ssl_c);
+    wolfSSL_shutdown(ssl_c);
+
+    if (ssl_c != NULL) {
+        size_of_last_packet = ssl_c->buffers.outputBuffer.length;
+    }
+    wolfSSL_shutdown(ssl_c);
+
+    /*
+     * Finally we check the length of the output buffer.
+     * */
+    ExpectIntEQ((ssl_c->buffers.outputBuffer.length - size_of_last_packet), 0);
+
+    /* Cleanup and return */
+    wolfSSL_CTX_free(ctx_c);
+    wolfSSL_free(ssl_c);
+    wolfSSL_CTX_free(ctx_s);
+    wolfSSL_free(ssl_s);
+
+    return EXPECT_RESULT();
+}
+#else
+static int test_multiple_alerts_EAGAIN(void)
+{
+    return TEST_SKIPPED;
+}
+#endif
+
 #if defined(WOLFSSL_TLS13) && defined(HAVE_MANUAL_MEMIO_TESTS_DEPENDENCIES)\
     && !defined(NO_PSK)
 static unsigned int test_tls13_bad_psk_binder_client_cb(WOLFSSL* ssl,
@@ -82532,7 +82619,13 @@ static int test_dtls13_bad_epoch_ch(void)
 }
 #endif
 
-#if defined(HAVE_SSL_MEMIO_TESTS_DEPENDENCIES) && !defined(NO_SESSION_CACHE)
+#if ((defined(WOLFSSL_TLS13) && !defined(WOLFSSL_NO_DEF_TICKET_ENC_CB) && \
+      defined(HAVE_SESSION_TICKET) && defined(WOLFSSL_TICKET_HAVE_ID) && \
+      !defined(WOLFSSL_TLS13_MIDDLEBOX_COMPAT)) || \
+     (!defined(NO_OLD_TLS) && ((!defined(NO_AES) && !defined(NO_AES_CBC)) || \
+      !defined(NO_DES3))) || !defined(WOLFSSL_NO_TLS12)) && \
+    !defined(NO_WOLFSSL_CLIENT) && !defined(NO_WOLFSSL_SERVER) && \
+    defined(HAVE_SSL_MEMIO_TESTS_DEPENDENCIES) && !defined(NO_SESSION_CACHE)
 static int test_short_session_id_ssl_ready(WOLFSSL* ssl)
 {
     EXPECT_DECLS;
@@ -82606,7 +82699,6 @@ static int test_short_session_id(void)
         ExpectIntEQ(test_wolfSSL_client_server_nofail_memio(&client_cbf,
             &server_cbf, NULL), TEST_SUCCESS);
     }
-
     return EXPECT_RESULT();
 }
 #else
@@ -86697,6 +86789,7 @@ TEST_CASE testCases[] = {
     TEST_DECL(test_extra_alerts_wrong_cs),
     TEST_DECL(test_extra_alerts_skip_hs),
     TEST_DECL(test_extra_alerts_bad_psk),
+    TEST_DECL(test_multiple_alerts_EAGAIN),
     TEST_DECL(test_tls13_bad_psk_binder),
     /* Can't memory test as client/server Asserts. */
     TEST_DECL(test_harden_no_secure_renegotiation),
