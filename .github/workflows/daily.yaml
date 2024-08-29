@@ -65,15 +65,6 @@ jobs:
           sed -i 's#.txt$#.html#' diff.csv
           cut -d, -f1,2,3,4,5,6,7,8,9,15 diff.csv > diff2.csv
           csv2md diff2.csv > diff.md
-#      - name: Upload artefact
-#        uses: actions/upload-artifact@v4
-#        with:
-#          name: SARIF results summary
-#          path: diff.sarif
-      - name: Get report
-        run: |
-           $CSONAR_CSHOME/codesonar/bin/codesonar get -auth password -hubuser $CSONAR_HUB_USER \
-           -hubpwfile hubpwfile $CSONAR_HUB_URL/report/aid-$(cat $PROJECT_NAME.prj_files/aid.txt)-3.html -o report.html
       - name: Email results
         uses: dawidd6/action-send-mail@v3
         with:
