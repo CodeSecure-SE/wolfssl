@@ -2563,7 +2563,7 @@ static wc_test_ret_t _SaveDerAndPem(const byte* der, int derSz,
             return WC_TEST_RET_ENC(calling_line, 2, WC_TEST_RET_TAG_I);
         }
     #ifndef WOLFSSL_NO_MALLOC
-        pem = (byte*)XMALLOC(pemSz, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+        pem = (byte*)XMALLOC((word32)pemSz, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
         if (pem == NULL) {
             return WC_TEST_RET_ENC(calling_line, 3, WC_TEST_RET_TAG_I);
         }
@@ -2572,7 +2572,7 @@ static wc_test_ret_t _SaveDerAndPem(const byte* der, int derSz,
             return BAD_FUNC_ARG;
     #endif
         /* Convert to PEM */
-        pemSz = wc_DerToPem(der, (word32)derSz, pem, pemSz, pemType);
+        pemSz = wc_DerToPem(der, (word32)derSz, pem, (word32)pemSz, pemType);
         if (pemSz < 0) {
             XFREE(pem, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
             return WC_TEST_RET_ENC(calling_line, 4, WC_TEST_RET_TAG_I);
@@ -25546,7 +25546,7 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t openssl_test(void)
             return WC_TEST_RET_ENC_NC;
         }
 
-        if (EVP_CIPHER_CTX_block_size(NULL) != WC_NO_ERR_TRACE(BAD_FUNC_ARG))
+        if (EVP_CIPHER_CTX_block_size(NULL) != WC_NO_ERR_TRACE(WOLFSSL_FAILURE))
             return WC_TEST_RET_ENC_NC;
 
         if (wolfSSL_EVP_CIPHER_CTX_cleanup(en) != WOLFSSL_SUCCESS)
@@ -25557,7 +25557,7 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t openssl_test(void)
         if (EVP_CIPHER_CTX_block_size(en) != en->block_size)
             return WC_TEST_RET_ENC_NC;
 
-        if (EVP_CIPHER_block_size(NULL) != WC_NO_ERR_TRACE(BAD_FUNC_ARG))
+        if (EVP_CIPHER_block_size(NULL) != WC_NO_ERR_TRACE(WOLFSSL_FAILURE))
             return WC_TEST_RET_ENC_NC;
 
         if (EVP_CIPHER_block_size(EVP_aes_128_cbc()) != AES_BLOCK_SIZE)
@@ -25575,10 +25575,8 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t openssl_test(void)
             return WC_TEST_RET_ENC_NC;
 
         if (EVP_CIPHER_CTX_set_padding(NULL, 0) !=
-            WC_NO_ERR_TRACE(BAD_FUNC_ARG))
-        {
+                WC_NO_ERR_TRACE(WOLFSSL_FAILURE))
             return WC_TEST_RET_ENC_NC;
-        }
         if (EVP_CIPHER_CTX_set_padding(en, 0) != WOLFSSL_SUCCESS)
             return WC_TEST_RET_ENC_NC;
         if (EVP_CIPHER_CTX_set_padding(en, 1) != WOLFSSL_SUCCESS)
