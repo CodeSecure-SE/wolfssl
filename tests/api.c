@@ -74549,6 +74549,7 @@ static int test_wc_GetPkcs8TraditionalOffset(void)
     int derSz = 0;
     word32 inOutIdx;
     const char* path = "./certs/server-keyPkcs8.der";
+    const char* pathAttributes = "./certs/ca-key-pkcs8-attribute.der";
     XFILE file = XBADFILE;
     byte der[2048];
 
@@ -74556,6 +74557,7 @@ static int test_wc_GetPkcs8TraditionalOffset(void)
     ExpectIntGT(derSz = (int)XFREAD(der, 1, sizeof(der), file), 0);
     if (file != XBADFILE)
         XFCLOSE(file);
+    file = XBADFILE; /* reset file to avoid warning of use after close */
 
     /* valid case */
     inOutIdx = 0;
@@ -74577,6 +74579,16 @@ static int test_wc_GetPkcs8TraditionalOffset(void)
     inOutIdx = 0;
     ExpectIntEQ(length = wc_GetPkcs8TraditionalOffset(der, &inOutIdx, (word32)derSz),
         WC_NO_ERR_TRACE(ASN_PARSE_E));
+
+    /* test parsing with attributes */
+    ExpectTrue((file = XFOPEN(pathAttributes, "rb")) != XBADFILE);
+    ExpectIntGT(derSz = (int)XFREAD(der, 1, sizeof(der), file), 0);
+    if (file != XBADFILE)
+        XFCLOSE(file);
+
+    inOutIdx = 0;
+    ExpectIntGT(length = wc_GetPkcs8TraditionalOffset(der, &inOutIdx,
+        (word32)derSz), 0);
 #endif /* NO_ASN */
     return EXPECT_RESULT();
 }
@@ -88150,6 +88162,77 @@ static int test_CryptoCb_Func(int thisDevId, wc_CryptoInfo* info, void* ctx)
                 info->pk.rsa.type, ret, *info->pk.rsa.outLen);
         #endif
         }
+        #ifdef WOLF_CRYPTO_CB_RSA_PAD
+        else if (info->pk.type == WC_PK_TYPE_RSA_PKCS ||
+                 info->pk.type == WC_PK_TYPE_RSA_PSS  ||
+                 info->pk.type == WC_PK_TYPE_RSA_OAEP) {
+            RsaKey key;
+
+            if (info->pk.rsa.type == RSA_PUBLIC_ENCRYPT ||
+                info->pk.rsa.type == RSA_PUBLIC_DECRYPT) {
+                /* Have all public key ops fall back to SW */
+                return CRYPTOCB_UNAVAILABLE;
+            }
+
+            if (info->pk.rsa.padding == NULL) {
+                return BAD_FUNC_ARG;
+            }
+
+            /* Initialize key */
+            ret = load_pem_key_file_as_der(privKeyFile, &pDer,
+                &keyFormat);
+            if (ret != 0) {
+                return ret;
+            }
+
+            ret = wc_InitRsaKey(&key, HEAP_HINT);
+            if (ret == 0) {
+                word32 keyIdx = 0;
+                /* load RSA private key and perform private transform */
+                ret = wc_RsaPrivateKeyDecode(pDer->buffer, &keyIdx,
+                    &key, pDer->length);
+            }
+            /* Perform RSA operation */
+            if ((ret == 0) && (info->pk.type == WC_PK_TYPE_RSA_PKCS)) {
+            #if !defined(WOLFSSL_RSA_PUBLIC_ONLY) && !defined(WOLFSSL_RSA_VERIFY_ONLY)
+                ret = wc_RsaSSL_Sign(info->pk.rsa.in, info->pk.rsa.inLen,
+                    info->pk.rsa.out, *info->pk.rsa.outLen, &key,
+                    info->pk.rsa.rng);
+            #else
+                ret = CRYPTOCB_UNAVAILABLE;
+            #endif
+            }
+            if ((ret == 0) && (info->pk.type == WC_PK_TYPE_RSA_PSS)) {
+            #ifdef WC_RSA_PSS
+                ret = wc_RsaPSS_Sign_ex(info->pk.rsa.in, info->pk.rsa.inLen,
+                    info->pk.rsa.out, *info->pk.rsa.outLen,
+                    info->pk.rsa.padding->hash, info->pk.rsa.padding->mgf,
+                    info->pk.rsa.padding->saltLen, &key, info->pk.rsa.rng);
+            #else
+                ret = CRYPTOCB_UNAVAILABLE;
+            #endif
+            }
+            if ((ret == 0) && (info->pk.type == WC_PK_TYPE_RSA_OAEP)) {
+            #if !defined(WC_NO_RSA_OAEP) || defined(WC_RSA_NO_PADDING)
+                ret = wc_RsaPrivateDecrypt_ex(
+                    info->pk.rsa.in, info->pk.rsa.inLen,
+                    info->pk.rsa.out, *info->pk.rsa.outLen,
+                    &key, WC_RSA_OAEP_PAD, info->pk.rsa.padding->hash,
+                    info->pk.rsa.padding->mgf, info->pk.rsa.padding->label,
+                    info->pk.rsa.padding->labelSz);
+            #else
+                ret = CRYPTOCB_UNAVAILABLE;
+            #endif
+            }
+
+            if (ret > 0) {
+                *info->pk.rsa.outLen = ret;
+            }
+
+            wc_FreeRsaKey(&key);
+            wc_FreeDer(&pDer); pDer = NULL;
+        }
+        #endif /* ifdef WOLF_CRYPTO_CB_RSA_PAD */
     #endif /* !NO_RSA */
     #ifdef HAVE_ECC
         if (info->pk.type == WC_PK_TYPE_EC_KEYGEN) {
