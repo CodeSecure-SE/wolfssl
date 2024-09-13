@@ -25,10 +25,9 @@
 #endif
 
 #include <wolfssl/wolfcrypt/settings.h>
-#if defined(OPENSSL_EXTRA) && !defined(_WIN32)
+#if defined(OPENSSL_EXTRA) && !defined(_WIN32) && !defined(_GNU_SOURCE)
     /* turn on GNU extensions for XISASCII */
-    #undef  _GNU_SOURCE
-    #define _GNU_SOURCE
+    #define _GNU_SOURCE 1
 #endif
 
 #if !defined(WOLFCRYPT_ONLY) || defined(OPENSSL_EXTRA) || \
@@ -4133,10 +4132,10 @@ int wolfSSL_get_error(WOLFSSL* ssl, int ret)
         return WOLFSSL_ERROR_WANT_WRITE;        /* convert to OpenSSL type */
     else if (ssl->error == WC_NO_ERR_TRACE(ZERO_RETURN) ||
              ssl->options.shutdownDone)
-    {
         return WOLFSSL_ERROR_ZERO_RETURN;       /* convert to OpenSSL type */
-    }
 #ifdef OPENSSL_EXTRA
+    else if (ssl->error == WC_NO_ERR_TRACE(MATCH_SUITE_ERROR))
+        return WOLFSSL_ERROR_SYSCALL;           /* convert to OpenSSL type */
     else if (ssl->error == WC_NO_ERR_TRACE(SOCKET_PEER_CLOSED_E))
         return WOLFSSL_ERROR_SYSCALL;           /* convert to OpenSSL type */
 #endif
