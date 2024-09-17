@@ -20994,13 +20994,14 @@ static wc_test_ret_t rsa_keygen_test(WC_RNG* rng)
 #ifndef WOLFSSL_NO_MALLOC
     byte*  der = NULL;
 #else
-    byte der[1024];
+    byte der[1280];
 #endif
 #ifndef WOLFSSL_CRYPTOCELL
     word32 idx = 0;
 #endif
     int    derSz = 0;
-#if !defined(WOLFSSL_SP_MATH) && !defined(HAVE_FIPS)
+#if !defined(WOLFSSL_SP_MATH) && !defined(HAVE_FIPS) && \
+    (defined(RSA_MIN_SIZE) && (RSA_MIN_SIZE <= 1024))
     int    keySz = 1024;
 #else
     int    keySz = 2048;
@@ -21045,8 +21046,11 @@ static wc_test_ret_t rsa_keygen_test(WC_RNG* rng)
     if (der == NULL) {
         ERROR_OUT(WC_TEST_RET_ENC_ERRNO, exit_rsa);
     }
+    derSz = FOURK_BUF;
+#else
+    derSz = sizeof(der);
 #endif
-    derSz = wc_RsaKeyToDer(genKey, der, FOURK_BUF);
+    derSz = wc_RsaKeyToDer(genKey, der, derSz);
     if (derSz < 0) {
         ERROR_OUT(WC_TEST_RET_ENC_EC(derSz), exit_rsa);
     }

@@ -565,13 +565,16 @@ int tmpDirNameSet = 0;
 #define TEST_STRING    "Everyone gets Friday off."
 #define TEST_STRING_SZ 25
 
+#ifndef NO_RSA
 #if (!defined(WOLFSSL_SP_MATH) || defined(WOLFSSL_SP_MATH_ALL)) && \
-    (!defined(HAVE_FIPS_VERSION) || (HAVE_FIPS_VERSION < 4))
+    (!defined(HAVE_FIPS_VERSION) || (HAVE_FIPS_VERSION < 4)) && \
+    (defined(RSA_MIN_SIZE) && (RSA_MIN_SIZE <= 1024))
 #define TEST_RSA_BITS 1024
 #else
 #define TEST_RSA_BITS 2048
 #endif
 #define TEST_RSA_BYTES (TEST_RSA_BITS/8)
+#endif /* !NO_RSA */
 
 #if !defined(NO_FILESYSTEM) && !defined(NO_CERTS) && \
     (!defined(NO_WOLFSSL_SERVER) || !defined(NO_WOLFSSL_CLIENT))
@@ -20564,7 +20567,8 @@ static int test_wc_MakeRsaKey(void)
     RsaKey genKey;
     WC_RNG rng;
 #if (!defined(WOLFSSL_SP_MATH) || defined(WOLFSSL_SP_MATH_ALL)) && \
-    (!defined(HAVE_FIPS_VERSION) || (HAVE_FIPS_VERSION < 4))
+    (!defined(HAVE_FIPS_VERSION) || (HAVE_FIPS_VERSION < 4)) && \
+    (defined(RSA_MIN_SIZE) && (RSA_MIN_SIZE <= 1024))
     int bits = 1024;
 #else
     int bits = 2048;
@@ -20965,7 +20969,8 @@ static int test_wc_RsaKeyToDer(void)
     WC_RNG rng;
     byte*  der = NULL;
 #if (!defined(WOLFSSL_SP_MATH) || defined(WOLFSSL_SP_MATH_ALL)) && \
-    (!defined(HAVE_FIPS_VERSION) || (HAVE_FIPS_VERSION < 4))
+    (!defined(HAVE_FIPS_VERSION) || (HAVE_FIPS_VERSION < 4)) && \
+    (defined(RSA_MIN_SIZE) && (RSA_MIN_SIZE <= 1024))
     int     bits = 1024;
     word32  derSz = 611;
     /* (2 x 128) + 2 (possible leading 00) + (5 x 64) + 5 (possible leading 00)
@@ -21019,7 +21024,8 @@ static int test_wc_RsaKeyToPublicDer(void)
     WC_RNG rng;
     byte*  der = NULL;
 #if (!defined(WOLFSSL_SP_MATH) || defined(WOLFSSL_SP_MATH_ALL)) && \
-    (!defined(HAVE_FIPS_VERSION) || (HAVE_FIPS_VERSION < 4))
+    (!defined(HAVE_FIPS_VERSION) || (HAVE_FIPS_VERSION < 4)) && \
+    (defined(RSA_MIN_SIZE) && (RSA_MIN_SIZE <= 1024))
     int    bits = 1024;
     word32 derLen = 162;
 #else
@@ -21283,7 +21289,8 @@ static int test_wc_RsaEncryptSize(void)
     ExpectIntEQ(wc_InitRng(&rng), 0);
 
 #if (!defined(WOLFSSL_SP_MATH) || defined(WOLFSSL_SP_MATH_ALL)) && \
-    (!defined(HAVE_FIPS_VERSION) || (HAVE_FIPS_VERSION < 4))
+    (!defined(HAVE_FIPS_VERSION) || (HAVE_FIPS_VERSION < 4)) && \
+    (defined(RSA_MIN_SIZE) && (RSA_MIN_SIZE <= 1024))
     ExpectIntEQ(MAKE_RSA_KEY(&key, 1024, WC_RSA_EXPONENT, &rng), 0);
 
     ExpectIntEQ(wc_RsaEncryptSize(&key), 128);
@@ -21317,7 +21324,8 @@ static int test_wc_RsaFlattenPublicKey(void)
     word32 eSz = sizeof(e);
     word32 nSz = sizeof(n);
     #if (!defined(WOLFSSL_SP_MATH) || defined(WOLFSSL_SP_MATH_ALL)) && \
-        (!defined(HAVE_FIPS_VERSION) || (HAVE_FIPS_VERSION < 4))
+        (!defined(HAVE_FIPS_VERSION) || (HAVE_FIPS_VERSION < 4)) && \
+        (defined(RSA_MIN_SIZE) && (RSA_MIN_SIZE <= 1024))
     int    bits = 1024;
     #else
     int    bits = 2048;
@@ -47382,7 +47390,7 @@ static int test_wc_SetSubjectKeyIdFromPublicKey_ex(void)
 #if defined(WOLFSSL_CERT_EXT) && defined(WOLFSSL_CERT_GEN)
     WC_RNG      rng;
     Cert        cert;
-#if !defined(NO_RSA) && defined(HAVE_RSA)
+#if !defined(NO_RSA) && defined(WOLFSSL_KEY_GEN)
     RsaKey      rsaKey;
     int         bits = 2048;
 #endif
@@ -47405,7 +47413,7 @@ static int test_wc_SetSubjectKeyIdFromPublicKey_ex(void)
 
     ExpectIntEQ(wc_InitCert(&cert), 0);
 
-#if !defined(NO_RSA) && defined(HAVE_RSA) && defined(WOLFSSL_KEY_GEN)
+#if !defined(NO_RSA) && defined(WOLFSSL_KEY_GEN)
     /* RSA */
     XMEMSET(&rsaKey, 0, sizeof(RsaKey));
     ExpectIntEQ(wc_InitRsaKey(&rsaKey, HEAP_HINT), 0);
@@ -47464,7 +47472,7 @@ static int test_wc_SetAuthKeyIdFromPublicKey_ex(void)
 #if defined(WOLFSSL_CERT_EXT) && defined(WOLFSSL_CERT_GEN)
     WC_RNG      rng;
     Cert        cert;
-#if !defined(NO_RSA) && defined(HAVE_RSA)
+#if !defined(NO_RSA) && defined(WOLFSSL_KEY_GEN)
     RsaKey      rsaKey;
     int         bits = 2048;
 #endif
@@ -47487,7 +47495,7 @@ static int test_wc_SetAuthKeyIdFromPublicKey_ex(void)
 
     ExpectIntEQ(wc_InitCert(&cert), 0);
 
-#if !defined(NO_RSA) && defined(HAVE_RSA) && defined(WOLFSSL_KEY_GEN)
+#if !defined(NO_RSA) && defined(WOLFSSL_KEY_GEN)
     /* RSA */
     XMEMSET(&rsaKey, 0, sizeof(RsaKey));
     ExpectIntEQ(wc_InitRsaKey(&rsaKey, HEAP_HINT), 0);
