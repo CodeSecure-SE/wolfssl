@@ -12,7 +12,7 @@ on:
 jobs:
   CodeSonar_Analyze:
     permissions: write-all
-    runs-on: wolfssl-runner-set
+    runs-on: arc-runner-set
     container:
       image: docker.io/canuckmh/wolfssl-cso-builder:8.1p0
       credentials:
