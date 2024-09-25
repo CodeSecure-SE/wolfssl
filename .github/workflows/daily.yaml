@@ -8,6 +8,7 @@ on:
       - 'release/daily'
   #schedule:
   #  - cron: '17 2 * * *'
+  
 
 jobs:
   CodeSonar_Analyze:
