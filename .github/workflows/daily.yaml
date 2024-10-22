@@ -13,7 +13,7 @@ on:
 jobs:
   CodeSonar_Analyze:
     permissions: write-all
-    runs-on: wolfssl-runner-set
+    runs-on: codesecure-runner-set
     container:
       image: ghcr.io/codesecure-se/wolfssl-cso-builder:8.2p0
       credentials:
