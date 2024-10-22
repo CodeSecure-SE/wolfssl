@@ -16,9 +16,6 @@ jobs:
     runs-on: codesecure-runner-set
     container:
       image: ghcr.io/codesecure-se/wolfssl-cso-builder:8.2p0
-      credentials:
-        username: ${{ secrets.DOCKERHUB_USERNAME }}
-        password: ${{ secrets.DOCKERHUB_TOKEN }}
     env:
       CAFILE: ".github/github.cert.pem"
       TOKEN: "${{ secrets.GITHUB_TOKEN }}"
