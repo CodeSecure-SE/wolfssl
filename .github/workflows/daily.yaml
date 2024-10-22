@@ -15,7 +15,7 @@ jobs:
     permissions: write-all
     runs-on: wolfssl-runner-set
     container:
-      image: docker.io/canuckmh/wolfssl-cso-builder:8.1p0
+      image: ghcr.io/codesecure-se/wolfssl-cso-builder:8.2p0
       credentials:
         username: ${{ secrets.DOCKERHUB_USERNAME }}
         password: ${{ secrets.DOCKERHUB_TOKEN }}
