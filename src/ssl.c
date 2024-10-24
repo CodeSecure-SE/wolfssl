@@ -5535,13 +5535,15 @@ int AddCA(WOLFSSL_CERT_MANAGER* cm, DerBuffer** pDer, int type, int verify)
         }
     }
 
-    if (ret == 0 && cert->isCA == 0 && type != WOLFSSL_USER_CA) {
+    if (ret == 0 && cert->isCA == 0 && type != WOLFSSL_USER_CA &&
+        type != WOLFSSL_TEMP_CA) {
         WOLFSSL_MSG("\tCan't add as CA if not actually one");
         ret = NOT_CA_ERROR;
     }
 #ifndef ALLOW_INVALID_CERTSIGN
     else if (ret == 0 && cert->isCA == 1 && type != WOLFSSL_USER_CA &&
-        !cert->selfSigned && (cert->extKeyUsage & KEYUSE_KEY_CERT_SIGN) == 0) {
+        type != WOLFSSL_TEMP_CA && !cert->selfSigned &&
+        (cert->extKeyUsage & KEYUSE_KEY_CERT_SIGN) == 0) {
         /* Intermediate CA certs are required to have the keyCertSign
         * extension set. User loaded root certs are not. */
         WOLFSSL_MSG("\tDoesn't have key usage certificate signing");
@@ -15108,7 +15110,7 @@ static WC_INLINE const char* wolfssl_mac_to_string(int mac)
             macStr = "SHA1";
             break;
 #endif
-#ifdef HAVE_SHA224
+#ifdef WOLFSSL_SHA224
         case sha224_mac:
             macStr = "SHA224";
             break;
@@ -15118,12 +15120,12 @@ static WC_INLINE const char* wolfssl_mac_to_string(int mac)
             macStr = "SHA256";
             break;
 #endif
-#ifdef HAVE_SHA384
+#ifdef WOLFSSL_SHA384
         case sha384_mac:
             macStr = "SHA384";
             break;
 #endif
-#ifdef HAVE_SHA512
+#ifdef WOLFSSL_SHA512
         case sha512_mac:
             macStr = "SHA512";
             break;
