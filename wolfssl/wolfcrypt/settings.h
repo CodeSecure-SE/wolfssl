@@ -3491,6 +3491,7 @@ extern void uITRON4_free(void *p) ;
     #undef HAVE_STRINGS_H
     #undef HAVE_ERRNO_H
     #undef HAVE_THREAD_LS
+    #undef HAVE_ATEXIT
     #undef WOLFSSL_HAVE_MIN
     #undef WOLFSSL_HAVE_MAX
     #define SIZEOF_LONG         8
@@ -3551,7 +3552,7 @@ extern void uITRON4_free(void *p) ;
  * OpenSSL compat layer
  * ---------------------------------------------------------------------------
  */
-#if defined(OPENSSL_EXTRA) && !defined(OPENSSL_COEXIST)
+#ifdef OPENSSL_EXTRA
     #undef  WOLFSSL_ALWAYS_VERIFY_CB
     #define WOLFSSL_ALWAYS_VERIFY_CB
 
@@ -3575,7 +3576,7 @@ extern void uITRON4_free(void *p) ;
 
     #undef WOLFSSL_SESSION_ID_CTX
     #define WOLFSSL_SESSION_ID_CTX
-#endif /* OPENSSL_EXTRA && !OPENSSL_COEXIST */
+#endif /* OPENSSL_EXTRA */
 
 #ifdef OPENSSL_EXTRA_X509_SMALL
     #undef WOLFSSL_NO_OPENSSL_RAND_CB
@@ -4177,9 +4178,8 @@ extern void uITRON4_free(void *p) ;
     #endif
 #endif
 
-#if (defined(OPENSSL_EXTRA) || defined(OPENSSL_ALL)) && \
-    defined(OPENSSL_COEXIST)
-    #error "OPENSSL_EXTRA can not be defined with OPENSSL_COEXIST"
+#if defined(OPENSSL_ALL) && defined(OPENSSL_COEXIST)
+    #error "OPENSSL_ALL can not be defined with OPENSSL_COEXIST"
 #endif
 
 #if !defined(NO_DSA) && defined(NO_SHA)
