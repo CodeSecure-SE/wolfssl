@@ -1032,12 +1032,12 @@ int GetEchConfigsEx(WOLFSSL_EchConfig* configs, byte* output, word32* outputLen)
 #endif
 
 /* prevent multiple mutex initializations */
-static volatile WOLFSSL_GLOBAL int initRefCount = 0;
+static volatile WC_THREADSHARED int initRefCount = 0;
 /* init ref count mutex */
-static WOLFSSL_GLOBAL wolfSSL_Mutex inits_count_mutex
+static WC_THREADSHARED wolfSSL_Mutex inits_count_mutex
     WOLFSSL_MUTEX_INITIALIZER_CLAUSE(inits_count_mutex);
 #ifndef WOLFSSL_MUTEX_INITIALIZER
-static WOLFSSL_GLOBAL volatile int inits_count_mutex_valid = 0;
+static WC_THREADSHARED volatile int inits_count_mutex_valid = 0;
 #endif
 
 /* Create a new WOLFSSL_CTX struct and return the pointer to created struct.
@@ -14632,19 +14632,19 @@ const char* wolfSSL_get_curve_name(WOLFSSL* ssl)
         case WOLFSSL_P521_ML_KEM_1024:
             return "P521_ML_KEM_1024";
 #elif defined(WOLFSSL_WC_KYBER)
-    #ifdef WOLFSSL_WC_ML_KEM_512
+    #ifndef WOLFSSL_NO_ML_KEM_512
         case WOLFSSL_ML_KEM_512:
             return "ML_KEM_512";
         case WOLFSSL_P256_ML_KEM_512:
             return "P256_ML_KEM_512";
     #endif
-    #ifdef WOLFSSL_WC_ML_KEM_768
+    #ifndef WOLFSSL_NO_ML_KEM_768
         case WOLFSSL_ML_KEM_768:
             return "ML_KEM_768";
         case WOLFSSL_P384_ML_KEM_768:
             return "P384_ML_KEM_768";
     #endif
-    #ifdef WOLFSSL_WC_ML_KEM_1024
+    #ifndef WOLFSSL_NO_ML_KEM_1024
         case WOLFSSL_ML_KEM_1024:
             return "ML_KEM_1024";
         case WOLFSSL_P521_ML_KEM_1024:
@@ -14667,19 +14667,19 @@ const char* wolfSSL_get_curve_name(WOLFSSL* ssl)
         case WOLFSSL_P521_KYBER_LEVEL5:
             return "P521_KYBER_LEVEL5";
 #elif defined(WOLFSSL_WC_KYBER)
-    #ifdef WOLFSSL_KYBER512
+    #ifndef WOLFSSL_NO_KYBER512
         case WOLFSSL_KYBER_LEVEL1:
             return "KYBER_LEVEL1";
         case WOLFSSL_P256_KYBER_LEVEL1:
             return "P256_KYBER_LEVEL1";
     #endif
-    #ifdef WOLFSSL_KYBER768
+    #ifndef WOLFSSL_NO_KYBER768
         case WOLFSSL_KYBER_LEVEL3:
             return "KYBER_LEVEL3";
         case WOLFSSL_P384_KYBER_LEVEL3:
             return "P384_KYBER_LEVEL3";
     #endif
-    #ifdef WOLFSSL_KYBER1024
+    #ifndef WOLFSSL_NO_KYBER1024
         case WOLFSSL_KYBER_LEVEL5:
             return "KYBER_LEVEL5";
         case WOLFSSL_P521_KYBER_LEVEL5:

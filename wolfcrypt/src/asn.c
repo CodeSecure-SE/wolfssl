@@ -105,6 +105,8 @@ ASN Options:
  * WOLFSSL_ECC_SIGALG_PARAMS_NULL_ALLOWED: Allows the ECDSA/EdDSA signature
  *  algorithms in certificates to have NULL parameter instead of empty.
  *  DO NOT enable this unless required for interoperability.
+ * WOLFSSL_ASN_EXTRA: Make more ASN.1 APIs available regardless of internal
+ *  usage.
 */
 
 #include <wolfssl/wolfcrypt/error-crypt.h>
@@ -3176,7 +3178,7 @@ int GetMyVersion(const byte* input, word32* inOutIdx,
 }
 
 
-#ifndef NO_PWDBASED
+#if !defined(NO_PWDBASED) || defined(WOLFSSL_ASN_EXTRA)
 /* Decode small integer, 32 bits or less.
  *
  * @param [in]      input     Buffer of BER data.
@@ -3241,8 +3243,10 @@ int GetShortInt(const byte* input, word32* inOutIdx, int* number, word32 maxIdx)
     return ret;
 #endif
 }
+#endif /* !NO_PWDBASED || WOLFSSL_ASN_EXTRA */
 
 
+#ifndef NO_PWDBASED
 #if !defined(WOLFSSL_ASN_TEMPLATE) || defined(HAVE_PKCS8) || \
      defined(HAVE_PKCS12)
 /* Set small integer, 32 bits or less. DER encoding with no leading 0s
@@ -38853,7 +38857,34 @@ static int ParseCRL_Extensions(DecodedCRL* dcrl, const byte* buf, word32 idx,
                 }
             #endif
             }
-            /* TODO: Parse CRL Number extension */
+            else if (oid == CRL_NUMBER_OID) {
+            #ifdef WOLFSSL_SMALL_STACK
+                mp_int* m = (mp_int*)XMALLOC(sizeof(*m), NULL,
+                        DYNAMIC_TYPE_BIGINT);
+                if (m == NULL) {
+                    ret = MEMORY_E;
+                }
+            #else
+                mp_int m[1];
+            #endif
+
+                if (ret == 0) {
+                    if (mp_init(m) != MP_OKAY) {
+                        ret = MP_INIT_E;
+                    }
+                }
+                if (ret == 0) {
+                    ret = GetInt(m, buf, &idx, maxIdx);
+                }
+                if (ret == 0) {
+                    dcrl->crlNumber = (int)m->dp[0];
+                }
+
+                mp_free(m);
+            #ifdef WOLFSSL_SMALL_STACK
+                XFREE(m, NULL, DYNAMIC_TYPE_BIGINT);
+            #endif
+            }
             /* TODO: check criticality */
             /* Move index on to next extension. */
             idx += (word32)length;
