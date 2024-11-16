@@ -1386,6 +1386,9 @@ int wolfSSL_X509_add_ext(WOLFSSL_X509 *x509, WOLFSSL_X509_EXTENSION *ext,
             if (ext->value.length == sizeof(word16)) {
                 /* if ext->value is already word16, set directly */
                 x509->keyUsage = *(word16*)ext->value.data;
+#ifdef BIG_ENDIAN_ORDER
+                x509->keyUsage = rotlFixed16(x509->keyUsage, 8U);
+#endif
                 x509->keyUsageCrit = (byte)ext->crit;
                 x509->keyUsageSet = 1;
             }
@@ -1406,7 +1409,7 @@ int wolfSSL_X509_add_ext(WOLFSSL_X509 *x509, WOLFSSL_X509_EXTENSION *ext,
     case WC_NID_ext_key_usage:
         if (ext && ext->value.data) {
             if (ext->value.length == sizeof(byte)) {
-                /* if ext->value is already word16, set directly */
+                /* if ext->value is already 1 byte, set directly */
                 x509->extKeyUsage = *(byte*)ext->value.data;
                 x509->extKeyUsageCrit = (byte)ext->crit;
             }
@@ -15356,7 +15359,9 @@ void wolfSSL_X509_ATTRIBUTE_free(WOLFSSL_X509_ATTRIBUTE* attr)
  * */
 WOLFSSL_X509_ACERT * wolfSSL_X509_ACERT_new_ex(void* heap)
 {
-    WOLFSSL_X509_ACERT* x509;
+    WOLFSSL_X509_ACERT * x509 = NULL;
+
+    WOLFSSL_ENTER("wolfSSL_X509_ACERT_new");
 
     x509 = (WOLFSSL_X509_ACERT*) XMALLOC(sizeof(WOLFSSL_X509_ACERT), heap,
                                          DYNAMIC_TYPE_X509_ACERT);
@@ -15386,6 +15391,8 @@ WOLFSSL_X509_ACERT * wolfSSL_X509_ACERT_new(void)
  * */
 void wolfSSL_X509_ACERT_init(WOLFSSL_X509_ACERT * x509, int dynamic, void* heap)
 {
+    WOLFSSL_ENTER("wolfSSL_X509_ACERT_init");
+
     if (x509 == NULL) {
         WOLFSSL_MSG("error: InitX509Acert: null parameter");
         return;
@@ -15411,6 +15418,8 @@ void wolfSSL_X509_ACERT_free(WOLFSSL_X509_ACERT * x509)
     int    dynamic = 0;
     void * heap = NULL;
 
+    WOLFSSL_ENTER("wolfSSL_X509_ACERT_free");
+
     if (x509 == NULL) {
         WOLFSSL_MSG("error: wolfSSL_X509_ACERT_free: null parameter");
         return;
@@ -15423,6 +15432,11 @@ void wolfSSL_X509_ACERT_free(WOLFSSL_X509_ACERT * x509)
     if (x509->holderIssuerName) {
         FreeAltNames(x509->holderIssuerName, heap);
         x509->holderIssuerName = NULL;
+    }
+
+    if (x509->holderEntityName) {
+        FreeAltNames(x509->holderEntityName, heap);
+        x509->holderEntityName = NULL;
     }
 
     if (x509->AttCertIssuerName) {
