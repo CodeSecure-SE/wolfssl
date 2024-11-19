@@ -2687,6 +2687,9 @@ struct WOLFSSL_CERT_MANAGER {
 #ifdef WC_ASN_UNKNOWN_EXT_CB
     wc_UnknownExtCallback unknownExtCallback;
 #endif
+#ifdef HAVE_CRL_UPDATE_CB
+    CbUpdateCRL    cbUpdateCRL; /* notify thru cb that crl has updated */
+#endif
 };
 
 WOLFSSL_LOCAL int CM_SaveCertCache(WOLFSSL_CERT_MANAGER* cm,
@@ -3558,7 +3561,7 @@ typedef struct KeyShareEntry {
     word32                keyLen;    /* Key size (bytes)                  */
     byte*                 pubKey;    /* Public key                        */
     word32                pubKeyLen; /* Public key length                 */
-#if !defined(NO_DH) || defined(HAVE_FALCON) || defined(HAVE_DILITHIUM)
+#if !defined(NO_DH) || defined(WOLFSSL_HAVE_KYBER)
     byte*                 privKey;   /* Private key - DH and PQ KEMs only */
     word32                privKeyLen;/* Only for PQ KEMs. */
 #endif
