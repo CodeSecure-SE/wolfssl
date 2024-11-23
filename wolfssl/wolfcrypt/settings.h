@@ -1520,8 +1520,12 @@ extern void uITRON4_free(void *p) ;
 #ifdef FREERTOS_TCP
     #if !defined(NO_WOLFSSL_MEMORY) && !defined(XMALLOC_USER) && \
         !defined(WOLFSSL_STATIC_MEMORY)
-        #define XMALLOC(s, h, type)  pvPortMalloc((s)) /* native heap */
-        #define XFREE(p, h, type)    vPortFree((p)) /* native heap */
+        #ifndef XMALLOC
+            #define XMALLOC(s, h, type)  pvPortMalloc((s)) /* native heap */
+        #endif
+        #ifndef XFREE
+            #define XFREE(p, h, type)    vPortFree((p)) /* native heap */
+        #endif
     #endif
 
     #define WOLFSSL_GENSEED_FORTEST
@@ -3736,7 +3740,8 @@ extern void uITRON4_free(void *p) ;
     (defined(OPENSSL_ALL) || defined(WOLFSSL_WPAS_SMALL) || \
     defined(HAVE_STUNNEL) || defined(WOLFSSL_NGINX) || \
     defined(HAVE_LIGHTY) || defined(WOLFSSL_HAPROXY) || \
-    defined(WOLFSSL_OPENSSH) || defined(HAVE_SBLIM_SFCB))
+    defined(WOLFSSL_OPENSSH) || defined(HAVE_SBLIM_SFCB) || \
+    defined(WOLFSSL_WOLFSENTRY_HOOKS))
     #define HAVE_EX_DATA_CRYPTO
 #endif
 

@@ -7172,15 +7172,10 @@ static int test_wolfSSL_EVP_CIPHER_CTX(void)
 #if defined(HAVE_SSL_MEMIO_TESTS_DEPENDENCIES) || \
     defined(HAVE_IO_TESTS_DEPENDENCIES)
 #ifdef WOLFSSL_HAVE_TLS_UNIQUE
-    #ifdef WC_SHA512_DIGEST_SIZE
-        #define MD_MAX_SIZE WC_SHA512_DIGEST_SIZE
-    #else
-        #define MD_MAX_SIZE WC_SHA256_DIGEST_SIZE
-    #endif
-    byte server_side_msg1[MD_MAX_SIZE] = {0};/* msg sent by server */
-    byte server_side_msg2[MD_MAX_SIZE] = {0};/* msg received from client */
-    byte client_side_msg1[MD_MAX_SIZE] = {0};/* msg sent by client */
-    byte client_side_msg2[MD_MAX_SIZE] = {0};/* msg received from server */
+    byte server_side_msg1[WC_MAX_DIGEST_SIZE]; /* msg sent by server */
+    byte server_side_msg2[WC_MAX_DIGEST_SIZE]; /* msg received from client */
+    byte client_side_msg1[WC_MAX_DIGEST_SIZE]; /* msg sent by client */
+    byte client_side_msg2[WC_MAX_DIGEST_SIZE]; /* msg received from server */
 #endif /* WOLFSSL_HAVE_TLS_UNIQUE */
 
 /* TODO: Expand and enable this when EVP_chacha20_poly1305 is supported */
@@ -7733,14 +7728,14 @@ int test_wolfSSL_client_server_nofail_memio(test_ssl_cbf* client_cb,
             TEST_SUCCESS);
     }
 #ifdef WOLFSSL_HAVE_TLS_UNIQUE
-    XMEMSET(server_side_msg2, 0, MD_MAX_SIZE);
+    XMEMSET(server_side_msg2, 0, WC_MAX_DIGEST_SIZE);
     msg_len = wolfSSL_get_peer_finished(test_ctx.s_ssl, server_side_msg2,
-        MD_MAX_SIZE);
+        WC_MAX_DIGEST_SIZE);
     ExpectIntGE(msg_len, 0);
 
-    XMEMSET(server_side_msg1, 0, MD_MAX_SIZE);
+    XMEMSET(server_side_msg1, 0, WC_MAX_DIGEST_SIZE);
     msg_len = wolfSSL_get_finished(test_ctx.s_ssl, server_side_msg1,
-        MD_MAX_SIZE);
+        WC_MAX_DIGEST_SIZE);
     ExpectIntGE(msg_len, 0);
 #endif /* WOLFSSL_HAVE_TLS_UNIQUE */
 
@@ -8104,12 +8099,12 @@ static THREAD_RETURN WOLFSSL_THREAD test_server_nofail(void* args)
     }
 
 #ifdef WOLFSSL_HAVE_TLS_UNIQUE
-    XMEMSET(server_side_msg2, 0, MD_MAX_SIZE);
-    msg_len = wolfSSL_get_peer_finished(ssl, server_side_msg2, MD_MAX_SIZE);
+    XMEMSET(server_side_msg2, 0, WC_MAX_DIGEST_SIZE);
+    msg_len = wolfSSL_get_peer_finished(ssl, server_side_msg2, WC_MAX_DIGEST_SIZE);
     AssertIntGE(msg_len, 0);
 
-    XMEMSET(server_side_msg1, 0, MD_MAX_SIZE);
-    msg_len = wolfSSL_get_finished(ssl, server_side_msg1, MD_MAX_SIZE);
+    XMEMSET(server_side_msg1, 0, WC_MAX_DIGEST_SIZE);
+    msg_len = wolfSSL_get_finished(ssl, server_side_msg1, WC_MAX_DIGEST_SIZE);
     AssertIntGE(msg_len, 0);
 #endif /* WOLFSSL_HAVE_TLS_UNIQUE */
 
@@ -9728,12 +9723,12 @@ static int test_wolfSSL_get_finished_client_on_handshake(WOLFSSL_CTX* ctx,
 
     /* get_finished test */
     /* 1. get own sent message */
-    XMEMSET(client_side_msg1, 0, MD_MAX_SIZE);
-    msg_len = wolfSSL_get_finished(ssl, client_side_msg1, MD_MAX_SIZE);
+    XMEMSET(client_side_msg1, 0, WC_MAX_DIGEST_SIZE);
+    msg_len = wolfSSL_get_finished(ssl, client_side_msg1, WC_MAX_DIGEST_SIZE);
     ExpectIntGE(msg_len, 0);
     /* 2. get peer message */
-    XMEMSET(client_side_msg2, 0, MD_MAX_SIZE);
-    msg_len = wolfSSL_get_peer_finished(ssl, client_side_msg2, MD_MAX_SIZE);
+    XMEMSET(client_side_msg2, 0, WC_MAX_DIGEST_SIZE);
+    msg_len = wolfSSL_get_peer_finished(ssl, client_side_msg2, WC_MAX_DIGEST_SIZE);
     ExpectIntGE(msg_len, 0);
 
     return EXPECT_RESULT();
@@ -9756,8 +9751,8 @@ static int test_wolfSSL_get_finished(void)
         TEST_SUCCESS);
 
     /* test received msg vs sent msg */
-    ExpectIntEQ(0, XMEMCMP(client_side_msg1, server_side_msg2, MD_MAX_SIZE));
-    ExpectIntEQ(0, XMEMCMP(client_side_msg2, server_side_msg1, MD_MAX_SIZE));
+    ExpectIntEQ(0, XMEMCMP(client_side_msg1, server_side_msg2, WC_MAX_DIGEST_SIZE));
+    ExpectIntEQ(0, XMEMCMP(client_side_msg2, server_side_msg1, WC_MAX_DIGEST_SIZE));
 #endif /* HAVE_SSL_MEMIO_TESTS_DEPENDENCIES && WOLFSSL_HAVE_TLS_UNIQUE */
 
     return EXPECT_RESULT();
@@ -34962,7 +34957,7 @@ static int test_wc_dilithium_der(void)
     int pubDerLen;
     int privDerLen;
     int keyDerLen;
-    word32 idx;
+    word32 idx = 0;
 
 #ifndef WOLFSSL_NO_ML_DSA_44
     pubLen = DILITHIUM_LEVEL2_PUB_KEY_SIZE;
@@ -34989,6 +34984,9 @@ static int test_wc_dilithium_der(void)
     if (key != NULL) {
         XMEMSET(key, 0, sizeof(*key));
     }
+    if (der != NULL) {
+        XMEMSET(der, 0, sizeof(*der));
+    }
     XMEMSET(&rng, 0, sizeof(WC_RNG));
     ExpectIntEQ(wc_InitRng(&rng), 0);
     ExpectIntEQ(wc_dilithium_init(key), 0);
@@ -35002,21 +35000,21 @@ static int test_wc_dilithium_der(void)
     /* When security level is not set, we attempt to parse it from DER. Since
      * the supplied DER is invalid, this should fail with ASN parsing error */
     idx = 0;
+#ifdef WOLFSSL_DILITHIUM_FIPS204_DRAFT
     ExpectIntEQ(wc_Dilithium_PublicKeyDecode(der, &idx, key, pubDerLen),
-#ifdef WOLFSSL_DILITHIUM_FIPS204_DRAFT
-        WC_NO_ERR_TRACE(BAD_FUNC_ARG)
+                WC_NO_ERR_TRACE(BAD_FUNC_ARG));
 #else
-        WC_NO_ERR_TRACE(ASN_PARSE_E)
+    ExpectIntEQ(wc_Dilithium_PublicKeyDecode(der, &idx, key, pubDerLen),
+                WC_NO_ERR_TRACE(ASN_PARSE_E));
 #endif
-    );
     idx = 0;
-    ExpectIntEQ(wc_Dilithium_PrivateKeyDecode(der, &idx, key, privDerLen),
 #ifdef WOLFSSL_DILITHIUM_FIPS204_DRAFT
-        WC_NO_ERR_TRACE(BAD_FUNC_ARG)
+    ExpectIntEQ(wc_Dilithium_PrivateKeyDecode(der, &idx, key, privDerLen),
+                WC_NO_ERR_TRACE(BAD_FUNC_ARG));
 #else
-        WC_NO_ERR_TRACE(ASN_PARSE_E)
+    ExpectIntEQ(wc_Dilithium_PrivateKeyDecode(der, &idx, key, privDerLen),
+                WC_NO_ERR_TRACE(ASN_PARSE_E));
 #endif
-    );
 
 #ifndef WOLFSSL_NO_ML_DSA_44
     ExpectIntEQ(wc_dilithium_set_level(key, WC_ML_DSA_44), 0);
