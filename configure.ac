@@ -1514,6 +1514,7 @@ then
 fi
 
 # XMSS
+ENABLED_WC_XMSS=no
 AC_ARG_ENABLE([xmss],
     [AS_HELP_STRING([--enable-xmss],[Enable stateful XMSS/XMSS^MT signatures (default: disabled)])],
     [ ENABLED_XMSS=$enableval ],
@@ -1605,6 +1606,7 @@ then
 fi
 
 # LMS
+ENABLED_WC_LMS=no
 AC_ARG_ENABLE([lms],
     [AS_HELP_STRING([--enable-lms],[Enable stateful LMS/HSS signatures (default: disabled)])],
     [ ENABLED_LMS=$enableval ],
@@ -2972,7 +2974,6 @@ then
 fi
 
 
-ENABLED_ARMASM_CRYPTO="unknown"
 ENABLED_ARMASM_INLINE="no"
 ENABLED_ARMASM_SHA3="no"
 ENABLED_ARMASM_CRYPTO_SM4="no"
@@ -2993,9 +2994,6 @@ then
             ;;
         inline)
             ENABLED_ARMASM_INLINE=yes
-            ;;
-        no-crypto)
-            ENABLED_ARMASM_CRYPTO=no
             ;;
         sha512-crypto | sha3-crypto)
             case $host_cpu in
@@ -3072,9 +3070,7 @@ then
             esac
             # Include options.h
             AM_CCASFLAGS="$AM_CCASFLAGS -DEXTERNAL_OPTS_OPENVPN"
-            if test "$ENABLED_ARMASM_CRYPTO" = "unknown"; then
-                ENABLED_ARMASM_CRYPTO=yes
-            fi
+            ENABLED_ARMASM_CRYPTO=yes
             ENABLED_ARMASM_NEON=yes
             ENABLED_ARM_64=yes
 
@@ -3174,9 +3170,6 @@ if test "$ENABLED_ARMASM_SM3" = "yes"; then
 fi
 if test "$ENABLED_ARMASM_SM4" = "yes"; then
     AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_ARMASM_CRYPTO_SM4"
-fi
-if test "$ENABLED_ARMASM_CRYPTO" = "unknown"; then
-    ENABLED_ARMASM_CRYPTO=no
 fi
 if test "$ENABLED_ARMASM_CRYPTO" = "no"; then
     AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_ARMASM_NO_HW_CRYPTO"
@@ -4555,7 +4548,7 @@ fi
 
 if test "$ENABLED_STACKSIZE" = "verbose"
 then
-    if test "$thread_ls_on" != "yes"
+    if test "$thread_ls_on" != "yes" && test "x$ENABLED_SINGLETHREADED" = "xno"
     then
         AC_MSG_ERROR(stacksize-verbose needs thread-local storage.)
     fi
@@ -6857,6 +6850,7 @@ then
     AM_CFLAGS="$AM_CFLAGS -DHAVE_EX_DATA"
     AM_CFLAGS="$AM_CFLAGS -DKEEP_PEER_CERT"
     AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_ALWAYS_VERIFY_CB"
+    AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_ALWAYS_KEEP_SNI"
 
     # Enable prereqs if not already enabled
     if test "x$ENABLED_DTLS" = "xno"
