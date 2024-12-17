@@ -2974,8 +2974,9 @@ then
 fi
 
 
+ENABLED_ARMASM_CRYPTO="unknown"
 ENABLED_ARMASM_INLINE="no"
-ENABLED_ARMASM_SHA3="no"
+ENABLED_ARMASM_SHA3="unknown"
 ENABLED_ARMASM_CRYPTO_SM4="no"
 # ARM Assembly
 # Both SHA3 and SHA512 instructions available with ARMV8.2-a
@@ -2995,6 +2996,9 @@ then
         inline)
             ENABLED_ARMASM_INLINE=yes
             ;;
+        no-crypto)
+            ENABLED_ARMASM_CRYPTO=no
+            ;;
         sha512-crypto | sha3-crypto)
             case $host_cpu in
             *aarch64*)
@@ -3005,6 +3009,16 @@ then
             esac
             ENABLED_ARMASM_SHA3=yes
             ENABLED_ARMASM_PLUS=yes
+            ;;
+        no-sha512-crypto | no-sha3-crypto)
+            case $host_cpu in
+            *aarch64*)
+                ;;
+            *)
+                AC_MSG_ERROR([SHA512/SHA3 instructions only available on Aarch64 CPU.])
+                break;;
+            esac
+            ENABLED_ARMASM_SHA3=no
             ;;
         sm4)
             case $host_cpu in
@@ -3050,8 +3064,10 @@ then
         *aarch64*)
             case $host_os in
             *darwin*)
-                # All known Aarch64 Mac computers support SHA-512 instructions
-                ENABLED_ARMASM_SHA3=yes
+                # Turn it on unless explicitly turned off.
+                if test "$ENABLED_ARMASM_SHA3" = "unknown"; then
+                    ENABLED_ARMASM_SHA3="yes"
+                fi
                 ;;
             *)
                 # +crypto needed for hardware acceleration
@@ -3070,7 +3086,9 @@ then
             esac
             # Include options.h
             AM_CCASFLAGS="$AM_CCASFLAGS -DEXTERNAL_OPTS_OPENVPN"
-            ENABLED_ARMASM_CRYPTO=yes
+            if test "$ENABLED_ARMASM_CRYPTO" = "unknown"; then
+                ENABLED_ARMASM_CRYPTO=yes
+            fi
             ENABLED_ARMASM_NEON=yes
             ENABLED_ARM_64=yes
 
@@ -3165,11 +3183,17 @@ if test "$ENABLED_ARMASM_SHA3" = "yes"; then
     AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_ARMASM_CRYPTO_SHA512 -DWOLFSSL_ARMASM_CRYPTO_SHA3"
     AM_CCASFLAGS="$AM_CCASFLAGS -DWOLFSSL_ARMASM_CRYPTO_SHA512 -DWOLFSSL_ARMASM_CRYPTO_SHA3"
 fi
+if test "$ENABLED_ARMASM_SHA3" = "unknown"; then
+    ENABLED_ARMASM_SHA3="no"
+fi
 if test "$ENABLED_ARMASM_SM3" = "yes"; then
     AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_ARMASM_CRYPTO_SM3"
 fi
 if test "$ENABLED_ARMASM_SM4" = "yes"; then
     AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_ARMASM_CRYPTO_SM4"
+fi
+if test "$ENABLED_ARMASM_CRYPTO" = "unknown"; then
+    ENABLED_ARMASM_CRYPTO=no
 fi
 if test "$ENABLED_ARMASM_CRYPTO" = "no"; then
     AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_ARMASM_NO_HW_CRYPTO"
@@ -5020,10 +5044,6 @@ AC_ARG_ENABLE([dtlscid],
     )
 if test "x$ENABLED_DTLS_CID" = "xyes"
 then
-        if test "x$ENABLED_DTLS13" != "xyes"
-        then
-                AC_MSG_ERROR([You need to enable DTLSv1.3 to use DTLS ConnectionID])
-        fi
   AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_DTLS_CID"
 fi
 
