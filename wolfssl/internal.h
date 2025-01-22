@@ -1,6 +1,6 @@
 /* internal.h
  *
- * Copyright (C) 2006-2024 wolfSSL Inc.
+ * Copyright (C) 2006-2025 wolfSSL Inc.
  *
  * This file is part of wolfSSL.
  *
@@ -5782,7 +5782,7 @@ struct WOLFSSL {
     WOLFSSL_CTX*    initial_ctx; /* preserve session key materials */
 #endif
     Suites*         suites; /* Only need during handshake. Can be NULL when
-                             * re-using the context's object. When WOLFSSL
+                             * reusing the context's object. When WOLFSSL
                              * object needs separate instance of suites use
                              * AllocateSuites(). */
 #ifdef OPENSSL_EXTRA

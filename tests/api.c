@@ -1,6 +1,6 @@
 /* api.c API unit tests
  *
- * Copyright (C) 2006-2024 wolfSSL Inc.
+ * Copyright (C) 2006-2025 wolfSSL Inc.
  *
  * This file is part of wolfSSL.
  *
@@ -8795,7 +8795,7 @@ static void test_client_reuse_WOLFSSLobj(void* args, cbType cb,
     if (ssl == NULL) {
         goto done;
     }
-    /* keep handshake resources for re-using WOLFSSL obj */
+    /* keep handshake resources for reusing WOLFSSL obj */
     wolfSSL_KeepArrays(ssl);
     if (wolfSSL_KeepHandshakeResources(ssl)) {
         /* err_sys("SSL_KeepHandshakeResources failed"); */
@@ -8859,7 +8859,7 @@ static void test_client_reuse_WOLFSSLobj(void* args, cbType cb,
         fprintf(stderr, "Server response: %s\n", reply);
     }
 
-    /* Session Resumption by re-using WOLFSSL object */
+    /* Session Resumption by reusing WOLFSSL object */
     wolfSSL_set_quiet_shutdown(ssl, 1);
     if (wolfSSL_shutdown(ssl) != WOLFSSL_SUCCESS) {
         /* err_sys ("SSL shutdown failed"); */
@@ -9499,7 +9499,7 @@ static int test_wolfSSL_reuse_WOLFSSLobj(void)
     EXPECT_DECLS;
 #if defined(OPENSSL_EXTRA) && !defined(NO_SESSION_CACHE) && \
     !defined(WOLFSSL_NO_TLS12)
-    /* The unit test for session resumption by re-using WOLFSSL object.
+    /* The unit test for session resumption by reusing WOLFSSL object.
      * WOLFSSL object is not cleared after first session. It reuse the object
      * for second connection.
     */
@@ -26492,6 +26492,9 @@ static int test_wc_ecc_rs_to_sig(void)
     byte        s[KEY24];
     word32      rlen = (word32)sizeof(r);
     word32      slen = (word32)sizeof(s);
+#if !defined(HAVE_SELFTEST) && !defined(HAVE_FIPS)
+    word32      zeroLen = 0;
+#endif
 
     /* Init stack variables. */
     XMEMSET(sig, 0, ECC_MAX_SIG_SIZE);
@@ -26517,6 +26520,12 @@ static int test_wc_ecc_rs_to_sig(void)
         WC_NO_ERR_TRACE(ECC_BAD_ARG_E));
     ExpectIntEQ(wc_ecc_sig_to_rs(sig, siglen, r, &rlen, s, NULL),
         WC_NO_ERR_TRACE(ECC_BAD_ARG_E));
+#if !defined(HAVE_SELFTEST) && !defined(HAVE_FIPS)
+    ExpectIntEQ(wc_ecc_sig_to_rs(sig, siglen, r, &zeroLen, s, &slen),
+        WC_NO_ERR_TRACE(BUFFER_E));
+    ExpectIntEQ(wc_ecc_sig_to_rs(sig, siglen, r, &rlen, s, &zeroLen),
+        WC_NO_ERR_TRACE(BUFFER_E));
+#endif
 #endif
     return EXPECT_RESULT();
 } /* END test_wc_ecc_rs_to_sig */
@@ -55858,7 +55867,7 @@ static int test_wolfSSL_X509_NAME_print_ex(void)
         membio = NULL;
 
         /* Test with XN_FLAG_ONELINE which should enable XN_FLAG_SPC_EQ for
-           spaces aroun '=' */
+           spaces around '=' */
         ExpectNotNull(membio = BIO_new(BIO_s_mem()));
         ExpectIntEQ(X509_NAME_print_ex(membio, name, 0, XN_FLAG_ONELINE),
             WOLFSSL_SUCCESS);
@@ -68094,7 +68103,7 @@ static int test_openssl_hmac(const WOLFSSL_EVP_MD* md, int md_len)
     ExpectIntEQ(HMAC_Init_ex(NULL, (void*)key, (int)sizeof(key), md, e), 0);
     ExpectIntEQ(HMAC_Init_ex(hmac, (void*)key, (int)sizeof(key), md, e), 1);
 
-    /* re-using test key as data to hash */
+    /* reusing test key as data to hash */
     ExpectIntEQ(HMAC_Update(NULL, key, (int)sizeof(key)), 0);
     ExpectIntEQ(HMAC_Update(hmac, key, (int)sizeof(key)), 1);
     ExpectIntEQ(HMAC_Update(hmac, key, 0), 1);
@@ -68201,7 +68210,7 @@ static int test_wolfSSL_CMAC(void)
     ExpectNotNull(CMAC_CTX_get0_cipher_ctx(cmacCtx));
     ExpectIntEQ(CMAC_Init(cmacCtx, key, AES_128_KEY_SIZE, EVP_aes_128_cbc(),
         NULL), 1);
-    /* re-using test key as data to hash */
+    /* reusing test key as data to hash */
     ExpectIntEQ(CMAC_Update(cmacCtx, key, AES_128_KEY_SIZE), 1);
     ExpectIntEQ(CMAC_Update(cmacCtx, NULL, 0), 1);
     ExpectIntEQ(CMAC_Final(cmacCtx, out, &outLen), 1);
@@ -76143,14 +76152,10 @@ static int test_wolfSSL_OBJ_sn(void)
                            NID_stateOrProvinceName,NID_organizationName,
                            NID_organizationalUnitName,NID_emailAddress};
     const char* sn_open_set[] = {"CN","C","L","ST","O","OU","emailAddress"};
-    const char* sn_wolf_set[] = {WOLFSSL_COMMON_NAME,WOLFSSL_COUNTRY_NAME,
-                                WOLFSSL_LOCALITY_NAME, WOLFSSL_STATE_NAME,
-                                WOLFSSL_ORG_NAME, WOLFSSL_ORGUNIT_NAME,
-                                WOLFSSL_EMAIL_ADDR};
 
     ExpectIntEQ(wolfSSL_OBJ_sn2nid(NULL), NID_undef);
     for (i = 0; i < maxIdx; i++) {
-        ExpectIntEQ(wolfSSL_OBJ_sn2nid(sn_wolf_set[i]), nid_set[i]);
+        ExpectIntEQ(wolfSSL_OBJ_sn2nid(sn_open_set[i]), nid_set[i]);
         ExpectStrEQ(wolfSSL_OBJ_nid2sn(nid_set[i]), sn_open_set[i]);
     }
 
