@@ -156,7 +156,7 @@
     #elif defined(__NT__)
         #define _WINSOCKAPI_ /* block inclusion of winsock.h header file */
         #include <windows.h>
-        #undef _WINSOCKAPI_
+        #undef _WINSOCKAPI_ /* undefine it for MINGW winsock2.h header file */
     #elif defined(__LINUX__)
         #ifndef SINGLE_THREADED
             #define WOLFSSL_PTHREADS
@@ -169,7 +169,7 @@
     #else
         #define _WINSOCKAPI_ /* block inclusion of winsock.h header file */
         #include <windows.h>
-        #undef _WINSOCKAPI_
+        #undef _WINSOCKAPI_ /* undefine it for MINGW winsock2.h header file */
     #endif
 #elif defined(THREADX)
     #ifndef SINGLE_THREADED
@@ -2637,6 +2637,9 @@ struct WOLFSSL_CRL {
     THREAD_TYPE           tid;           /* monitoring thread */
     wolfSSL_CRL_mfd_t     mfd;
     int                   setup;         /* thread is setup predicate */
+#endif
+#ifdef OPENSSL_ALL
+    wolfSSL_Ref           ref;
 #endif
     void*                 heap;          /* heap hint for dynamic memory */
 };
