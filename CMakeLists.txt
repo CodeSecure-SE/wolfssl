@@ -655,6 +655,16 @@ else()
     endif()
 endif()
 
+# LMS
+add_option(WOLFSSL_LMS
+    "Enable the wolfSSL LMS implementation (default: disabled)"
+    "no" "yes;no")
+
+# XMSS
+add_option(WOLFSSL_XMSS
+    "Enable the wolfSSL XMSS implementation (default: disabled)"
+    "no" "yes;no")
+
 # TODO: - Lean PSK
 #       - Lean TLS
 #       - Low resource
@@ -668,8 +678,6 @@ endif()
 #       - Atomic user record layer
 #       - Public key callbacks
 #       - Microchip/Atmel CryptoAuthLib
-#       - XMSS
-#       - LMS
 #       - dual-certs
 
 # AES-CBC
@@ -2419,12 +2427,15 @@ target_include_directories(wolfssl
 
 target_link_libraries(wolfssl PUBLIC ${WOLFSSL_LINK_LIBS})
 
-if (WIN32 OR ${CMAKE_SYSTEM_NAME} MATCHES "^MSYS" OR ${CMAKE_SYSTEM_NAME} MATCHES "^MINGW")
+if(CMAKE_C_COMPILER_ID STREQUAL "OpenWatcom")
+    if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
+        target_link_libraries(wolfssl PUBLIC ws2_32 crypt32)
+    endif()
+elseif (WIN32 OR ${CMAKE_SYSTEM_NAME} MATCHES "^MSYS" OR ${CMAKE_SYSTEM_NAME} MATCHES "^MINGW")
     # For Windows link required libraries
     message("Building on Windows/MSYS/MINGW")
     target_link_libraries(wolfssl PUBLIC
         ws2_32 crypt32 advapi32)
-elseif(CMAKE_C_COMPILER_ID STREQUAL "OpenWatcom")
 elseif(APPLE)
     message("Building on Apple")
     if(WOLFSSL_SYS_CA_CERTS)
