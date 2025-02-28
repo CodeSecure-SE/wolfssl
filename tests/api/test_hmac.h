@@ -1,4 +1,4 @@
-/* test_ocsp.h
+/* test_hmac.h
  *
  * Copyright (C) 2006-2025 wolfSSL Inc.
  *
@@ -19,12 +19,23 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1335, USA
  */
 
-#ifndef WOLFSSL_TEST_OCSP_H
-#define WOLFSSL_TEST_OCSP_H
+#ifndef WOLFCRYPT_TEST_HMAC_H
+#define WOLFCRYPT_TEST_HMAC_H
 
-int test_ocsp_certid_enc_dec(void);
-int test_ocsp_status_callback(void);
-int test_ocsp_basic_verify(void);
-int test_ocsp_response_parsing(void);
-#endif /* WOLFSSL_TEST_OCSP_H */
+int test_wc_Md5HmacSetKey(void);
+int test_wc_Md5HmacUpdate(void);
+int test_wc_Md5HmacFinal(void);
+int test_wc_ShaHmacSetKey(void);
+int test_wc_ShaHmacUpdate(void);
+int test_wc_ShaHmacFinal(void);
+int test_wc_Sha224HmacSetKey(void);
+int test_wc_Sha224HmacUpdate(void);
+int test_wc_Sha224HmacFinal(void);
+int test_wc_Sha256HmacSetKey(void);
+int test_wc_Sha256HmacUpdate(void);
+int test_wc_Sha256HmacFinal(void);
+int test_wc_Sha384HmacSetKey(void);
+int test_wc_Sha384HmacUpdate(void);
+int test_wc_Sha384HmacFinal(void);
 
+#endif /* WOLFCRYPT_TEST_HMAC_H */

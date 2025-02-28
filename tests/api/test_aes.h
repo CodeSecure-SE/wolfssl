@@ -1,4 +1,4 @@
-/* test_ocsp.h
+/* test_aes.h
  *
  * Copyright (C) 2006-2025 wolfSSL Inc.
  *
@@ -19,12 +19,26 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1335, USA
  */
 
-#ifndef WOLFSSL_TEST_OCSP_H
-#define WOLFSSL_TEST_OCSP_H
+#ifndef WOLFCRYPT_TEST_AES_H
+#define WOLFCRYPT_TEST_AES_H
 
-int test_ocsp_certid_enc_dec(void);
-int test_ocsp_status_callback(void);
-int test_ocsp_basic_verify(void);
-int test_ocsp_response_parsing(void);
-#endif /* WOLFSSL_TEST_OCSP_H */
+int test_wc_AesSetKey(void);
+int test_wc_AesSetIV(void);
+int test_wc_AesCbcEncryptDecrypt(void);
+int test_wc_AesCtrEncryptDecrypt(void);
+int test_wc_AesGcmSetKey(void);
+int test_wc_AesGcmEncryptDecrypt(void);
+int test_wc_AesGcmMixedEncDecLongIV(void);
+int test_wc_AesGcmStream(void);
+int test_wc_GmacSetKey(void);
+int test_wc_GmacUpdate(void);
+int test_wc_AesCcmSetKey(void);
+int test_wc_AesCcmEncryptDecrypt(void);
+#if defined(WOLFSSL_AES_EAX) && \
+    (!defined(HAVE_FIPS) || FIPS_VERSION_GE(5, 3)) && !defined(HAVE_SELFTEST)
+int test_wc_AesEaxVectors(void);
+int test_wc_AesEaxEncryptAuth(void);
+int test_wc_AesEaxDecryptAuth(void);
+#endif /* WOLFSSL_AES_EAX */
 
+#endif /* WOLFCRYPT_TEST_AES_H */

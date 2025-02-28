@@ -1,4 +1,4 @@
-/* test_ocsp.h
+/* test_cmac.h
  *
  * Copyright (C) 2006-2025 wolfSSL Inc.
  *
@@ -19,12 +19,12 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1335, USA
  */
 
-#ifndef WOLFSSL_TEST_OCSP_H
-#define WOLFSSL_TEST_OCSP_H
+#ifndef WOLFCRYPT_TEST_CMAC_H
+#define WOLFCRYPT_TEST_CMAC_H
 
-int test_ocsp_certid_enc_dec(void);
-int test_ocsp_status_callback(void);
-int test_ocsp_basic_verify(void);
-int test_ocsp_response_parsing(void);
-#endif /* WOLFSSL_TEST_OCSP_H */
+int test_wc_InitCmac(void);
+int test_wc_CmacUpdate(void);
+int test_wc_CmacFinal(void);
+int test_wc_AesCmacGenerate(void);
 
+#endif /* WOLFCRYPT_TEST_CMAC_H */
