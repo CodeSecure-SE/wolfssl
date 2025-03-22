@@ -29768,14 +29768,16 @@ static int msgSrvCb(SSL_CTX *ctx, SSL *ssl)
 #endif
 
 #if defined(OPENSSL_ALL) && defined(SESSION_CERTS) && !defined(NO_BIO)
-    WOLFSSL_X509* peer = NULL;
+    {
+        WOLFSSL_X509* peer = NULL;
 
-    ExpectNotNull(peer= wolfSSL_get_peer_certificate(ssl));
-    ExpectNotNull(bio = BIO_new_fp(stderr, BIO_NOCLOSE));
+        ExpectNotNull(peer= wolfSSL_get_peer_certificate(ssl));
+        ExpectNotNull(bio = BIO_new_fp(stderr, BIO_NOCLOSE));
 
-    fprintf(stderr, "Peer Certificate = :\n");
-    X509_print(bio,peer);
-    X509_free(peer);
+        fprintf(stderr, "Peer Certificate = :\n");
+        X509_print(bio,peer);
+        X509_free(peer);
+    }
 
     ExpectNotNull(sk = SSL_get_peer_cert_chain(ssl));
     if (sk == NULL) {
@@ -66877,6 +66879,7 @@ TEST_CASE testCases[] = {
     TEST_DECL(test_wolfSSL_EVP_EncodeInit),
     TEST_DECL(test_wolfSSL_EVP_EncodeUpdate),
     TEST_DECL(test_wolfSSL_EVP_CipherUpdate_Null),
+    TEST_DECL(test_wolfSSL_EVP_CIPHER_type_string),
     TEST_DECL(test_wolfSSL_EVP_EncodeFinal),
     TEST_DECL(test_wolfSSL_EVP_DecodeInit),
     TEST_DECL(test_wolfSSL_EVP_DecodeUpdate),

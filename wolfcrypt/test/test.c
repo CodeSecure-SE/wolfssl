@@ -19565,7 +19565,7 @@ static wc_test_ret_t rsa_export_key_test(RsaKey* key)
 }
 #endif /* !HAVE_FIPS && !NO_ASN && !WOLFSSL_RSA_VERIFY_ONLY */
 
-#ifndef NO_SIG_WRAPPER
+#if !defined(NO_SIG_WRAPPER) && !defined(NO_SHA256)
 static wc_test_ret_t rsa_sig_test(RsaKey* key, word32 keyLen, int modLen, WC_RNG* rng)
 {
     wc_test_ret_t ret;
@@ -19753,7 +19753,7 @@ static wc_test_ret_t rsa_sig_test(RsaKey* key, word32 keyLen, int modLen, WC_RNG
 
     return 0;
 }
-#endif /* !NO_SIG_WRAPPER */
+#endif /* !NO_SIG_WRAPPER && !NO_SHA256 */
 
 #ifdef WC_RSA_NONBLOCK
 static wc_test_ret_t rsa_nb_test(RsaKey* key, const byte* in, word32 inLen, byte* out,
@@ -22110,10 +22110,14 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t rsa_test(void)
 #endif
 
 #ifndef NO_SIG_WRAPPER
+#ifndef NO_SHA256
     ret = rsa_sig_test(key, sizeof *key, modLen, &rng);
     if (ret != 0)
         goto exit_rsa;
-#endif
+#else /* NO_SHA256 */
+    (void)modLen;
+#endif /* NO_SHA256 */
+#endif /* !NO_SIG_WRAPPER */
 
 #ifdef WC_RSA_NONBLOCK
     ret = rsa_nb_test(key, in, inLen, out, outSz, plain, plainSz, &rng);
@@ -27063,7 +27067,7 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t scrypt_test(void)
 }
 #endif
 
-#ifdef HAVE_PKCS12
+#if defined(HAVE_PKCS12) && !defined(NO_SHA256)
 WOLFSSL_TEST_SUBROUTINE wc_test_ret_t pkcs12_pbkdf_test(void)
 {
     WOLFSSL_SMALL_STACK_STATIC const byte passwd[] = { 0x00, 0x73, 0x00, 0x6d, 0x00, 0x65, 0x00, 0x67,
@@ -27117,7 +27121,7 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t pkcs12_pbkdf_test(void)
 
     return 0;
 }
-#endif /* HAVE_PKCS12 */
+#endif /* HAVE_PKCS12 && !NO_SHA256 */
 
 #if defined(HAVE_PBKDF2) && !defined(NO_SHA256) && !defined(NO_HMAC)
 WOLFSSL_TEST_SUBROUTINE wc_test_ret_t pbkdf2_test(void)
@@ -27196,7 +27200,7 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t pwdbased_test(void)
     if (ret != 0)
         return ret;
 #endif
-#ifdef HAVE_PKCS12
+#if defined(HAVE_PKCS12) && !defined(NO_SHA256)
     ret = pkcs12_pbkdf_test();
     if (ret != 0)
         return ret;
@@ -55282,8 +55286,12 @@ static wc_test_ret_t mp_test_radix_16(mp_int* a, mp_int* r, WC_RNG* rng)
             ret = randNum(a, j, rng, NULL);
             if (ret != 0)
                     return WC_TEST_RET_ENC_EC(ret);
-            mp_radix_size(a, MP_RADIX_HEX, &size);
-            mp_toradix(a, str, MP_RADIX_HEX);
+            ret = mp_radix_size(a, MP_RADIX_HEX, &size);
+            if (ret != 0)
+                return WC_TEST_RET_ENC_EC(ret);
+            ret = mp_toradix(a, str, MP_RADIX_HEX);
+            if (ret != 0)
+                return WC_TEST_RET_ENC_EC(ret);
             if ((int)XSTRLEN(str) != size - 1)
                 return WC_TEST_RET_ENC_NC;
             mp_read_radix(r, str, MP_RADIX_HEX);
@@ -55360,7 +55368,9 @@ static wc_test_ret_t mp_test_shift(mp_int* a, mp_int* r1, WC_RNG* rng)
     if (ret != 0)
         return WC_TEST_RET_ENC_EC(ret);
     for (i = 0; i < 4; i++) {
-        mp_copy(r1, a);
+        ret = mp_copy(r1, a);
+        if (ret != MP_OKAY)
+            return WC_TEST_RET_ENC_EC(ret);
 #if !defined(NO_DH) || defined(HAVE_ECC) || (!defined(NO_RSA) && \
     defined(WC_RSA_BLINDING) && !defined(WOLFSSL_RSA_VERIFY_ONLY))
         ret = mp_lshd(r1, i);
@@ -56785,7 +56795,9 @@ static wc_test_ret_t mp_test_shbd(mp_int* a, mp_int* b, WC_RNG* rng)
             ret = randNum(a, j, rng, NULL);
             if (ret != MP_OKAY)
                 return WC_TEST_RET_ENC_EC(ret);
-            mp_copy(a, b);
+            ret = mp_copy(a, b);
+            if (ret != MP_OKAY)
+                return WC_TEST_RET_ENC_EC(ret);
             for (k = 0; k <= DIGIT_BIT * 2; k++) {
                 ret = mp_mul_2d(a, k, a);
                 if (ret != MP_OKAY)
@@ -56804,7 +56816,9 @@ static wc_test_ret_t mp_test_shbd(mp_int* a, mp_int* b, WC_RNG* rng)
             ret = randNum(a, j, rng, NULL);
             if (ret != MP_OKAY)
                 return WC_TEST_RET_ENC_EC(ret);
-            mp_copy(a, b);
+            ret = mp_copy(a, b);
+            if (ret != MP_OKAY)
+                return WC_TEST_RET_ENC_EC(ret);
             for (k = 0; k < 10; k++) {
                 ret = mp_lshd(a, k);
                 if (ret != MP_OKAY)
@@ -57598,7 +57612,9 @@ static wc_test_ret_t mp_test_exptmod(mp_int* b, mp_int* e, mp_int* m, mp_int* r)
     mp_mul_2d(b, DIGIT_BIT, b);
     mp_add_d(b, 1, b);
     mp_set(e, 0x3);
-    mp_copy(b, m);
+    ret = mp_copy(b, m);
+    if (ret != MP_OKAY)
+        return WC_TEST_RET_ENC_EC(ret);
     ret = mp_exptmod_ex(b, e, 1, m, r);
     if (ret != MP_OKAY)
         return WC_TEST_RET_ENC_EC(ret);
