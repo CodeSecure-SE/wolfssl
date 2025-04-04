@@ -178,6 +178,11 @@ DEBUG_CFLAGS="-g -DDEBUG -DDEBUG_WOLFSSL"
 LIB_ADD=
 LIB_STATIC_ADD=
 
+OPTIMIZE_CFLAGS="$OPTIMIZE_CFLAGS $EXTRA_OPTS_CFLAGS"
+OPTIMIZE_FAST_CFLAGS="$OPTIMIZE_FAST_CFLAGS $EXTRA_OPTS_CFLAGS"
+OPTIMIZE_HUGE_CFLAGS="$OPTIMIZE_HUGE_CFLAGS $EXTRA_OPTS_CFLAGS"
+DEBUG_VFLAGS="$DEBUG_VFLAGS $EXTRA_OPTS_CFLAGS"
+
 if test "$output_objdir" = ""
 then
     output_objdir=.
@@ -500,6 +505,14 @@ AS_CASE([$ENABLED_FIPS],
         HAVE_FIPS_VERSION_MAJOR=5
         HAVE_FIPS_VERSION_MINOR=2
         HAVE_FIPS_VERSION_PATCH=1
+        ENABLED_FIPS="yes"
+        # for dev, DEF_SP_MATH and DEF_FAST_MATH follow non-FIPS defaults (currently sp-math-all)
+    ],
+    [v5-kcapi],[
+        FIPS_VERSION="v5-dev"
+        HAVE_FIPS_VERSION_MAJOR=5
+        HAVE_FIPS_VERSION_MINOR=3
+        HAVE_FIPS_VERSION_PATCH=0
         ENABLED_FIPS="yes"
         # for dev, DEF_SP_MATH and DEF_FAST_MATH follow non-FIPS defaults (currently sp-math-all)
     ],
@@ -2512,6 +2525,30 @@ if test "$ENABLED_FAULTHARDEN" = "yes"
 then
     AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_CHECK_SIG_FAULTS -DWOLFSSL_CHECK_VER_FAULTS"
 fi
+
+AC_ARG_ENABLE([compileharden],
+    [AS_HELP_STRING([--enable-compileharden],[Enable extra hardening compile flags (default: disabled)])],
+    [ENABLED_COMPILEHARDEN=$enableval],
+    [ENABLED_COMPILEHARDEN=no])
+
+EXTRA_OPTS_CFLAGS=
+if test "$ENABLED_COMPILEHARDEN" = "yes"
+then
+    CAN_USE_32B_BOUNDARIES_FLAG=no
+    AX_CHECK_COMPILE_FLAG([-Wa,-mbranches-within-32B-boundaries],
+        [CAN_USE_32B_BOUNDARIES_FLAG=yes],
+        [CAN_USE_32B_BOUNDARIES_FLAG=no],
+        [-Werror],[])
+
+    if test "$CAN_USE_32B_BOUNDARIES_FLAG" = "yes"
+    then
+        EXTRA_OPTS_CFLAGS="$EXTRA_OPTS_CFLAGS -Wa,-mbranches-within-32B-boundaries -falign-loops=64"
+    else
+        AC_MSG_ERROR([compiler does not accept -mbranches-within-32B-boundaries flag])
+    fi
+fi
+
+
 
 # IPv6 Test Apps
 AC_ARG_ENABLE([ipv6],
