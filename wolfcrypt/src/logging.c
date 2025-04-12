@@ -158,7 +158,7 @@ wolfSSL_Logging_cb wolfSSL_GetLoggingCb(void)
 int wolfSSL_Debugging_ON(void)
 {
 #ifdef DEBUG_WOLFSSL
-    loggingEnabled = 0;
+    loggingEnabled = 1;
 #if defined(WOLFSSL_APACHE_MYNEWT)
     log_register("wolfcrypt", &mynewt_log, &log_console_handler, NULL, LOG_SYSLEVEL);
 #endif /* WOLFSSL_APACHE_MYNEWT */
@@ -258,7 +258,6 @@ void WOLFSSL_TIME(int count)
     /* the requisite linux/kernel.h is included in wc_port.h, with incompatible warnings masked out. */
 #elif defined(FUSION_RTOS)
     #include <fclstdio.h>
-    #include <wolfssl/wolfcrypt/wc_port.h>
     #define fprintf FCL_FPRINTF
 #else
     #include <stdio.h>  /* for default printf stuff */
