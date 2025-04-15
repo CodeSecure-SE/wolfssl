@@ -1145,7 +1145,12 @@ static int AesGcmCrypt_1(struct aead_request *req, int decrypt_p, int rfc4106_p)
 
     if (req->src->length >= assoclen && req->src->length) {
         scatterwalk_start(&assocSgWalk, req->src);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 15, 0)
+        scatterwalk_map(&assocSgWalk);
+        assoc = assocSgWalk.addr;
+#else
         assoc = scatterwalk_map(&assocSgWalk);
+#endif
         if (unlikely(IS_ERR(assoc))) {
             pr_err("%s: scatterwalk_map failed: %ld\n",
                    crypto_tfm_alg_driver_name(crypto_aead_tfm(tfm)),
@@ -1177,8 +1182,13 @@ static int AesGcmCrypt_1(struct aead_request *req, int decrypt_p, int rfc4106_p)
 
     if (assocmem)
         free(assocmem);
-    else
+    else {
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 15, 0)
+        scatterwalk_unmap(&assocSgWalk);
+#else
         scatterwalk_unmap(assoc);
+#endif
+    }
 
     if (unlikely(err)) {
         pr_err("%s: %s failed: %d\n",
@@ -1328,7 +1338,12 @@ static int AesGcmCrypt_1(struct aead_request *req, int decrypt_p, int rfc4106_p)
         (req->dst->length >= req->assoclen + req->cryptlen))
     {
         scatterwalk_start(&in_walk, req->src);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 15, 0)
+        scatterwalk_map(&in_walk);
+        in_map = in_walk.addr;
+#else
         in_map = scatterwalk_map(&in_walk);
+#endif
         if (unlikely(IS_ERR(in_map))) {
             pr_err("%s: scatterwalk_map failed: %ld\n",
                    crypto_tfm_alg_driver_name(crypto_aead_tfm(tfm)),
@@ -1339,7 +1354,12 @@ static int AesGcmCrypt_1(struct aead_request *req, int decrypt_p, int rfc4106_p)
         in_text = in_map + req->assoclen;
 
         scatterwalk_start(&out_walk, req->dst);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 15, 0)
+        scatterwalk_map(&out_walk);
+        out_map = out_walk.addr;
+#else
         out_map = scatterwalk_map(&out_walk);
+#endif
         if (unlikely(IS_ERR(out_map))) {
             pr_err("%s: scatterwalk_map failed: %ld\n",
                    crypto_tfm_alg_driver_name(crypto_aead_tfm(tfm)),
@@ -1425,10 +1445,20 @@ out:
         free(sg_buf);
     }
     else {
-        if (in_map)
+        if (in_map) {
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 15, 0)
+            scatterwalk_unmap(&in_walk);
+#else
             scatterwalk_unmap(in_map);
-        if (out_map)
+#endif
+        }
+        if (out_map) {
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 15, 0)
+            scatterwalk_unmap(&out_walk);
+#else
             scatterwalk_unmap(out_map);
+#endif
+        }
     }
 
     km_AesFree(&aes_copy);
@@ -4191,8 +4221,14 @@ static int linuxkm_test_aesecb(void) {
         !defined(LINUXKM_LKCAPI_REGISTER_ECDSA)
         #define LINUXKM_LKCAPI_REGISTER_ECDSA
     #endif
+
+    #if (defined(LINUXKM_LKCAPI_REGISTER_ALL) && !defined(LINUXKM_LKCAPI_DONT_REGISTER_ECDH)) && \
+        !defined(LINUXKM_LKCAPI_REGISTER_ECDH)
+        #define LINUXKM_LKCAPI_REGISTER_ECDH
+    #endif
 #else
     #undef LINUXKM_LKCAPI_REGISTER_ECDSA
+    #undef LINUXKM_LKCAPI_REGISTER_ECDH
 #endif /* HAVE_ECC */
 
 #if defined (LINUXKM_LKCAPI_REGISTER_ECDSA)
@@ -4225,6 +4261,10 @@ static int linuxkm_test_aesecb(void) {
 #if defined (LINUXKM_LKCAPI_REGISTER_ECDSA)
     #include "linuxkm/lkcapi_ecdsa_glue.c"
 #endif /* LINUXKM_LKCAPI_REGISTER_ECDSA */
+
+#if defined (LINUXKM_LKCAPI_REGISTER_ECDH)
+    #include "linuxkm/lkcapi_ecdh_glue.c"
+#endif /* LINUXKM_LKCAPI_REGISTER_ECDH */
 
 static int linuxkm_lkcapi_register(void)
 {
@@ -4328,6 +4368,19 @@ static int linuxkm_lkcapi_register(void)
     #endif /* HAVE_ECC521 */
 #endif /* LINUXKM_LKCAPI_REGISTER_ECDSA */
 
+#ifdef LINUXKM_LKCAPI_REGISTER_ECDH
+    #if defined(LINUXKM_ECC192)
+    REGISTER_ALG(ecdh_nist_p192, crypto_register_kpp,
+                 linuxkm_test_ecdh_nist_p192);
+    #endif /* LINUXKM_ECC192 */
+
+    REGISTER_ALG(ecdh_nist_p256, crypto_register_kpp,
+                 linuxkm_test_ecdh_nist_p256);
+
+    REGISTER_ALG(ecdh_nist_p384, crypto_register_kpp,
+                 linuxkm_test_ecdh_nist_p384);
+#endif /* LINUXKM_LKCAPI_REGISTER_ECDH */
+
 #undef REGISTER_ALG
 
     out:
@@ -4388,6 +4441,15 @@ static void linuxkm_lkcapi_unregister(void)
     UNREGISTER_ALG(ecdsa_nist_p521, crypto_unregister_akcipher);
     #endif /* HAVE_ECC521 */
 #endif /* LINUXKM_LKCAPI_REGISTER_ECDSA */
+
+#ifdef LINUXKM_LKCAPI_REGISTER_ECDH
+    #if defined(LINUXKM_ECC192)
+    UNREGISTER_ALG(ecdh_nist_p192, crypto_unregister_kpp);
+    #endif /* LINUXKM_ECC192 */
+    UNREGISTER_ALG(ecdh_nist_p256, crypto_unregister_kpp);
+    UNREGISTER_ALG(ecdh_nist_p384, crypto_unregister_kpp);
+    /* no ecdh p521 in kernel. */
+#endif /* LINUXKM_LKCAPI_REGISTER_ECDH */
 
 #undef UNREGISTER_ALG
 }
