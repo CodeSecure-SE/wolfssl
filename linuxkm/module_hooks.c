@@ -27,8 +27,6 @@
 #endif
 #endif
 
-#define FIPS_NO_WRAPPERS
-
 #define WOLFSSL_LINUXKM_NEED_LINUX_CURRENT
 
 #include <wolfssl/wolfcrypt/libwolfssl_sources.h>
@@ -755,6 +753,8 @@ static int updateFipsHash(void)
         goto out;
     }
 
+    WC_SANITIZE_DISABLE();
+
     ret = crypto_shash_update(desc, (byte *)(wc_ptr_t)first, (word32)code_sz);
     if (ret) {
         pr_err("crypto_shash_update failed: err %d\n", ret);
@@ -780,6 +780,8 @@ static int updateFipsHash(void)
         ret = BAD_STATE_E;
         goto out;
     }
+
+    WC_SANITIZE_ENABLE();
 
     ret = crypto_shash_final(desc, hash);
     if (ret) {
