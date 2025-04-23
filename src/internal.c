@@ -7306,6 +7306,8 @@ int InitHandshakeHashesAndCopy(WOLFSSL* ssl, HS_Hashes* source,
     ret = InitHandshakeHashes(ssl);
     if (ret != 0) {
         WOLFSSL_MSG_EX("InitHandshakeHashes failed. err = %d", ret);
+        ssl->hsHashes = tmpHashes; /* restore hsHashes pointer to original
+                                    * before returning */
         return ret;
     }
 
@@ -21572,6 +21574,7 @@ static WC_INLINE int VerifyMacEnc(WOLFSSL* ssl, const byte* input, word32 msgSz,
         WOLFSSL_ERROR_VERBOSE(VERIFY_MAC_ERROR);
         return VERIFY_MAC_ERROR;
     }
+    XMEMSET(verify, 0, WC_MAX_DIGEST_SIZE);
 
     ret  = ssl->hmac(ssl, verify, input, msgSz - digestSz, -1, content, 1, PEER_ORDER);
     ret |= ConstantCompare(verify, input + msgSz - digestSz, (int)digestSz);
@@ -21594,7 +21597,7 @@ static WC_INLINE int VerifyMac(WOLFSSL* ssl, const byte* input, word32 msgSz,
     word32 digestSz = MacSize(ssl);
     byte   verify[WC_MAX_DIGEST_SIZE];
 
-
+    XMEMSET(verify, 0, WC_MAX_DIGEST_SIZE);
     if (ssl->specs.cipher_type == block) {
         pad = input[msgSz - 1];
         padByte = 1;
