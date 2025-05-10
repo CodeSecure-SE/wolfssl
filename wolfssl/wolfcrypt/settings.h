@@ -3119,6 +3119,29 @@ extern void uITRON4_free(void *p) ;
     #endif
 #endif /* HAVE_ED448 */
 
+
+/* RFC 5958 (Asymmetric Key Packages) */
+#if !defined(WC_ENABLE_ASYM_KEY_EXPORT) && \
+    ((defined(HAVE_ED25519)    && defined(HAVE_ED25519_KEY_EXPORT)) || \
+     (defined(HAVE_CURVE25519) && defined(HAVE_CURVE25519_KEY_EXPORT)) || \
+     (defined(HAVE_ED448)      && defined(HAVE_ED448_KEY_EXPORT)) || \
+     (defined(HAVE_CURVE448)   && defined(HAVE_CURVE448_KEY_EXPORT)) || \
+      defined(HAVE_FALCON) || defined(HAVE_DILITHIUM) || \
+      defined(HAVE_SPHINCS) || defined(HAVE_LIBOQS))
+    #define WC_ENABLE_ASYM_KEY_EXPORT
+#endif
+
+#if !defined(WC_ENABLE_ASYM_KEY_IMPORT) && \
+    ((defined(HAVE_ED25519)    && defined(HAVE_ED25519_KEY_IMPORT)) || \
+     (defined(HAVE_CURVE25519) && defined(HAVE_CURVE25519_KEY_IMPORT)) || \
+     (defined(HAVE_ED448)      && defined(HAVE_ED448_KEY_IMPORT)) || \
+     (defined(HAVE_CURVE448)   && defined(HAVE_CURVE448_KEY_IMPORT)) || \
+      defined(HAVE_FALCON) || defined(HAVE_DILITHIUM) || \
+      defined(HAVE_SPHINCS) || defined(HAVE_LIBOQS))
+    #define WC_ENABLE_ASYM_KEY_IMPORT
+#endif
+
+
 /* FIPS does not support CFB1 or CFB8 */
 #if !defined(WOLFSSL_NO_AES_CFB_1_8) && \
     (defined(HAVE_SELFTEST) || \
@@ -3798,6 +3821,14 @@ extern void uITRON4_free(void *p) ;
 
 #ifndef WOLFSSL_ALERT_COUNT_MAX
     #define WOLFSSL_ALERT_COUNT_MAX 5
+#endif
+
+/* Enable blinding by default for C-only, non-small curve25519 implementation */
+#if defined(HAVE_CURVE25519) && !defined(CURVE25519_SMALL) && \
+    !defined(FREESCALE_LTC_ECC) && !defined(WOLFSSL_ARMASM) && \
+    !defined(USE_INTEL_SPEEDUP) && \
+    !defined(WOLFSSL_CURVE25519_BLINDING) && !defined(NO_CURVE25519_BLINDING)
+    #define WOLFSSL_CURVE25519_BLINDING
 #endif
 
 /* warning for not using harden build options (default with ./configure) */
