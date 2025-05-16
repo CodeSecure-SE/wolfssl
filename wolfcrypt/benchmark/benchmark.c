@@ -1124,6 +1124,7 @@ static const bench_pq_hash_sig_alg bench_pq_hash_sig_opt[] = {
 };
 #endif /* BENCH_PQ_STATEFUL_HBS */
 
+#ifndef WOLFSSL_BENCHMARK_ALL
 #if defined(WOLFSSL_HAVE_MLKEM) || defined(HAVE_FALCON) || \
     defined(HAVE_DILITHIUM) || defined(HAVE_SPHINCS)
 /* The post-quantum-specific mapping of command line option to bit values and
@@ -1179,6 +1180,8 @@ static const bench_pq_alg bench_pq_asym_opt2[] = {
     { NULL, 0, }
 };
 #endif /* HAVE_SPHINCS */
+#endif
+
 #endif
 
 #ifdef HAVE_WNR
@@ -8630,7 +8633,7 @@ void bench_srtpkdf(void)
     const byte *key = bench_key_buf;
     const byte salt[14] = { 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
                            0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e };
-    const byte index[6] = { 0x55, 0xAA, 0x55, 0xAA, 0x55, 0xAA };
+    const byte idx[6] = { 0x55, 0xAA, 0x55, 0xAA, 0x55, 0xAA };
     int kdrIdx = 0;
     int i;
     DECLARE_MULTI_VALUE_STATS_VARS()
@@ -8640,7 +8643,7 @@ void bench_srtpkdf(void)
     do {
         for (i = 0; i < numBlocks * 1000; i++) {
             ret = wc_SRTP_KDF(key, AES_128_KEY_SIZE, salt, sizeof(salt),
-                kdrIdx, index, keyE, AES_128_KEY_SIZE, keyA, sizeof(keyA),
+                kdrIdx, idx, keyE, AES_128_KEY_SIZE, keyA, sizeof(keyA),
                 keyS, sizeof(keyS));
             RECORD_MULTI_VALUE_STATS();
         }
@@ -8663,7 +8666,7 @@ void bench_srtpkdf(void)
     do {
         for (i = 0; i < numBlocks * 1000; i++) {
             ret = wc_SRTP_KDF(key, AES_256_KEY_SIZE, salt, sizeof(salt),
-                kdrIdx, index, keyE, AES_256_KEY_SIZE, keyA, sizeof(keyA),
+                kdrIdx, idx, keyE, AES_256_KEY_SIZE, keyA, sizeof(keyA),
                 keyS, sizeof(keyS));
             RECORD_MULTI_VALUE_STATS();
         }
@@ -8686,7 +8689,7 @@ void bench_srtpkdf(void)
     do {
         for (i = 0; i < numBlocks * 1000; i++) {
             ret = wc_SRTCP_KDF(key, AES_128_KEY_SIZE, salt, sizeof(salt),
-                kdrIdx, index, keyE, AES_128_KEY_SIZE, keyA, sizeof(keyA),
+                kdrIdx, idx, keyE, AES_128_KEY_SIZE, keyA, sizeof(keyA),
                 keyS, sizeof(keyS));
             RECORD_MULTI_VALUE_STATS();
         }
@@ -8709,7 +8712,7 @@ void bench_srtpkdf(void)
     do {
         for (i = 0; i < numBlocks * 1000; i++) {
             ret = wc_SRTCP_KDF(key, AES_256_KEY_SIZE, salt, sizeof(salt),
-                kdrIdx, index, keyE, AES_256_KEY_SIZE, keyA, sizeof(keyA),
+                kdrIdx, idx, keyE, AES_256_KEY_SIZE, keyA, sizeof(keyA),
                 keyS, sizeof(keyS));
             RECORD_MULTI_VALUE_STATS();
         }
