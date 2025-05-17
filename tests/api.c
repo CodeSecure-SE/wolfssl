@@ -27635,8 +27635,8 @@ static int test_wolfSSL_X509_STORE_CTX_get0_store(void)
 }
 
 #if defined(OPENSSL_ALL) && !defined(NO_RSA) && !defined(NO_CERTS) && \
-    !defined(NO_WOLFSSL_CLIENT) && defined(HAVE_ECC) && !defined(NO_TLS) && \
-    defined(HAVE_AESGCM)
+    !defined(NO_WOLFSSL_CLIENT) && !defined(NO_WOLFSSL_SERVER) && \
+    defined(HAVE_ECC) && !defined(NO_TLS) && defined(HAVE_AESGCM)
 static int test_wolfSSL_get_client_ciphers_ctx_ready(WOLFSSL_CTX* ctx)
 {
     EXPECT_DECLS;
@@ -27678,8 +27678,8 @@ static int test_wolfSSL_get_client_ciphers(void)
 {
     EXPECT_DECLS;
 #if defined(OPENSSL_ALL) && !defined(NO_RSA) && !defined(NO_CERTS) && \
-    !defined(NO_WOLFSSL_CLIENT) && defined(HAVE_ECC) && !defined(NO_TLS) && \
-    defined(HAVE_AESGCM)
+    !defined(NO_WOLFSSL_CLIENT) && !defined(NO_WOLFSSL_SERVER) && \
+    defined(HAVE_ECC) && !defined(NO_TLS) && defined(HAVE_AESGCM)
     test_ssl_cbf server_cb;
     test_ssl_cbf client_cb;
 
@@ -27703,7 +27703,8 @@ static int test_wolfSSL_CTX_set_client_CA_list(void)
 {
     EXPECT_DECLS;
 #if defined(OPENSSL_ALL) && !defined(NO_RSA) && !defined(NO_CERTS) && \
-    !defined(NO_WOLFSSL_CLIENT) && !defined(NO_BIO) && !defined(NO_TLS)
+    !defined(NO_WOLFSSL_CLIENT) && !defined(NO_WOLFSSL_SERVER) && \
+    !defined(NO_BIO) && !defined(NO_TLS)
     WOLFSSL_CTX* ctx = NULL;
     WOLFSSL* ssl = NULL;
     X509_NAME* name = NULL;
@@ -34335,6 +34336,7 @@ static int test_HMAC_CTX_helper(const EVP_MD* type, unsigned char* digest,
     unsigned int digestSz2 = 64;
 
     HMAC_CTX_init(&ctx1);
+    HMAC_CTX_init(&ctx2);
 
     ExpectIntEQ(HMAC_Init(&ctx1, (const void*)key, keySz, type), SSL_SUCCESS);
     ExpectIntEQ(HMAC_Update(&ctx1, msg, msgSz), SSL_SUCCESS);
@@ -34813,13 +34815,13 @@ static int test_wolfSSL_DES(void)
         { 0xFE, 0xE0, 0xFE, 0xE0, 0xFE, 0xF1, 0xFE, 0xF1 }
     };
 
-    DES_check_key(1);
-    DES_set_key(&myDes, &key);
-
     /* check, check of odd parity */
     XMEMSET(myDes, 4, sizeof(const_DES_cblock));
-    myDes[0] = 6; /* set even parity */
     XMEMSET(key, 5, sizeof(DES_key_schedule));
+
+    DES_set_key(&myDes, &key);
+
+    myDes[0] = 6; /* set even parity */
     ExpectIntEQ(DES_set_key_checked(&myDes, &key), -1);
     ExpectIntNE(key[0], myDes[0]); /* should not have copied over key */
     ExpectIntEQ(DES_set_key_checked(NULL, NULL), -2);
@@ -41034,7 +41036,7 @@ static int test_wolfSSL_CTX_ctrl(void)
 {
     EXPECT_DECLS;
 #if defined(OPENSSL_EXTRA) && !defined(NO_CERTS) && !defined(NO_TLS) && \
-    !defined(NO_FILESYSTEM) && !defined(NO_RSA)
+    !defined(NO_FILESYSTEM) && !defined(NO_RSA) && !defined(NO_WOLFSSL_SERVER)
     char caFile[] = "./certs/client-ca.pem";
     char clientFile[] = "./certs/client-cert.pem";
     SSL_CTX* ctx = NULL;
@@ -58150,7 +58152,7 @@ static int test_wolfSSL_set_SSL_CTX(void)
     EXPECT_DECLS;
 #if (defined(OPENSSL_EXTRA) || defined(OPENSSL_ALL)) \
     && !defined(WOLFSSL_NO_TLS12) && defined(WOLFSSL_TLS13) && \
-    !defined(NO_RSA)
+    !defined(NO_RSA)  && !defined(NO_WOLFSSL_SERVER)
     WOLFSSL_CTX *ctx1 = NULL;
     WOLFSSL_CTX *ctx2 = NULL;
     WOLFSSL *ssl = NULL;
@@ -59078,7 +59080,7 @@ static int test_wolfSSL_OpenSSL_version(void)
 static int test_CONF_CTX_CMDLINE(void)
 {
     EXPECT_DECLS;
-#if defined(OPENSSL_ALL) && !defined(NO_TLS)
+#if defined(OPENSSL_ALL) && !defined(NO_TLS) && !defined(NO_WOLFSSL_SERVER)
     SSL_CTX* ctx = NULL;
     SSL_CONF_CTX* cctx = NULL;
 
@@ -59154,7 +59156,7 @@ static int test_CONF_CTX_CMDLINE(void)
 static int test_CONF_CTX_FILE(void)
 {
     EXPECT_DECLS;
-#if defined(OPENSSL_ALL) && !defined(NO_TLS)
+#if defined(OPENSSL_ALL) && !defined(NO_TLS) && !defined(NO_WOLFSSL_SERVER)
     SSL_CTX* ctx = NULL;
     SSL_CONF_CTX* cctx = NULL;
 
@@ -68023,6 +68025,7 @@ TEST_CASE testCases[] = {
     TEST_DECL(test_wolfSSL_dtls_cid_parse),
     TEST_DECL(test_dtls13_epochs),
     TEST_DECL(test_dtls13_ack_order),
+    TEST_DECL(test_dtls_version_checking),
     TEST_DECL(test_ocsp_status_callback),
     TEST_DECL(test_ocsp_basic_verify),
     TEST_DECL(test_ocsp_response_parsing),
