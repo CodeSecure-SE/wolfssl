@@ -18873,6 +18873,89 @@ static int test_wc_i2d_PKCS12(void)
     return EXPECT_RESULT();
 }
 
+static int test_wc_PKCS12_create_once(int keyEncType, int certEncType)
+{
+    EXPECT_DECLS;
+#if !defined(NO_ASN) && defined(HAVE_PKCS12) && !defined(NO_PWDBASED) \
+    && !defined(NO_HMAC) && !defined(NO_CERTS) && defined(USE_CERT_BUFFERS_2048)
+
+    byte* inKey = (byte*) server_key_der_2048;
+    const word32 inKeySz= sizeof_server_key_der_2048;
+    byte* inCert = (byte*) server_cert_der_2048;
+    const word32 inCertSz = sizeof_server_cert_der_2048;
+    WC_DerCertList inCa = {
+        (byte*)ca_cert_der_2048, sizeof_ca_cert_der_2048, NULL
+    };
+    char pkcs12Passwd[] = "test_wc_PKCS12_create";
+
+    WC_PKCS12* pkcs12Export = NULL;
+    WC_PKCS12* pkcs12Import = NULL;
+    byte* pkcs12Der = NULL;
+    byte* outKey = NULL;
+    byte* outCert = NULL;
+    WC_DerCertList* outCaList = NULL;
+    word32 pkcs12DerSz = 0;
+    word32 outKeySz = 0;
+    word32 outCertSz = 0;
+
+    ExpectNotNull(pkcs12Export = wc_PKCS12_create(pkcs12Passwd,
+        sizeof(pkcs12Passwd) - 1,
+        (char*) "friendlyName" /* not used currently */,
+        inKey, inKeySz, inCert, inCertSz, &inCa, keyEncType, certEncType,
+        2048, 2048, 0 /* not used currently */, NULL));
+    pkcs12Der = NULL;
+    ExpectIntGE((pkcs12DerSz = wc_i2d_PKCS12(pkcs12Export, &pkcs12Der, NULL)),
+        0);
+
+    ExpectNotNull(pkcs12Import = wc_PKCS12_new_ex(NULL));
+    ExpectIntGE(wc_d2i_PKCS12(pkcs12Der, pkcs12DerSz, pkcs12Import), 0);
+    ExpectIntEQ(wc_PKCS12_parse(pkcs12Import, pkcs12Passwd, &outKey, &outKeySz,
+        &outCert, &outCertSz, &outCaList), 0);
+
+    ExpectIntEQ(outKeySz, inKeySz);
+    ExpectIntEQ(outCertSz, outCertSz);
+    ExpectNotNull(outCaList);
+    ExpectNotNull(outCaList->buffer);
+    ExpectIntEQ(outCaList->bufferSz, inCa.bufferSz);
+    ExpectNull(outCaList->next);
+
+    ExpectIntEQ(XMEMCMP(inKey, outKey, outKeySz), 0);
+    ExpectIntEQ(XMEMCMP(inCert, outCert, outCertSz), 0);
+    ExpectIntEQ(XMEMCMP(inCa.buffer, outCaList->buffer, outCaList->bufferSz),
+        0);
+
+    XFREE(outKey, NULL, DYNAMIC_TYPE_PUBLIC_KEY);
+    XFREE(outCert, NULL, DYNAMIC_TYPE_PKCS);
+    wc_FreeCertList(outCaList, NULL);
+    wc_PKCS12_free(pkcs12Import);
+    XFREE(pkcs12Der, NULL, DYNAMIC_TYPE_PKCS);
+    wc_PKCS12_free(pkcs12Export);
+#endif
+    (void) keyEncType;
+    (void) certEncType;
+
+    return EXPECT_RESULT();
+}
+
+static int test_wc_PKCS12_create(void)
+{
+    EXPECT_DECLS;
+#if !defined(NO_DES3)
+    ExpectIntEQ(test_wc_PKCS12_create_once(PBE_SHA1_DES3, PBE_SHA1_DES3),
+        TEST_SUCCESS);
+#endif
+#if defined(HAVE_AES_CBC) && !defined(NO_AES_256) && !defined(NO_DES3)
+    ExpectIntEQ(test_wc_PKCS12_create_once(PBE_AES256_CBC, PBE_SHA1_DES3),
+        TEST_SUCCESS);
+#endif
+#if defined(HAVE_AES_CBC) && !defined(NO_AES_128) && !defined(NO_DES3)
+    ExpectIntEQ(test_wc_PKCS12_create_once(PBE_AES128_CBC, PBE_SHA1_DES3),
+        TEST_SUCCESS);
+#endif
+    (void) test_wc_PKCS12_create_once;
+
+    return EXPECT_RESULT();
+}
 
 /*----------------------------------------------------------------------------*
  | ASN.1 Tests
@@ -38948,12 +39031,14 @@ static int test_wolfSSL_d2i_PrivateKeys_bio(void)
     {
         XFILE file = XBADFILE;
         const char* fname = "./certs/ecc-key.der";
+        long lsz = 0;
         size_t sz = 0;
         byte* buf = NULL;
 
         ExpectTrue((file = XFOPEN(fname, "rb")) != XBADFILE);
         ExpectTrue(XFSEEK(file, 0, XSEEK_END) == 0);
-        ExpectTrue((sz = XFTELL(file)) != 0);
+        ExpectTrue((lsz = XFTELL(file)) > 0);
+        sz = (size_t)lsz;
         ExpectTrue(XFSEEK(file, 0, XSEEK_SET) == 0);
         ExpectNotNull(buf = (byte*)XMALLOC(sz, HEAP_HINT, DYNAMIC_TYPE_FILE));
         ExpectIntEQ(XFREAD(buf, 1, sz, file), sz);
@@ -52361,6 +52446,7 @@ static int test_wolfSSL_RSA_verify(void)
     SHA256_CTX c;
     EVP_PKEY *evpPkey = NULL;
     EVP_PKEY *evpPubkey = NULL;
+    long lsz = 0;
     size_t sz;
 
     /* generate hash */
@@ -52372,10 +52458,11 @@ static int test_wolfSSL_RSA_verify(void)
     wc_Sha256Free((wc_Sha256*)&c);
 #endif
 
-    /* read privete key file */
+    /* read private key file */
     ExpectTrue((fp = XFOPEN(svrKeyFile, "rb")) != XBADFILE);
     ExpectIntEQ(XFSEEK(fp, 0, XSEEK_END), 0);
-    ExpectTrue((sz = XFTELL(fp)) > 0);
+    ExpectTrue((lsz = XFTELL(fp)) > 0);
+    sz = (size_t)lsz;
     ExpectIntEQ(XFSEEK(fp, 0, XSEEK_SET), 0);
     ExpectNotNull(buf = (byte*)XMALLOC(sz, NULL, DYNAMIC_TYPE_FILE));
     ExpectIntEQ(XFREAD(buf, 1, sz, fp), sz);
@@ -54544,7 +54631,7 @@ static int test_wolfSSL_PEM_read_bio_ECPKParameters(void)
     ExpectNotNull(bio = BIO_new_mem_buf((unsigned char*)ec_nc_p384,
         sizeof(ec_nc_p384)));
     ExpectNotNull(ret = PEM_read_bio_ECPKParameters(bio, &group, NULL, NULL));
-    ExpectIntEQ(group == ret, 1);
+    ExpectIntEQ(ret == group, 1);
     ExpectIntEQ(EC_GROUP_get_curve_name(group), NID_secp384r1);
     BIO_free(bio);
     bio = NULL;
@@ -67041,6 +67128,7 @@ TEST_CASE testCases[] = {
 
     /* wolfCrypt PKCS#12 */
     TEST_DECL(test_wc_i2d_PKCS12),
+    TEST_DECL(test_wc_PKCS12_create),
 
     /*
      * test_wolfCrypt_Cleanup needs to come after the above wolfCrypt tests to
