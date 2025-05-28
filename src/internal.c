@@ -11578,6 +11578,33 @@ static int MsgCheckBoundary(const WOLFSSL* ssl, byte type,
 
 #endif /* WOLFSSL_DISABLE_EARLY_SANITY_CHECKS */
 
+/* Extract the handshake header information.
+ *
+ * ssl       The SSL/TLS object.
+ * input     The buffer holding the message data.
+ * inOutIdx  On entry, the index into the buffer of the handshake data.
+ *           On exit, the start of the handshake data.
+ * type      Type of handshake message.
+ * size      The length of the handshake message data.
+ * totalSz   The total size of data in the buffer.
+ * returns BUFFER_E if there is not enough input data and 0 on success.
+ */
+int GetHandshakeHeader(WOLFSSL* ssl, const byte* input, word32* inOutIdx,
+                       byte* type, word32* size, word32 totalSz)
+{
+    const byte* ptr = input + *inOutIdx;
+    (void)ssl;
+
+    *inOutIdx += HANDSHAKE_HEADER_SZ;
+    if (*inOutIdx > totalSz)
+        return BUFFER_E;
+
+    *type = ptr[0];
+    c24to32(&ptr[1], size);
+
+    return 0;
+}
+
 /**
  * This check is performed as soon as the handshake message type becomes known.
  * These checks can not be delayed and need to be performed when the msg is
@@ -12042,24 +12069,6 @@ static int GetRecordHeader(WOLFSSL* ssl, word32* inOutIdx,
 
     return 0;
 }
-
-#ifndef WOLFSSL_NO_TLS12
-static int GetHandShakeHeader(WOLFSSL* ssl, const byte* input, word32* inOutIdx,
-                              byte *type, word32 *size, word32 totalSz)
-{
-    const byte *ptr = input + *inOutIdx;
-    (void)ssl;
-
-    *inOutIdx += HANDSHAKE_HEADER_SZ;
-    if (*inOutIdx > totalSz)
-        return BUFFER_E;
-
-    *type = ptr[0];
-    c24to32(&ptr[1], size);
-
-    return 0;
-}
-#endif
 
 #ifdef WOLFSSL_DTLS
 int GetDtlsHandShakeHeader(WOLFSSL* ssl, const byte* input,
@@ -18122,7 +18131,7 @@ static int DoHandShakeMsg(WOLFSSL* ssl, byte* input, word32* inOutIdx,
         byte   type;
         word32 size;
 
-        if (GetHandShakeHeader(ssl,input,inOutIdx,&type, &size, totalSz) != 0) {
+        if (GetHandshakeHeader(ssl,input,inOutIdx,&type, &size, totalSz) != 0) {
             WOLFSSL_ERROR_VERBOSE(PARSE_ERROR);
             return PARSE_ERROR;
         }
@@ -18150,7 +18159,7 @@ static int DoHandShakeMsg(WOLFSSL* ssl, byte* input, word32* inOutIdx,
         byte   type;
         word32 size;
 
-        if (GetHandShakeHeader(ssl, input, inOutIdx, &type, &size,
+        if (GetHandshakeHeader(ssl, input, inOutIdx, &type, &size,
                                totalSz) != 0) {
             WOLFSSL_ERROR_VERBOSE(PARSE_ERROR);
             return PARSE_ERROR;
@@ -22117,7 +22126,11 @@ static int DoProcessReplyEx(WOLFSSL* ssl, int allowSocketErr)
             if ( ssl->options.side == WOLFSSL_SERVER_END &&
                  ssl->options.clientState == NULL_STATE &&
                  ssl->buffers.inputBuffer.buffer[ssl->buffers.inputBuffer.idx]
-                         != handshake) {
+                         != handshake &&
+                 /* change_cipher_spec here is an error but we want to handle
+                  * it correctly later */
+                 ssl->buffers.inputBuffer.buffer[ssl->buffers.inputBuffer.idx]
+                         != change_cipher_spec) {
                 byte b0, b1;
 
                 ssl->options.processReply = runProcessOldClientHello;
@@ -22733,16 +22746,28 @@ default:
                         }
                         if (ssl->curSize != 1 ||
                                       ssl->buffers.inputBuffer.buffer[i] != 1) {
-                            SendAlert(ssl, alert_fatal, illegal_parameter);
+                            SendAlert(ssl, alert_fatal, unexpected_message);
                             WOLFSSL_ERROR_VERBOSE(UNKNOWN_RECORD_TYPE);
                             return UNKNOWN_RECORD_TYPE;
                         }
                         ssl->buffers.inputBuffer.idx++;
+                        if (ssl->options.side == WOLFSSL_SERVER_END &&
+                                !ssl->msgsReceived.got_client_hello) {
+                            /* Can't appear before CH */
+                            SendAlert(ssl, alert_fatal, unexpected_message);
+                            WOLFSSL_ERROR_VERBOSE(UNKNOWN_RECORD_TYPE);
+                            return UNKNOWN_RECORD_TYPE;
+                        }
                         if (!ssl->msgsReceived.got_change_cipher) {
                             ssl->msgsReceived.got_change_cipher = 1;
                         }
                         else {
                             SendAlert(ssl, alert_fatal, illegal_parameter);
+                            WOLFSSL_ERROR_VERBOSE(UNKNOWN_RECORD_TYPE);
+                            return UNKNOWN_RECORD_TYPE;
+                        }
+                        if (ssl->keys.decryptedCur == 1) {
+                            SendAlert(ssl, alert_fatal, unexpected_message);
                             WOLFSSL_ERROR_VERBOSE(UNKNOWN_RECORD_TYPE);
                             return UNKNOWN_RECORD_TYPE;
                         }
