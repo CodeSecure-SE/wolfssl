@@ -1,0 +1,36 @@
+name: Daily Sync from Upstream
+
+on:
+  schedule:
+    - cron: '0 3 * * *' # every day at 03:00 UTC
+  workflow_dispatch: # allow manual triggering
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+ 
+    permissions: write-all
+
+      
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v4
+        with:
+          ref: release/daily
+          fetch-depth: 0
+          token: ${{ secrets.REPO_TOKEN }}
+
+      - name: Setup Git
+        run: |
+          git config --global user.name "Mark Hermeling - bot"
+          git config --global user.email "mark@hermeling.org"
+
+      - name: Add upstream remote
+        run: |
+          git remote add upstream https://github.com/wolfssl/wolfssl.git
+          git fetch upstream
+
+      - name: Merge upstream into fork
+        run: |
+          git merge upstream/master --no-edit 
+          git push
