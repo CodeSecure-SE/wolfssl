@@ -7,7 +7,7 @@
  *
  * wolfSSL is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * wolfSSL is distributed in the hope that it will be useful,
@@ -2385,6 +2385,11 @@ static int linuxkm_test_pkcs1pad_driver(const char * driver, int nbits,
     #endif /* !LINUXKM_AKCIPHER_NO_SIGNVERIFY */
     int                       n_diff = 0;
     uint8_t                   skipped = 0;
+
+    #ifdef LINUXKM_AKCIPHER_NO_SIGNVERIFY
+    (void)hash_oid;
+    (void)hash_len;
+    #endif
 
     #if !defined(LINUXKM_AKCIPHER_NO_SIGNVERIFY)
     hash = malloc(hash_len);

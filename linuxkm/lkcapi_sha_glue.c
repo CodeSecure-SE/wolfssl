@@ -6,7 +6,7 @@
  *
  * wolfSSL is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * wolfSSL is distributed in the hope that it will be useful,
@@ -92,6 +92,30 @@
  * to our rng_alg.generate() implementation.
  */
 #define WOLFKM_STDRNG_DRIVER ("sha2-256-drbg-nopr" WOLFKM_SHA_DRIVER_SUFFIX)
+
+#ifdef LINUXKM_LKCAPI_REGISTER_SHA_ALL
+    #define LINUXKM_LKCAPI_REGISTER_SHA1
+    #define LINUXKM_LKCAPI_REGISTER_SHA2
+    #define LINUXKM_LKCAPI_REGISTER_SHA3
+#endif
+
+#ifdef LINUXKM_LKCAPI_DONT_REGISTER_SHA_ALL
+    #define LINUXKM_LKCAPI_DONT_REGISTER_SHA1
+    #define LINUXKM_LKCAPI_DONT_REGISTER_SHA2
+    #define LINUXKM_LKCAPI_DONT_REGISTER_SHA3
+#endif
+
+#ifdef LINUXKM_LKCAPI_REGISTER_HMAC_ALL
+    #define LINUXKM_LKCAPI_REGISTER_SHA1_HMAC
+    #define LINUXKM_LKCAPI_REGISTER_SHA2_HMAC
+    #define LINUXKM_LKCAPI_REGISTER_SHA3_HMAC
+#endif
+
+#ifdef LINUXKM_LKCAPI_DONT_REGISTER_HMAC_ALL
+    #define LINUXKM_LKCAPI_DONT_REGISTER_SHA1_HMAC
+    #define LINUXKM_LKCAPI_DONT_REGISTER_SHA2_HMAC
+    #define LINUXKM_LKCAPI_DONT_REGISTER_SHA3_HMAC
+#endif
 
 #ifdef LINUXKM_LKCAPI_REGISTER_SHA2
     #define LINUXKM_LKCAPI_REGISTER_SHA2_224
