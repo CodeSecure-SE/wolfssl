@@ -1642,8 +1642,8 @@ struct DecodedCert {
     const byte* extAuthKeyIdIssuerSN; /* Authority Key ID authorityCertSerialNumber */
     word32  extAuthKeyIdIssuerSNSz;   /* Authority Key ID authorityCertSerialNumber length */
 #endif
-    byte    pathLength;              /* CA basic constraint path length  */
-    byte    maxPathLen;              /* max_path_len see RFC 5280 section
+    word16    pathLength;              /* CA basic constraint path length  */
+    word16    maxPathLen;              /* max_path_len see RFC 5280 section
                                       * 6.1.2 "Initialization" - (k) for
                                       * description of max_path_len */
     byte    policyConstSkip;         /* Policy Constraints skip certs value */
@@ -1943,7 +1943,7 @@ struct Signer {
     word32  pubKeySize;
     word32  keyOID;                  /* key type */
     word16  keyUsage;
-    byte    maxPathLen;
+    word16  maxPathLen;
     WC_BITFIELD selfSigned:1;
     const byte* publicKey;
     int     nameLen;
@@ -2341,14 +2341,18 @@ WOLFSSL_LOCAL int StoreDSAParams(byte*, word32*, const mp_int*, const mp_int*,
 WOLFSSL_LOCAL void InitSignatureCtx(SignatureCtx* sigCtx, void* heap, int devId);
 WOLFSSL_LOCAL void FreeSignatureCtx(SignatureCtx* sigCtx);
 
+#ifdef WC_ENABLE_ASYM_KEY_EXPORT
 WOLFSSL_LOCAL int SetAsymKeyDerPublic(const byte* pubKey, word32 pubKeyLen,
     byte* output, word32 outLen, int keyType, int withHeader);
+#endif /* WC_ENABLE_ASYM_KEY_EXPORT */
+#ifdef WC_ENABLE_ASYM_KEY_IMPORT
 WOLFSSL_LOCAL int DecodeAsymKeyPublic_Assign(const byte* input,
     word32* inOutIdx, word32 inSz, const byte** pubKey, word32* pubKeyLen,
     int* keyType);
 
 WOLFSSL_LOCAL int DecodeAsymKeyPublic(const byte* input, word32* inOutIdx,
     word32 inSz, byte* pubKey, word32* pubKeyLen, int keyType);
+#endif /* WC_ENABLE_ASYM_KEY_IMPORT */
 
 #ifndef NO_CERTS
 

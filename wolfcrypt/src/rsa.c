@@ -2593,7 +2593,7 @@ static int RsaFunctionPrivate(mp_int* tmp, RsaKey* key, WC_RNG* rng)
     }
 #else
     if (ret == 0 && (mp_iszero(&key->p) || mp_iszero(&key->q) ||
-            mp_iszero(&key->dP) || mp_iszero(&key->dQ))) {
+            mp_iszero(&key->dP) || mp_iszero(&key->dQ) || mp_iszero(&key->u))) {
         if (mp_exptmod(tmp, &key->d, &key->n, tmp) != MP_OKAY) {
             ret = MP_EXPTMOD_E;
         }
@@ -3601,6 +3601,9 @@ static int RsaPrivateDecryptEx(const byte* in, word32 inLen, byte* out,
         ret = wc_CryptoCb_RsaPad(in, inLen, out,
                             &outLen, rsa_type, key, rng, &padding);
         if (ret != WC_NO_ERR_TRACE(CRYPTOCB_UNAVAILABLE)) {
+            if (outPtr != NULL) {
+                *outPtr = out;
+            }
             if (ret == 0) {
                 ret = (int)outLen;
             }

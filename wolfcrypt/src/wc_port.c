@@ -60,7 +60,7 @@
     #include <wolfssl/wolfcrypt/port/atmel/atmel.h>
 #endif
 #if defined(WOLFSSL_RENESAS_TSIP)
-    #include <wolfssl/wolfcrypt/port/Renesas/renesas-tsip-crypt.h>
+    #include <wolfssl/wolfcrypt/port/Renesas/renesas_tsip_internal.h>
 #endif
 #if defined(WOLFSSL_RENESAS_FSPSM)
     #include <wolfssl/wolfcrypt/port/Renesas/renesas-fspsm-crypt.h>
@@ -4628,13 +4628,13 @@ char* mystrnstr(const char* s1, const char* s2, unsigned int n)
 noinstr void my__alt_cb_patch_nops(struct alt_instr *alt, __le32 *origptr,
                                    __le32 *updptr, int nr_inst)
 {
-    return (wolfssl_linuxkm_get_pie_redirect_table()->
-            alt_cb_patch_nops)(alt, origptr, updptr, nr_inst);
+    return WC_LKM_INDIRECT_SYM(alt_cb_patch_nops)
+        (alt, origptr, updptr, nr_inst);
 }
 
 void my__queued_spin_lock_slowpath(struct qspinlock *lock, u32 val)
 {
-    return (wolfssl_linuxkm_get_pie_redirect_table()->
-            queued_spin_lock_slowpath)(lock, val);
+    return WC_LKM_INDIRECT_SYM(queued_spin_lock_slowpath)
+        (lock, val);
 }
 #endif

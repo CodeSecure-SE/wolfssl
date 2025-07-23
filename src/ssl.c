@@ -3855,7 +3855,7 @@ WOLFSSL_ABI
 int wolfSSL_UseALPN(WOLFSSL* ssl, char *protocol_name_list,
                     word32 protocol_name_listSz, byte options)
 {
-    char    *list, *ptr, **token;
+    char    *list, *ptr = NULL, **token;
     word16  len;
     int     idx = 0;
     int     ret = WC_NO_ERR_TRACE(WOLFSSL_FAILURE);
@@ -7216,9 +7216,8 @@ static int check_cert_key(DerBuffer* cert, DerBuffer* key, DerBuffer* altKey,
 #ifdef WOLF_PRIVATE_KEY_ID
         if (ret == WOLFSSL_SUCCESS && altDevId != INVALID_DEVID) {
             /* We have to decode the public key first */
-            word32 idx = 0;
-            /* Dilithium has the largest public key at the moment */
-            word32 pubKeyLen = DILITHIUM_MAX_PUB_KEY_SIZE;
+            /* Default to max pub key size. */
+            word32 pubKeyLen = MAX_PUBLIC_KEY_SZ;
             byte* decodedPubKey = (byte*)XMALLOC(pubKeyLen, heap,
                                             DYNAMIC_TYPE_PUBLIC_KEY);
             if (decodedPubKey == NULL) {
@@ -7232,9 +7231,14 @@ static int check_cert_key(DerBuffer* cert, DerBuffer* key, DerBuffer* altKey,
                     ret = 0;
                 }
                 else {
+                #if defined(WC_ENABLE_ASYM_KEY_IMPORT)
+                    word32 idx = 0;
                     ret = DecodeAsymKeyPublic(der->sapkiDer, &idx,
                                               der->sapkiLen, decodedPubKey,
                                               &pubKeyLen, der->sapkiOID);
+                #else
+                    ret = NOT_COMPILED_IN;
+                #endif /* WC_ENABLE_ASYM_KEY_IMPORT */
                 }
             }
             if (ret == 0) {
