@@ -17714,8 +17714,8 @@ static int test_wc_PKCS7_EncodeDecodeEnvelopedData(void)
             rsaPrivKeySz = (word32)sizeof(rsaClientKey);
         #endif
     #endif
-    #if defined(HAVE_ECC) && (!defined(NO_AES) || (!defined(NO_SHA) ||\
-        !defined(NO_SHA256) || defined(WOLFSSL_SHA512)))
+    #if defined(HAVE_ECC) && defined(HAVE_X963_KDF) && (!defined(NO_AES) || \
+            !defined(NO_SHA) || !defined(NO_SHA256) || defined(WOLFSSL_SHA512))
         byte*   eccCert     = NULL;
         byte*   eccPrivKey  = NULL;
         word32  eccCertSz;
@@ -17793,8 +17793,8 @@ static int test_wc_PKCS7_EncodeDecodeEnvelopedData(void)
 #endif /* NO_RSA */
 
 /* ECC */
-#if defined(HAVE_ECC) && (!defined(NO_AES) || (!defined(NO_SHA) ||\
-    !defined(NO_SHA256) || defined(WOLFSSL_SHA512)))
+#if defined(HAVE_ECC) && defined(HAVE_X963_KDF) && (!defined(NO_AES) || \
+        !defined(NO_SHA) || !defined(NO_SHA256) || defined(WOLFSSL_SHA512))
 
     #ifdef USE_CERT_BUFFERS_256
         ExpectNotNull(eccCert = (byte*)XMALLOC(TWOK_BUF, HEAP_HINT,
@@ -17862,7 +17862,7 @@ static int test_wc_PKCS7_EncodeDecodeEnvelopedData(void)
     #endif /* NO_AES && HAVE_AES_CBC */
 
 #endif /* NO_RSA */
-#if defined(HAVE_ECC)
+#if defined(HAVE_ECC) && defined(HAVE_X963_KDF)
     #if !defined(NO_AES) && defined(HAVE_AES_CBC) && defined(HAVE_AES_KEYWRAP)
         #if !defined(NO_SHA) && defined(WOLFSSL_AES_128)
             {(byte*)input, (word32)(sizeof(input)/sizeof(char)), DATA,
@@ -18036,7 +18036,7 @@ static int test_wc_PKCS7_EncodeDecodeEnvelopedData(void)
         (word32)sizeof(decoded)), WC_NO_ERR_TRACE(BAD_FUNC_ARG));
     /* Should get a return of BAD_FUNC_ARG with structure data. Order matters.*/
 #if defined(HAVE_ECC) && !defined(NO_AES) && defined(HAVE_AES_CBC) && \
-    defined(HAVE_AES_KEYWRAP)
+    defined(HAVE_AES_KEYWRAP) && defined(HAVE_X963_KDF)
     /* only a failure for KARI test cases */
     if (pkcs7 != NULL) {
         tempWrd32 = pkcs7->singleCertSz;
@@ -18137,7 +18137,7 @@ static int test_wc_PKCS7_EncodeDecodeEnvelopedData(void)
     XFREE(rsaCert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
     XFREE(rsaPrivKey, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
 #endif /* NO_RSA */
-#ifdef HAVE_ECC
+#if defined(HAVE_ECC) && defined(HAVE_X963_KDF)
     XFREE(eccCert, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
     XFREE(eccPrivKey, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
 #endif /* HAVE_ECC */
@@ -18186,7 +18186,8 @@ static int test_wc_PKCS7_EncodeDecodeEnvelopedData(void)
 } /* END test_wc_PKCS7_EncodeDecodeEnvelopedData() */
 
 
-#if defined(HAVE_PKCS7) && defined(HAVE_ECC) && !defined(NO_SHA256) && defined(WOLFSSL_AES_256)
+#if defined(HAVE_PKCS7) && defined(HAVE_ECC) && defined(HAVE_X963_KDF) && \
+    !defined(NO_SHA256) && defined(WOLFSSL_AES_256)
 static int wasAESKeyWrapCbCalled = 0;
 static int wasAESKeyUnwrapCbCalled = 0;
 
@@ -18215,7 +18216,8 @@ static int testAESKeyWrapUnwrapCb(const byte* key, word32 keySz,
 static int test_wc_PKCS7_SetAESKeyWrapUnwrapCb(void)
 {
     EXPECT_DECLS;
-#if defined(HAVE_PKCS7) && defined(HAVE_ECC) && !defined(NO_SHA256) && defined(WOLFSSL_AES_256)
+#if defined(HAVE_PKCS7) && defined(HAVE_ECC) && defined(HAVE_X963_KDF) && \
+    !defined(NO_SHA256) && defined(WOLFSSL_AES_256)
     static const char input[] = "Test input for AES key wrapping";
     PKCS7 * pkcs7 = NULL;
     byte * eccCert = NULL;
@@ -18229,41 +18231,46 @@ static int test_wc_PKCS7_SetAESKeyWrapUnwrapCb(void)
     WC_RNG rng;
 #endif
 
-    /* Load test certs */
-    #ifdef USE_CERT_BUFFERS_256
-        ExpectNotNull(eccCert = (byte*)XMALLOC(TWOK_BUF, HEAP_HINT,
-            DYNAMIC_TYPE_TMP_BUFFER));
-        /* Init buffer. */
-        eccCertSz = (word32)sizeof_cliecc_cert_der_256;
-        if (eccCert != NULL) {
-            XMEMCPY(eccCert, cliecc_cert_der_256, eccCertSz);
-        }
-        ExpectNotNull(eccPrivKey = (byte*)XMALLOC(TWOK_BUF, HEAP_HINT,
-            DYNAMIC_TYPE_TMP_BUFFER));
-        eccPrivKeySz = (word32)sizeof_ecc_clikey_der_256;
-        if (eccPrivKey != NULL) {
-            XMEMCPY(eccPrivKey, ecc_clikey_der_256, eccPrivKeySz);
-        }
-    #else /* File system. */
-        ExpectTrue((certFile = XFOPEN(eccClientCert, "rb")) != XBADFILE);
-        eccCertSz = (word32)FOURK_BUF;
-        ExpectNotNull(eccCert = (byte*)XMALLOC(FOURK_BUF, HEAP_HINT,
-            DYNAMIC_TYPE_TMP_BUFFER));
-        ExpectTrue((eccCertSz = (word32)XFREAD(eccCert, 1, eccCertSz,
-            certFile)) > 0);
-        if (certFile != XBADFILE) {
-            XFCLOSE(certFile);
-        }
-        ExpectTrue((keyFile = XFOPEN(eccClientKey, "rb")) != XBADFILE);
-        eccPrivKeySz = (word32)FOURK_BUF;
-        ExpectNotNull(eccPrivKey = (byte*)XMALLOC(FOURK_BUF, HEAP_HINT,
-            DYNAMIC_TYPE_TMP_BUFFER));
-        ExpectTrue((eccPrivKeySz = (word32)XFREAD(eccPrivKey, 1, eccPrivKeySz,
-            keyFile)) > 0);
-        if (keyFile != XBADFILE) {
-            XFCLOSE(keyFile);
-        }
-    #endif /* USE_CERT_BUFFERS_256 */
+#ifdef ECC_TIMING_RESISTANT
+    XMEMSET(&rng, 0, sizeof(WC_RNG));
+    ExpectIntEQ(wc_InitRng(&rng), 0);
+#endif
+
+/* Load test certs */
+#ifdef USE_CERT_BUFFERS_256
+    ExpectNotNull(eccCert = (byte*)XMALLOC(TWOK_BUF, HEAP_HINT,
+        DYNAMIC_TYPE_TMP_BUFFER));
+    /* Init buffer. */
+    eccCertSz = (word32)sizeof_cliecc_cert_der_256;
+    if (eccCert != NULL) {
+        XMEMCPY(eccCert, cliecc_cert_der_256, eccCertSz);
+    }
+    ExpectNotNull(eccPrivKey = (byte*)XMALLOC(TWOK_BUF, HEAP_HINT,
+        DYNAMIC_TYPE_TMP_BUFFER));
+    eccPrivKeySz = (word32)sizeof_ecc_clikey_der_256;
+    if (eccPrivKey != NULL) {
+        XMEMCPY(eccPrivKey, ecc_clikey_der_256, eccPrivKeySz);
+    }
+#else /* File system. */
+    ExpectTrue((certFile = XFOPEN(eccClientCert, "rb")) != XBADFILE);
+    eccCertSz = (word32)FOURK_BUF;
+    ExpectNotNull(eccCert = (byte*)XMALLOC(FOURK_BUF, HEAP_HINT,
+        DYNAMIC_TYPE_TMP_BUFFER));
+    ExpectTrue((eccCertSz = (word32)XFREAD(eccCert, 1, eccCertSz,
+        certFile)) > 0);
+    if (certFile != XBADFILE) {
+        XFCLOSE(certFile);
+    }
+    ExpectTrue((keyFile = XFOPEN(eccClientKey, "rb")) != XBADFILE);
+    eccPrivKeySz = (word32)FOURK_BUF;
+    ExpectNotNull(eccPrivKey = (byte*)XMALLOC(FOURK_BUF, HEAP_HINT,
+        DYNAMIC_TYPE_TMP_BUFFER));
+    ExpectTrue((eccPrivKeySz = (word32)XFREAD(eccPrivKey, 1, eccPrivKeySz,
+        keyFile)) > 0);
+    if (keyFile != XBADFILE) {
+        XFCLOSE(keyFile);
+    }
+#endif /* USE_CERT_BUFFERS_256 */
 
     ExpectNotNull(pkcs7 = wc_PKCS7_New(HEAP_HINT, testDevId));
     ExpectIntEQ(wc_PKCS7_InitWithCert(pkcs7, eccCert, eccCertSz), 0);
@@ -18279,8 +18286,6 @@ static int test_wc_PKCS7_SetAESKeyWrapUnwrapCb(void)
         pkcs7->singleCert = eccCert;
         pkcs7->singleCertSz = (word32)eccCertSz;
 #ifdef ECC_TIMING_RESISTANT
-        XMEMSET(&rng, 0, sizeof(WC_RNG));
-        ExpectIntEQ(wc_InitRng(&rng), 0);
         pkcs7->rng = &rng;
 #endif
     }
@@ -18318,8 +18323,8 @@ static int test_wc_PKCS7_GetEnvelopedDataKariRid(void)
 {
     EXPECT_DECLS;
 #if defined(HAVE_PKCS7)
-#if defined(HAVE_ECC) && (!defined(NO_AES) || (!defined(NO_SHA) || \
-     !defined(NO_SHA256) || defined(WOLFSSL_SHA512)))
+#if defined(HAVE_ECC) && defined(HAVE_X963_KDF) && (!defined(NO_AES) || \
+        !defined(NO_SHA) || !defined(NO_SHA256) || defined(WOLFSSL_SHA512))
     /* The kari-keyid-cms.msg generated by openssl has a 68 byte RID structure.
      * Reserve a bit more than that in case it might grow. */
     byte rid[256];
