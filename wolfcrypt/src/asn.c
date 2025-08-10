@@ -715,6 +715,11 @@ int SizeASN_Items(const ASNItem* asn, ASNSetData *data, int count, int* encSz)
     WOLFSSL_ENTER("SizeASN_Items");
 #endif
 
+    if (asn == NULL || data == NULL || count <= 0 || encSz == NULL) {
+        WOLFSSL_MSG("bad arguments in SizeASN_Items");
+        return BAD_FUNC_ARG;
+    }
+
     for (i = count - 1; i >= 0; i--) {
         /* Skip this ASN.1 item when encoding. */
         if (data[i].noOut) {
@@ -25749,7 +25754,7 @@ int ParseCertRelative(DecodedCert* cert, int type, int verify, void* cm,
                 }
             }
         #endif /* IGNORE_NAME_CONSTRAINTS */
-        }
+        } /* cert->ca */
 #ifdef WOLFSSL_CERT_REQ
         else if (type == CERTREQ_TYPE) {
             /* try to confirm/verify signature */
@@ -25813,7 +25818,7 @@ int ParseCertRelative(DecodedCert* cert, int type, int verify, void* cm,
 #endif
         else {
             /* no signer */
-            WOLFSSL_MSG("No CA signer to verify with");
+            WOLFSSL_MSG_CERT_LOG("No CA signer to verify with");
             /* If you end up here with error -188,
              * consider using WOLFSSL_ALT_CERT_CHAINS. */
 #if defined(OPENSSL_ALL) || defined(WOLFSSL_QT)
@@ -25826,10 +25831,11 @@ int ParseCertRelative(DecodedCert* cert, int type, int verify, void* cm,
 #endif
             {
                 WOLFSSL_ERROR_VERBOSE(ASN_NO_SIGNER_E);
+                WOLFSSL_MSG_CERT("Consider using WOLFSSL_ALT_CERT_CHAINS.");
                 return ASN_NO_SIGNER_E;
             }
         }
-    }
+    } /* verify != NO_VERIFY && type != CA_TYPE && type != TRUSTED_PEER_TYPE */
 
 #if defined(WOLFSSL_NO_TRUSTED_CERTS_VERIFY) && !defined(NO_SKID)
 exit_pcr:
@@ -25839,7 +25845,7 @@ exit_pcr:
         if (verify != VERIFY_SKIP_DATE) {
             return cert->badDate;
         }
-        WOLFSSL_MSG("Date error: Verify option is skipping");
+        WOLFSSL_MSG_CERT_LOG("Date error: Verify option is skipping");
     }
 
     if (cert->criticalExt != 0)
@@ -41354,7 +41360,7 @@ int wc_ParseCertPIV(wc_CertPIV* piv, const byte* buf, word32 totalSz)
     DECL_ASNGETDATA(dataASN, pivCertASN_Length);
     int ret = 0;
     word32 idx;
-    byte info;
+    byte info = 0;
 
     WOLFSSL_ENTER("wc_ParseCertPIV");
 
