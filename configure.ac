@@ -1676,6 +1676,7 @@ then
 
     if test "$ENABLED_LIBOQS" = "no"; then
         AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_WC_DILITHIUM"
+        AM_CCASFLAGS="$AM_CCASFLAGS -DWOLFSSL_WC_DILITHIUM"
         test "$enable_sha3" = "" && enable_sha3=yes
         test "$enable_shake128" = "" && enable_shake128=yes
         test "$enable_shake256" = "" && enable_shake256=yes
@@ -5655,7 +5656,8 @@ AC_ARG_ENABLE([pwdbased],
 # MemUse Entropy
 # wolfEntropy Software Jitter SP800-90B certifiable entropy source
 
-if test "$ENABLED_LINUXKM_DEFAULTS" = "yes"
+if test "$ENABLED_LINUXKM_DEFAULTS" = "yes" && \
+   (test "$ENABLED_FIPS" = "no" || test "$HAVE_FIPS_VERSION" -ge 6)
 then
     ENABLED_ENTROPY_MEMUSE_DEFAULT=yes
 else
