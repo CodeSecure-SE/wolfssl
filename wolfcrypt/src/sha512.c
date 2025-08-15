@@ -325,6 +325,9 @@ static int InitSha512(wc_Sha512* sha512)
 #ifdef WOLFSSL_HASH_FLAGS
     sha512->flags = 0;
 #endif
+#if defined(WOLFSSL_SHA512_HASHTYPE)
+    sha512->hashType = WC_HASH_TYPE_SHA512;
+#endif /* WOLFSSL_SHA512_HASHTYPE */
     return 0;
 }
 
@@ -378,6 +381,9 @@ static int InitSha512_224(wc_Sha512* sha512)
 #ifdef WOLFSSL_HASH_FLAGS
     sha512->flags = 0;
 #endif
+#if defined(WOLFSSL_SHA512_HASHTYPE)
+    sha512->hashType = WC_HASH_TYPE_SHA512_224;
+#endif /* WOLFSSL_SHA512_HASHTYPE */
     return 0;
 }
 #endif /* !WOLFSSL_NOSHA512_224 && !FIPS ... */
@@ -431,6 +437,9 @@ static int InitSha512_256(wc_Sha512* sha512)
 #ifdef WOLFSSL_HASH_FLAGS
     sha512->flags = 0;
 #endif
+#if defined(WOLFSSL_SHA512_HASHTYPE)
+    sha512->hashType = WC_HASH_TYPE_SHA512_256;
+#endif /* WOLFSSL_SHA512_HASHTYPE */
     return 0;
 }
 #endif /* !WOLFSSL_NOSHA512_256 && !FIPS... */
@@ -535,7 +544,7 @@ static int InitSha512_256(wc_Sha512* sha512)
     }  /* extern "C" */
 #endif
 
-    static word32 intel_flags = 0;
+    static cpuid_flags_t intel_flags = WC_CPUID_INITIALIZER;
 
 #if defined(WC_C_DYNAMIC_FALLBACK) && !defined(WC_NO_INTERNAL_FUNCTION_POINTERS)
     #define WC_NO_INTERNAL_FUNCTION_POINTERS
@@ -573,8 +582,7 @@ static int InitSha512_256(wc_Sha512* sha512)
         }
     #endif
 
-        if (intel_flags == 0)
-            intel_flags = cpuid_get_flags();
+        cpuid_get_flags_ex(&intel_flags);
 
     #if defined(HAVE_INTEL_AVX2)
         if (IS_INTEL_AVX2(intel_flags)) {
@@ -715,7 +723,7 @@ static int InitSha512_256(wc_Sha512* sha512)
         if (transform_check)
             return;
 
-        intel_flags = cpuid_get_flags();
+        cpuid_get_flags_ex(&intel_flags);
 
     #if defined(HAVE_INTEL_AVX2)
         if (IS_INTEL_AVX2(intel_flags)) {
