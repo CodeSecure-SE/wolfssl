@@ -264,6 +264,104 @@ void wc_linuxkm_relax_long_loop(void) {
     #endif
 }
 
+/* backported wc_GenerateSeed_IntelRD() for FIPS v5. */
+#ifdef WC_LINUXKM_RDSEED_IN_GLUE_LAYER
+
+#include <wolfssl/wolfcrypt/cpuid.h>
+#include <wolfssl/wolfcrypt/random.h>
+
+static cpuid_flags_t intel_flags = WC_CPUID_INITIALIZER;
+static inline void wc_InitRng_IntelRD(void)
+{
+    cpuid_get_flags_ex(&intel_flags);
+}
+
+#define INTELRD_RETRY 32
+
+static WC_INLINE int IntelRDseed64(word64* seed)
+{
+    unsigned char ok;
+
+    __asm__ volatile("rdseed %0; setc %1":"=r"(*seed), "=qm"(ok));
+    return (ok) ? 0 : -1;
+}
+
+/* return 0 on success */
+static WC_INLINE int IntelRDseed64_r(word64* rnd)
+{
+    int iters, retry_counter;
+    word64 buf;
+#if defined(HAVE_AMD_RDSEED)
+    /* See "AMD RNG ESV Public Use Document".  Version 0.7 of October 24,
+     * 2024 specifies 0.656 to 1.312 bits of entropy per 128 bit block of
+     * RDSEED output, depending on CPU family.
+     *
+     * FIPS v5 random.c sets ENTROPY_SCALE_FACTOR to 1 for
+     * HAVE_INTEL_RDSEED.
+     */
+    iters = 128;
+#elif defined(HAVE_INTEL_RDSEED)
+    /* The value of 2 applies to Intel's RDSEED which provides about
+     * 0.5 bits minimum of entropy per bit. The value of 4 gives a
+     * conservative margin for FIPS.
+     *
+     * FIPS v5 random.c sets ENTROPY_SCALE_FACTOR to 2 for
+     * HAVE_INTEL_RDSEED.
+     */
+    iters = 2;
+#else
+    #error WC_LINUXKM_RDSEED_IN_GLUE_LAYER requires HAVE_INTEL_RDSEED or HAVE_AMD_RDSEED
+#endif
+
+    while (--iters >= 0) {
+        for (retry_counter = 0; retry_counter < INTELRD_RETRY; retry_counter++) {
+            if (IntelRDseed64(&buf) == 0)
+                break;
+        }
+        if (retry_counter == INTELRD_RETRY)
+            return -1;
+        WC_SANITIZE_DISABLE();
+        *rnd ^= buf; /* deliberately retain any garbage passed in the dest buffer. */
+        WC_SANITIZE_ENABLE();
+    }
+    return 0;
+}
+
+/* return 0 on success */
+int wc_linuxkm_GenerateSeed_IntelRD(struct OS_Seed* os, byte* output, word32 sz)
+{
+    int ret;
+    word64 rndTmp;
+
+    (void)os;
+
+    wc_InitRng_IntelRD();
+
+    if (!IS_INTEL_RDSEED(intel_flags))
+        return -1;
+
+    for (; (sz / sizeof(word64)) > 0; sz -= sizeof(word64),
+                                                    output += sizeof(word64)) {
+        ret = IntelRDseed64_r((word64*)output);
+        if (ret != 0)
+            return ret;
+    }
+    if (sz == 0)
+        return 0;
+
+    /* handle unaligned remainder */
+    ret = IntelRDseed64_r(&rndTmp);
+    if (ret != 0)
+        return ret;
+
+    XMEMCPY(output, &rndTmp, sz);
+    wc_ForceZero(&rndTmp, sizeof(rndTmp));
+
+    return 0;
+}
+
+#endif /* WC_LINUXKM_RDSEED_IN_GLUE_LAYER */
+
 #if defined(WOLFSSL_LINUXKM_USE_SAVE_VECTOR_REGISTERS) && defined(CONFIG_X86)
     #include "linuxkm/x86_vector_register_glue.c"
 #endif
@@ -359,14 +457,15 @@ static int wolfssl_init(void)
 #endif /* HAVE_FIPS */
 
 #ifdef WC_RNG_SEED_CB
-    ret = wc_SetSeed_Cb(wc_GenerateSeed);
+    ret = wc_SetSeed_Cb(WC_GENERATE_SEED_DEFAULT);
+
     if (ret < 0) {
         pr_err("ERROR: wc_SetSeed_Cb() failed with return code %d.\n", ret);
         (void)libwolfssl_cleanup();
         msleep(10);
         return -ECANCELED;
     }
-#endif
+#endif /* WC_RNG_SEED_CB */
 
 #ifdef WOLFCRYPT_ONLY
     ret = wolfCrypt_Init();
@@ -611,8 +710,9 @@ ssize_t wc_linuxkm_normalize_relocations(
     int n_text_r = 0, n_rodata_r = 0, n_rwdata_r = 0, n_bss_r = 0, n_other_r = 0;
 #endif
 
-    if ((text_in < __wc_text_start) ||
-        (text_in >= __wc_text_end))
+    if ((text_in_len == 0) ||
+        (text_in < __wc_text_start) ||
+        (text_in + text_in_len >= __wc_text_end))
     {
         return -1;
     }
@@ -663,7 +763,7 @@ ssize_t wc_linuxkm_normalize_relocations(
         abs_ptr = (uintptr_t)text_in + next_reloc + 4 + reloc_buf;
 
         if ((abs_ptr >= (uintptr_t)__wc_text_start) &&
-            (abs_ptr < (uintptr_t)__wc_text_end))
+            (abs_ptr <= (uintptr_t)__wc_text_end))
         {
             /* internal references in the .wolfcrypt.text segment don't need
              * normalization.
@@ -674,7 +774,7 @@ ssize_t wc_linuxkm_normalize_relocations(
             continue;
         }
         else if ((abs_ptr >= (uintptr_t)__wc_rodata_start) &&
-                 (abs_ptr < (uintptr_t)__wc_rodata_end))
+                 (abs_ptr <= (uintptr_t)__wc_rodata_end))
         {
 #ifdef DEBUG_LINUXKM_PIE_SUPPORT
             ++n_rodata_r;
@@ -684,7 +784,7 @@ ssize_t wc_linuxkm_normalize_relocations(
             reloc_buf |= WC_RODATA_TAG;
         }
         else if ((abs_ptr >= (uintptr_t)__wc_rwdata_start) &&
-                 (abs_ptr < (uintptr_t)__wc_rwdata_end))
+                 (abs_ptr <= (uintptr_t)__wc_rwdata_end))
         {
 #ifdef DEBUG_LINUXKM_PIE_SUPPORT
             ++n_rwdata_r;
@@ -694,7 +794,7 @@ ssize_t wc_linuxkm_normalize_relocations(
             reloc_buf |= WC_RWDATA_TAG;
         }
         else if ((abs_ptr >= (uintptr_t)__wc_bss_start) &&
-                 (abs_ptr < (uintptr_t)__wc_bss_end))
+                 (abs_ptr <= (uintptr_t)__wc_bss_end))
         {
 #ifdef DEBUG_LINUXKM_PIE_SUPPORT
             ++n_bss_r;
@@ -710,19 +810,23 @@ ssize_t wc_linuxkm_normalize_relocations(
             reloc_buf = WC_OTHER_TAG;
 #ifdef DEBUG_LINUXKM_PIE_SUPPORT
             ++n_other_r;
+            /* we're currently only handling 32 bit relocations (R_X86_64_PLT32
+             * and R_X86_64_PC32) so the top half of the word64 is padding we
+             * can lop off for rendering.
+             */
             pr_notice("found non-wolfcrypt relocation at text offset 0x%x to "
-                      "addr 0x%lx, text=%px-%px, rodata=%px-%px, "
-                      "rwdata=%px-%px, bss=%px-%px\n",
+                      "addr 0x%x, text=%x-%x, rodata=%x-%x, "
+                      "rwdata=%x-%x, bss=%x-%x\n",
                       wc_linuxkm_pie_reloc_tab[i],
-                      abs_ptr,
-                      __wc_text_start,
-                      __wc_text_end,
-                      __wc_rodata_start,
-                      __wc_rodata_end,
-                      __wc_rwdata_start,
-                      __wc_rwdata_end,
-                      __wc_bss_start,
-                      __wc_bss_end);
+                      (unsigned)(uintptr_t)abs_ptr,
+                      (unsigned)(uintptr_t)__wc_text_start,
+                      (unsigned)(uintptr_t)__wc_text_end,
+                      (unsigned)(uintptr_t)__wc_rodata_start,
+                      (unsigned)(uintptr_t)__wc_rodata_end,
+                      (unsigned)(uintptr_t)__wc_rwdata_start,
+                      (unsigned)(uintptr_t)__wc_rwdata_end,
+                      (unsigned)(uintptr_t)__wc_bss_start,
+                      (unsigned)(uintptr_t)__wc_bss_end);
 #endif
         }
         put_unaligned((u32)reloc_buf, (int32_t *)&text_out[next_reloc]);
@@ -730,8 +834,9 @@ ssize_t wc_linuxkm_normalize_relocations(
 
 #ifdef DEBUG_LINUXKM_PIE_SUPPORT
     if (n_other_r > 0)
-        pr_notice("text_in=%px relocs=%d/%d/%d/%d/%d ret = %zu\n",
-                  text_in, n_text_r, n_rodata_r, n_rwdata_r, n_bss_r, n_other_r,
+        pr_notice("text_in=%x relocs=%d/%d/%d/%d/%d ret = %zu\n",
+                  (unsigned)(uintptr_t)text_in, n_text_r, n_rodata_r,
+                  n_rwdata_r, n_bss_r, n_other_r,
                   text_in_len);
 #endif
 
