@@ -6,7 +6,7 @@
  *
  * wolfSSL is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * wolfSSL is distributed in the hope that it will be useful,
@@ -142,7 +142,7 @@ This library contains implementation for the random number generator.
 #elif defined(WOLFSSL_TELIT_M2MB)
 #elif defined(WOLFSSL_RENESAS_TSIP)
     /* for wc_tsip_GenerateRandBlock */
-    #include "wolfssl/wolfcrypt/port/Renesas/renesas-tsip-crypt.h"
+    #include "wolfssl/wolfcrypt/port/Renesas/renesas_tsip_internal.h"
 #elif defined(WOLFSSL_SCE) && !defined(WOLFSSL_SCE_NO_TRNG)
 #elif defined(WOLFSSL_IMXRT1170_CAAM)
 #elif defined(CY_USING_HAL) && defined(COMPONENT_WOLFSSL)
@@ -184,10 +184,10 @@ This library contains implementation for the random number generator.
 
 #if defined(HAVE_INTEL_RDRAND) || defined(HAVE_INTEL_RDSEED) || \
     defined(HAVE_AMD_RDSEED)
-    static word32 intel_flags = 0;
+    static cpuid_flags_t intel_flags = WC_CPUID_INITIALIZER;
     static void wc_InitRng_IntelRD(void)
     {
-        intel_flags = cpuid_get_flags();
+        cpuid_get_flags_ex(&intel_flags);
     }
     #if defined(HAVE_INTEL_RDSEED) || defined(HAVE_AMD_RDSEED)
     static int wc_GenerateSeed_IntelRD(OS_Seed* os, byte* output, word32 sz);

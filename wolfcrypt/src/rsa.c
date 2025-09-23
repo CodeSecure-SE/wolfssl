@@ -6,7 +6,7 @@
  *
  * wolfSSL is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * wolfSSL is distributed in the hope that it will be useful,
@@ -42,6 +42,7 @@ RSA keys can be used to encrypt, decrypt, sign and verify data.
 #endif
 
 #include <wolfssl/wolfcrypt/rsa.h>
+#include <wolfssl/wolfcrypt/logging.h>
 
 #ifdef WOLFSSL_AFALG_XILINX_RSA
 #include <wolfssl/wolfcrypt/port/af_alg/wc_afalg.h>
@@ -59,9 +60,9 @@ RSA keys can be used to encrypt, decrypt, sign and verify data.
 #if defined(WOLFSSL_LINUXKM) && !defined(WOLFSSL_SP_ASM)
     /* force off unneeded vector register save/restore. */
     #undef SAVE_VECTOR_REGISTERS
-    #define SAVE_VECTOR_REGISTERS(fail_clause) WC_DO_NOTHING
+    #define SAVE_VECTOR_REGISTERS(fail_clause) SAVE_NO_VECTOR_REGISTERS(fail_clause)
     #undef RESTORE_VECTOR_REGISTERS
-    #define RESTORE_VECTOR_REGISTERS() WC_DO_NOTHING
+    #define RESTORE_VECTOR_REGISTERS() RESTORE_NO_VECTOR_REGISTERS()
 #endif
 
 /*
@@ -2593,7 +2594,7 @@ static int RsaFunctionPrivate(mp_int* tmp, RsaKey* key, WC_RNG* rng)
     }
 #else
     if (ret == 0 && (mp_iszero(&key->p) || mp_iszero(&key->q) ||
-            mp_iszero(&key->dP) || mp_iszero(&key->dQ))) {
+            mp_iszero(&key->dP) || mp_iszero(&key->dQ) || mp_iszero(&key->u))) {
         if (mp_exptmod(tmp, &key->d, &key->n, tmp) != MP_OKAY) {
             ret = MP_EXPTMOD_E;
         }
@@ -2748,7 +2749,7 @@ static int RsaFunctionSync(const byte* in, word32 inLen, byte* out,
         case RSA_PUBLIC_ENCRYPT:
         case RSA_PUBLIC_DECRYPT:
             if (mp_exptmod_nct(tmp, &key->e, &key->n, tmp) != MP_OKAY) {
-                WOLFSSL_MSG("mp_exptmod_nct failed");
+                WOLFSSL_MSG_CERT_LOG("mp_exptmod_nct failed");
                 ret = MP_EXPTMOD_E;
             }
             break;
@@ -2845,7 +2846,7 @@ static int wc_RsaFunctionSync(const byte* in, word32 inLen, byte* out,
     *outLen = keyLen;
     return RsaFunctionSync(in, inLen, out, outLen, type, key, rng);
 #endif /* WOLFSSL_SP_MATH */
-}
+} /* wc_RsaFunctionSync */
 #endif /* WOLF_CRYPTO_CB_ONLY_RSA */
 #endif
 
@@ -2924,7 +2925,8 @@ static int wc_RsaFunctionAsync(const byte* in, word32 inLen, byte* out,
 }
 #endif /* WOLFSSL_ASYNC_CRYPT && WC_ASYNC_ENABLE_RSA */
 
-#if defined(WC_RSA_DIRECT) || defined(WC_RSA_NO_PADDING) || defined(OPENSSL_EXTRA) || defined(OPENSSL_EXTRA_X509_SMALL)
+#if defined(WC_RSA_DIRECT) || defined(WC_RSA_NO_PADDING) || \
+    defined(OPENSSL_EXTRA) || defined(OPENSSL_EXTRA_X509_SMALL)
 /* Performs direct RSA computation without padding. The input and output must
  * match the key size (ex: 2048-bits = 256 bytes). Returns the size of the
  * output on success or negative value on failure. */
@@ -3010,7 +3012,8 @@ int wc_RsaDirect(byte* in, word32 inLen, byte* out, word32* outSz,
 
     return ret;
 }
-#endif /* WC_RSA_DIRECT || WC_RSA_NO_PADDING || OPENSSL_EXTRA || OPENSSL_EXTRA_X509_SMALL */
+#endif /* WC_RSA_DIRECT || WC_RSA_NO_PADDING || OPENSSL_EXTRA || \
+        * OPENSSL_EXTRA_X509_SMALL */
 
 #if defined(WOLFSSL_CRYPTOCELL)
 static int cc310_RsaPublicEncrypt(const byte* in, word32 inLen, byte* out,
@@ -3599,6 +3602,9 @@ static int RsaPrivateDecryptEx(const byte* in, word32 inLen, byte* out,
         ret = wc_CryptoCb_RsaPad(in, inLen, out,
                             &outLen, rsa_type, key, rng, &padding);
         if (ret != WC_NO_ERR_TRACE(CRYPTOCB_UNAVAILABLE)) {
+            if (outPtr != NULL) {
+                *outPtr = out;
+            }
             if (ret == 0) {
                 ret = (int)outLen;
             }
@@ -4757,12 +4763,11 @@ int wc_CheckProbablePrime_ex(const byte* pRaw, word32 pRawSz,
     if (ret == MP_OKAY)
         ret = mp_read_unsigned_bin(e, eRaw, eRawSz);
 
-    if (ret == MP_OKAY) {
+    if (ret == MP_OKAY)
         SAVE_VECTOR_REGISTERS(ret = _svr_ret;);
 
-        if (ret == MP_OKAY)
-            ret = _CheckProbablePrime(p, Q, e, nlen, isPrime, rng);
-
+    if (ret == 0) {
+        ret = _CheckProbablePrime(p, Q, e, nlen, isPrime, rng);
         RESTORE_VECTOR_REGISTERS();
     }
 
@@ -5167,7 +5172,8 @@ int wc_MakeRsaKey(RsaKey* key, int size, long e, WC_RNG* rng)
     }
 #endif
 
-    RESTORE_VECTOR_REGISTERS();
+    if (err != WC_NO_ERR_TRACE(WC_ACCEL_INHIBIT_E))
+        RESTORE_VECTOR_REGISTERS();
 
     /* Last value p - 1. */
     mp_forcezero(tmp1);

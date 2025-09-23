@@ -6,7 +6,7 @@
  *
  * wolfSSL is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * wolfSSL is distributed in the hope that it will be useful,
@@ -1233,7 +1233,7 @@ static WC_INLINE void showPeerEx(WOLFSSL* ssl, int lng_index)
 #if defined(SHOW_CERTS) && defined(KEEP_OUR_CERT) && \
     (defined(OPENSSL_EXTRA) || defined(OPENSSL_EXTRA_X509_SMALL))
     ShowX509(wolfSSL_get_certificate(ssl), "our cert info:");
-    printf("Peer verify result = %lu\n", wolfSSL_get_verify_result(ssl));
+    printf("Peer verify result = %ld\n", wolfSSL_get_verify_result(ssl));
 #endif /* SHOW_CERTS && KEEP_OUR_CERT */
     printf("%s %s\n", words[0], wolfSSL_get_version(ssl));
 
@@ -1302,60 +1302,7 @@ static WC_INLINE void build_addr(SOCKADDR_IN_T* addr, const char* peer,
 #ifndef TEST_IPV6
     /* peer could be in human readable form */
     if ( ((size_t)peer != INADDR_ANY) && isalpha((unsigned char)peer[0])) {
-    #ifdef WOLFSSL_USE_POPEN_HOST
-        char host_ipaddr[4] = { 127, 0, 0, 1 };
-        int found = 1;
-
-        if ((XSTRCMP(peer, "localhost") != 0) &&
-            (XSTRCMP(peer, "127.0.0.1") != 0)) {
-            FILE* fp;
-            char cmd[100];
-
-            XSTRNCPY(cmd, "host ", 6);
-            XSTRNCAT(cmd, peer, 99 - XSTRLEN(cmd));
-            found = 0;
-            fp = popen(cmd, "r");
-            if (fp != NULL) {
-                char host_out[100];
-                while (fgets(host_out, sizeof(host_out), fp) != NULL) {
-                    int i;
-                    int j = 0;
-                    for (j = 0; host_out[j] != '\0'; j++) {
-                        if ((host_out[j] >= '0') && (host_out[j] <= '9')) {
-                            break;
-                        }
-                    }
-                    found = (host_out[j] >= '0') && (host_out[j] <= '9');
-                    if (!found) {
-                        continue;
-                    }
-
-                    for (i = 0; i < 4; i++) {
-                        host_ipaddr[i] = atoi(host_out + j);
-                        while ((host_out[j] >= '0') && (host_out[j] <= '9')) {
-                            j++;
-                        }
-                        if (host_out[j] == '.') {
-                            j++;
-                            found &= (i != 3);
-                        }
-                        else {
-                            found &= (i == 3);
-                            break;
-                        }
-                    }
-                    if (found) {
-                        break;
-                    }
-                }
-                pclose(fp);
-            }
-        }
-        if (found) {
-            XMEMCPY(&addr->sin_addr.s_addr, host_ipaddr, sizeof(host_ipaddr));
-            useLookup = 1;
-        }
-    #elif !defined(WOLFSSL_USE_GETADDRINFO)
+    #if !defined(WOLFSSL_USE_GETADDRINFO)
         #if defined(WOLFSSL_MDK_ARM) || defined(WOLFSSL_KEIL_TCP_NET)
             int err;
             struct hostent* entry = gethostbyname(peer, &err);
@@ -1924,7 +1871,7 @@ static WC_INLINE unsigned int my_psk_client_cb(WOLFSSL* ssl, const char* hint,
     }
 
 #if defined(HAVE_PK_CALLBACKS) && defined(TEST_PK_PSK)
-    WOLFSSL_PKMSG("PSK Client using HW (Len %d, Hint %s)\n", ret, hint);
+    WOLFSSL_PKMSG("PSK Client using HW (Len %u, Hint %s)\n", ret, hint);
     ret = (unsigned int)USE_HW_PSK;
 #endif
 
@@ -1968,7 +1915,7 @@ static WC_INLINE unsigned int my_psk_server_cb(WOLFSSL* ssl, const char* identit
         ret = 32;   /* length of key in octets or 0 for error */
     }
 #if defined(HAVE_PK_CALLBACKS) && defined(TEST_PK_PSK)
-    WOLFSSL_PKMSG("PSK Server using HW (Len %d, Hint %s)\n", ret, identity);
+    WOLFSSL_PKMSG("PSK Server using HW (Len %u, Hint %s)\n", ret, identity);
     ret = (unsigned int)USE_HW_PSK;
 #endif
 
@@ -2007,7 +1954,7 @@ static WC_INLINE unsigned int my_psk_client_tls13_cb(WOLFSSL* ssl,
     ret = 32;   /* length of key in octets or 0 for error */
 
 #if defined(HAVE_PK_CALLBACKS) && defined(TEST_PK_PSK)
-    WOLFSSL_PKMSG("PSK Client TLS 1.3 using HW (Len %d, Hint %s)\n", ret, hint);
+    WOLFSSL_PKMSG("PSK Client TLS 1.3 using HW (Len %u, Hint %s)\n", ret, hint);
     ret = (unsigned int)USE_HW_PSK;
 #endif
 
@@ -2050,7 +1997,7 @@ static WC_INLINE unsigned int my_psk_server_tls13_cb(WOLFSSL* ssl,
     ret = 32;   /* length of key in octets or 0 for error */
 
 #if defined(HAVE_PK_CALLBACKS) && defined(TEST_PK_PSK)
-    WOLFSSL_PKMSG("PSK Server TLS 1.3 using HW (Len %d, Hint %s)\n",
+    WOLFSSL_PKMSG("PSK Server TLS 1.3 using HW (Len %u, Hint %s)\n",
         ret, identity);
     ret = (unsigned int)USE_HW_PSK;
 #endif
@@ -3177,7 +3124,7 @@ static WC_INLINE int wolfSSL_PrintStats(WOLFSSL_MEM_STATS* stats)
         return 0;
     }
 
-    /* print to stderr so is on the same pipe as WOLFSSL_DEBUG */
+    /* print to stderr so is on the same pipe as DEBUG_WOLFSSL */
     fprintf(stderr, "Total mallocs   = %d\n", stats->totalAlloc);
     fprintf(stderr, "Total frees     = %d\n", stats->totalFr);
     fprintf(stderr, "Current mallocs = %d\n", stats->curAlloc);

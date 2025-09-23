@@ -6,7 +6,7 @@
  *
  * wolfSSL is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * wolfSSL is distributed in the hope that it will be useful,
@@ -20,22 +20,6 @@
  */
 
 /* included by wolfcrypt/src/memory.c */
-
-#if defined(__PIE__) && (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0))
-/* needed in 6.1+ because show_free_areas() static definition in mm.h calls
- * __show_free_areas(), which isn't exported (neither was show_free_areas()).
- */
-void my__show_free_areas(
-    unsigned int flags,
-    nodemask_t *nodemask,
-    int max_zone_idx)
-{
-    (void)flags;
-    (void)nodemask;
-    (void)max_zone_idx;
-    return;
-}
-#endif
 
 #if defined(__PIE__) && defined(CONFIG_FORTIFY_SOURCE)
 /* needed because FORTIFY_SOURCE inline implementations call fortify_panic(). */

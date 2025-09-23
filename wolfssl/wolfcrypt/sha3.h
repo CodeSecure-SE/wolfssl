@@ -6,7 +6,7 @@
  *
  * wolfSSL is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * wolfSSL is distributed in the hope that it will be useful,
@@ -232,8 +232,15 @@ WOLFSSL_LOCAL void BlockSha3(word64 *s);
     WOLFSSL_LOCAL void sha3_block_n_bmi2(word64* s, const byte* data, word32 n,
         word64 c);
     WOLFSSL_LOCAL void sha3_block_bmi2(word64* s);
+    WOLFSSL_LOCAL void sha3_block_n_avx2(word64* s, const byte* data, word32 n,
+        word64 c);
     WOLFSSL_LOCAL void sha3_block_avx2(word64* s);
     WOLFSSL_LOCAL void sha3_blocksx4_avx2(word64* s);
+
+    WOLFSSL_LOCAL void sha3_128_blocksx4_seed_avx2(word64* s, byte* seed);
+    WOLFSSL_LOCAL void sha3_256_blocksx4_seed_avx2(word64* s, byte* seed);
+
+    WOLFSSL_LOCAL void sha3_256_blocksx4_seed_64_avx2(word64* s, byte* seed);
 #elif defined(__aarch64__) && defined(WOLFSSL_ARMASM)
     #ifdef WOLFSSL_ARMASM_CRYPTO_SHA3
         WOLFSSL_LOCAL void BlockSha3_crypto(word64 *s);

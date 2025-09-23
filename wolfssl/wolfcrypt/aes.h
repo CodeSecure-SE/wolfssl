@@ -6,7 +6,7 @@
  *
  * wolfSSL is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * wolfSSL is distributed in the hope that it will be useful,
@@ -148,7 +148,7 @@ WOLFSSL_LOCAL void GHASH(Gcm* gcm, const byte* a, word32 aSz, const byte* c,
 #endif
 
 #if defined(WOLFSSL_RENESAS_FSPSM)
-    #include <wolfssl/wolfcrypt/port/Renesas/renesas-fspsm-crypt.h>
+    #include <wolfssl/wolfcrypt/port/Renesas/renesas_fspsm_internal.h>
 #endif
 
 #ifdef WOLFSSL_MAXQ10XX_CRYPTO
@@ -286,7 +286,10 @@ struct Aes {
 #endif
 #ifdef HAVE_AESGCM
     Gcm gcm;
-
+#ifdef WOLFSSL_STM32U5_DHUK
+    byte dhukIV[16]; /* Used when unwrapping an encrypted key */
+    int dhukIVLen;
+#endif
 #ifdef WOLFSSL_SE050
     sss_symmetric_t aes_ctx; /* used as the function context */
     int ctxInitDone;
@@ -320,7 +323,7 @@ struct Aes {
     byte use_sha3_hw_crypto;
 #endif
 #endif /* __aarch64__ && WOLFSSL_ARMASM && !WOLFSSL_ARMASM_NO_HW_CRYPTO */
-#ifdef WOLF_CRYPTO_CB
+#if defined(WOLF_CRYPTO_CB) || defined(WOLFSSL_STM32U5_DHUK)
     int    devId;
     void*  devCtx;
 #endif

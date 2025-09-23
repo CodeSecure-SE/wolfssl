@@ -6,7 +6,7 @@
  *
  * wolfSSL is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * wolfSSL is distributed in the hope that it will be useful,
@@ -403,6 +403,7 @@
         sha->digest[4] = 0xC3D2E1F0L;
 
         sha->buffLen = 0;
+        XMEMSET(sha->buffer, 0, sizeof(sha->buffer));
         sha->loLen   = 0;
         sha->hiLen   = 0;
     #ifdef WOLFSSL_HASH_FLAGS
@@ -1065,6 +1066,7 @@ void wc_ShaFree(wc_Sha* sha)
 #if (defined(WOLFSSL_RENESAS_TSIP_TLS) || \
      defined(WOLFSSL_RENESAS_TSIP_CRYPTONLY)) && \
     !defined(NO_WOLFSSL_RENESAS_TSIP_CRYPT_HASH) || \
+    (defined(WOLFSSL_RENESAS_RSIP) && (WOLFSSL_RENESAS_RZFSP_VER >= 220)) ||\
     defined(WOLFSSL_RENESAS_RX64_HASH)
     XFREE(sha->msg, sha->heap, DYNAMIC_TYPE_TMP_BUFFER);
     sha->msg = NULL;

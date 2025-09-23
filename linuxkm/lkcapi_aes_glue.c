@@ -6,7 +6,7 @@
  *
  * wolfSSL is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * wolfSSL is distributed in the hope that it will be useful,
@@ -19,12 +19,17 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1335, USA
  */
 
+/* included by linuxkm/lkcapi_glue.c */
+#ifndef WC_SKIP_INCLUDED_C_FILES
+
 #ifndef LINUXKM_LKCAPI_REGISTER
     #error lkcapi_aes_glue.c included in non-LINUXKM_LKCAPI_REGISTER project.
 #endif
 
 #if (defined(LINUXKM_LKCAPI_REGISTER_ALL) || \
+     defined(LINUXKM_LKCAPI_REGISTER_AES_ALL) || \
      (defined(LINUXKM_LKCAPI_REGISTER_ALL_KCONFIG) && defined(CONFIG_CRYPTO_AES))) && \
+    !defined(LINUXKM_LKCAPI_DONT_REGISTER_AES_ALL) && \
     !defined(LINUXKM_LKCAPI_REGISTER_AES)
     #define LINUXKM_LKCAPI_REGISTER_AES
 #endif
@@ -36,7 +41,8 @@
     defined(LINUXKM_LKCAPI_REGISTER_AESXTS) || \
     defined(LINUXKM_LKCAPI_REGISTER_AESCTR) || \
     defined(LINUXKM_LKCAPI_REGISTER_AESOFB) || \
-    defined(LINUXKM_LKCAPI_REGISTER_AESECB)
+    defined(LINUXKM_LKCAPI_REGISTER_AESECB) || \
+    defined(LINUXKM_LKCAPI_REGISTER_AES_ALL)
 
     #ifdef NO_AES
         #error LINUXKM_LKCAPI_REGISTER_AES* requires !defined(NO_AES)
@@ -103,6 +109,7 @@
 
 #ifdef HAVE_AES_CBC
     #if (defined(LINUXKM_LKCAPI_REGISTER_ALL) || \
+         defined(LINUXKM_LKCAPI_REGISTER_AES_ALL) || \
         (defined(LINUXKM_LKCAPI_REGISTER_ALL_KCONFIG) && defined(CONFIG_CRYPTO_CBC))) && \
         !defined(LINUXKM_LKCAPI_DONT_REGISTER_AESCBC) &&               \
         !defined(LINUXKM_LKCAPI_REGISTER_AESCBC)
@@ -115,7 +122,8 @@
     #undef LINUXKM_LKCAPI_REGISTER_AESCBC
 #endif
 #ifdef WOLFSSL_AES_CFB
-    #if defined(LINUXKM_LKCAPI_REGISTER_ALL) && \
+    #if (defined(LINUXKM_LKCAPI_REGISTER_ALL) || \
+         defined(LINUXKM_LKCAPI_REGISTER_AES_ALL)) && \
         !defined(LINUXKM_LKCAPI_DONT_REGISTER_AESCFB) &&      \
         !defined(LINUXKM_LKCAPI_REGISTER_AESCFB)
         #define LINUXKM_LKCAPI_REGISTER_AESCFB
@@ -125,12 +133,15 @@
 #endif
 #ifdef HAVE_AESGCM
     #if (defined(LINUXKM_LKCAPI_REGISTER_ALL) || \
+         defined(LINUXKM_LKCAPI_REGISTER_AES_ALL) || \
          (defined(LINUXKM_LKCAPI_REGISTER_ALL_KCONFIG) && defined(CONFIG_CRYPTO_GCM))) && \
         !defined(LINUXKM_LKCAPI_DONT_REGISTER_AESGCM) &&               \
         !defined(LINUXKM_LKCAPI_REGISTER_AESGCM)
         #define LINUXKM_LKCAPI_REGISTER_AESGCM
     #endif
-    #if (defined(LINUXKM_LKCAPI_REGISTER_ALL) && !defined(LINUXKM_LKCAPI_DONT_REGISTER_AESGCM_RFC4106)) && \
+    #if ((defined(LINUXKM_LKCAPI_REGISTER_ALL) || \
+          defined(LINUXKM_LKCAPI_REGISTER_AES_ALL)) &&                  \
+         !defined(LINUXKM_LKCAPI_DONT_REGISTER_AESGCM_RFC4106)) &&      \
         !defined(LINUXKM_LKCAPI_REGISTER_AESGCM_RFC4106)
         #define LINUXKM_LKCAPI_REGISTER_AESGCM_RFC4106
     #endif
@@ -143,6 +154,7 @@
 #endif
 #ifdef WOLFSSL_AES_XTS
     #if (defined(LINUXKM_LKCAPI_REGISTER_ALL) || \
+         defined(LINUXKM_LKCAPI_REGISTER_AES_ALL) || \
          (defined(LINUXKM_LKCAPI_REGISTER_ALL_KCONFIG) && defined(CONFIG_CRYPTO_XTS))) && \
         !defined(LINUXKM_LKCAPI_DONT_REGISTER_AESXTS) &&               \
         !defined(LINUXKM_LKCAPI_REGISTER_AESXTS)
@@ -156,6 +168,7 @@
 #endif
 #ifdef WOLFSSL_AES_COUNTER
     #if (defined(LINUXKM_LKCAPI_REGISTER_ALL) || \
+         defined(LINUXKM_LKCAPI_REGISTER_AES_ALL) || \
          (defined(LINUXKM_LKCAPI_REGISTER_ALL_KCONFIG) && defined(CONFIG_CRYPTO_CTR))) && \
         !defined(LINUXKM_LKCAPI_DONT_REGISTER_AESCTR) &&               \
         !defined(LINUXKM_LKCAPI_REGISTER_AESCTR)
@@ -168,7 +181,8 @@
     #undef LINUXKM_LKCAPI_REGISTER_AESCTR
 #endif
 #ifdef WOLFSSL_AES_OFB
-    #if defined(LINUXKM_LKCAPI_REGISTER_ALL) && \
+    #if (defined(LINUXKM_LKCAPI_REGISTER_ALL) || \
+         defined(LINUXKM_LKCAPI_REGISTER_AES_ALL)) && \
         !defined(LINUXKM_LKCAPI_DONT_REGISTER_AESOFB) &&      \
         !defined(LINUXKM_LKCAPI_REGISTER_AESOFB)
         #define LINUXKM_LKCAPI_REGISTER_AESOFB
@@ -178,6 +192,7 @@
 #endif
 #ifdef HAVE_AES_ECB
     #if (defined(LINUXKM_LKCAPI_REGISTER_ALL) || \
+         defined(LINUXKM_LKCAPI_REGISTER_AES_ALL) || \
          (defined(LINUXKM_LKCAPI_REGISTER_ALL_KCONFIG) && defined(CONFIG_CRYPTO_ECB))) && \
          !defined(LINUXKM_LKCAPI_DONT_REGISTER_AESECB) &&   \
         !defined(LINUXKM_LKCAPI_REGISTER_AESECB)
@@ -4300,3 +4315,5 @@ static int linuxkm_test_aesecb(void) {
 #endif /* LINUXKM_LKCAPI_REGISTER_AESECB */
 
 #endif /* LINUXKM_LKCAPI_REGISTER_AES */
+
+#endif /* !WC_SKIP_INCLUDED_C_FILES */

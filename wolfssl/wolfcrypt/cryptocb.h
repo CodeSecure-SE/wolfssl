@@ -6,7 +6,7 @@
  *
  * wolfSSL is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * wolfSSL is distributed in the hope that it will be useful,
@@ -639,6 +639,10 @@ WOLFSSL_LOCAL int wc_CryptoCb_ShaHash(wc_Sha* sha, const byte* in,
     word32 inSz, byte* digest);
 #endif /* !NO_SHA */
 
+#ifdef WOLFSSL_SHA224
+WOLFSSL_LOCAL int wc_CryptoCb_Sha224Hash(wc_Sha224* sha224, const byte* in,
+    word32 inSz, byte* digest);
+#endif /* WOLFSSL_SHA224 */
 #ifndef NO_SHA256
 WOLFSSL_LOCAL int wc_CryptoCb_Sha256Hash(wc_Sha256* sha256, const byte* in,
     word32 inSz, byte* digest);

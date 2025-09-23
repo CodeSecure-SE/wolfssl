@@ -6,7 +6,7 @@
  *
  * wolfSSL is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * wolfSSL is distributed in the hope that it will be useful,
@@ -38,4 +38,5 @@ int test_records_span_network_boundaries(void);
 int test_dtls_record_cross_boundaries(void);
 int test_dtls_rtx_across_epoch_change(void);
 int test_dtls_drop_client_ack(void);
+int test_dtls_replay(void);
 #endif /* TESTS_API_DTLS_H */

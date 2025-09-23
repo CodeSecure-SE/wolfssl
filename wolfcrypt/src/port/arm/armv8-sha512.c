@@ -6,7 +6,7 @@
  *
  * wolfSSL is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * wolfSSL is distributed in the hope that it will be useful,
@@ -57,8 +57,7 @@
 #endif
 
 #if defined(__aarch64__) && defined(WOLFSSL_ARMASM_CRYPTO_SHA512)
-static word32 cpuid_flags = 0;
-static int cpuid_flags_set = 0;
+static cpuid_flags_t cpuid_flags = WC_CPUID_INITIALIZER;
 #endif
 
 #ifdef WOLFSSL_SHA512
@@ -198,10 +197,7 @@ static int InitSha512_Family(wc_Sha512* sha512, void* heap, int devId,
         return ret;
 
 #if defined(__aarch64__) && defined(WOLFSSL_ARMASM_CRYPTO_SHA512)
-    if (!cpuid_flags_set) {
-        cpuid_flags = cpuid_get_flags();
-        cpuid_flags_set = 1;
-    }
+    cpuid_get_flags_ex(&cpuid_flags);
 #endif
 
     (void)devId;
@@ -884,10 +880,7 @@ int wc_InitSha384_ex(wc_Sha384* sha384, void* heap, int devId)
 #endif
 
 #if defined(__aarch64__) && defined(WOLFSSL_ARMASM_CRYPTO_SHA512)
-    if (!cpuid_flags_set) {
-        cpuid_flags = cpuid_get_flags();
-        cpuid_flags_set = 1;
-    }
+    cpuid_get_flags_ex(&cpuid_flags);
 #endif
 
     (void)devId;

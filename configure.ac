@@ -7,7 +7,7 @@
 #
 AC_COPYRIGHT([Copyright (C) 2006-2025 wolfSSL Inc.])
 AC_PREREQ([2.69])
-AC_INIT([wolfssl],[5.8.0],[https://github.com/wolfssl/wolfssl/issues],[wolfssl],[https://www.wolfssl.com])
+AC_INIT([wolfssl],[5.8.2],[https://github.com/wolfssl/wolfssl/issues],[wolfssl],[https://www.wolfssl.com])
 AC_CONFIG_AUX_DIR([build-aux])
 
 # Inhibit unwanted regeneration of autotools artifacts by Makefile.
@@ -46,15 +46,21 @@ AC_ARG_VAR(EXTRA_LDFLAGS, [Extra LDFLAGS to add to end of autoconf-computed arg 
 WOLFSSL_CONFIG_ARGS=$ac_configure_args
 AC_SUBST([WOLFSSL_CONFIG_ARGS])
 
+# Store configure options and CFLAGS for debian rules generation
+CONFIGURE_OPTIONS="$ac_configure_args"
+CONFIGURE_CFLAGS="$CFLAGS"
+AC_SUBST([CONFIGURE_OPTIONS])
+AC_SUBST([CONFIGURE_CFLAGS])
+
 # shared library versioning
 # The three numbers in the libwolfssl.so.*.*.* file name. Unfortunately
 
 # increment if interfaces have been removed or changed
-WOLFSSL_LIBRARY_VERSION_FIRST=43
+WOLFSSL_LIBRARY_VERSION_FIRST=44
 
 # increment if interfaces have been added
 # set to zero if WOLFSSL_LIBRARY_VERSION_FIRST is incremented
-WOLFSSL_LIBRARY_VERSION_SECOND=1
+WOLFSSL_LIBRARY_VERSION_SECOND=0
 
 # increment if source code has changed
 # set to zero if WOLFSSL_LIBRARY_VERSION_FIRST is incremented or
@@ -1293,7 +1299,6 @@ then
     test "$enable_certext" = "" && enable_certext=yes
     test "$enable_sep" = "" && enable_sep=yes
     test "$enable_hkdf" = "" && enable_hkdf=yes
-    test "$enable_fpecc" = "" && test "$enable_ecc" != "no" && enable_fpecc=yes
     test "$enable_eccencrypt" = "" && test "$enable_ecc" != "no" && enable_eccencrypt=yes
     test "$enable_psk" = "" && enable_psk=yes
     test "$enable_cmac" = "" && enable_cmac=yes
@@ -1323,6 +1328,13 @@ then
     test "$enable_anon" = "" && enable_anon=yes
     test "$enable_ssh" = "" && test "$enable_hmac" != "no" && enable_ssh=yes
 
+    # the compiler optimizer generates a weird out-of-bounds bss reference for
+    # find_hole() in the FP_ECC implementation.
+    if test "$ENABLED_LINUXKM_PIE" != yes
+    then
+        test "$enable_fpecc" = "" && test "$enable_ecc" != "no" && enable_fpecc=yes
+    fi
+
     if test "x$FIPS_VERSION" != "xv1"
     then
         test "$enable_rsapss" = "" && enable_rsapss=yes
@@ -1344,8 +1356,6 @@ then
     then
         test "$enable_curve25519" = "" && enable_curve25519=yes
         test "$enable_curve448" = "" && enable_curve448=yes
-        test "$enable_cryptocb" = "" && enable_cryptocb=yes
-        test "$enable_pkcallbacks" = "" && enable_pkcallbacks=yes
         test "$enable_xchacha" = "" && test "$enable_chacha" != "no" && enable_xchacha=yes
         test "$enable_pkcs7" = "" && enable_pkcs7=yes
         test "$enable_nullcipher" = "" && enable_nullcipher=yes
@@ -1358,6 +1368,8 @@ then
 
         if test "$ENABLED_LINUXKM_DEFAULTS" != "yes"
         then
+            test "$enable_cryptocb" = "" && enable_cryptocb=yes
+            test "$enable_pkcallbacks" = "" && enable_pkcallbacks=yes
             test "$enable_eccsi" = "" && test "$enable_ecc" != "no" && enable_eccsi=yes
             test "$enable_sakke" = "" && test "$enable_ecc" != "no" && enable_sakke=yes
         fi
@@ -1676,6 +1688,7 @@ then
 
     if test "$ENABLED_LIBOQS" = "no"; then
         AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_WC_DILITHIUM"
+        AM_CCASFLAGS="$AM_CCASFLAGS -DWOLFSSL_WC_DILITHIUM"
         test "$enable_sha3" = "" && enable_sha3=yes
         test "$enable_shake128" = "" && enable_shake128=yes
         test "$enable_shake256" = "" && enable_shake256=yes
@@ -5655,7 +5668,8 @@ AC_ARG_ENABLE([pwdbased],
 # MemUse Entropy
 # wolfEntropy Software Jitter SP800-90B certifiable entropy source
 
-if test "$ENABLED_LINUXKM_DEFAULTS" = "yes"
+if test "$ENABLED_LINUXKM_DEFAULTS" = "yes" && \
+   (test "$ENABLED_FIPS" = "no" || test "$HAVE_FIPS_VERSION" -ge 6)
 then
     ENABLED_ENTROPY_MEMUSE_DEFAULT=yes
 else
@@ -7333,7 +7347,7 @@ then
 fi
 
 # Small Stack - Cache on object
-if test "$ENABLED_LINUXKM_DEFAULTS" = "yes"
+if test "$ENABLED_LINUXKM_DEFAULTS" = "yes" && (test "$ENABLED_FIPS" = "no" || test "$HAVE_FIPS_VERSION" -ge 6)
 then
     ENABLED_SMALL_STACK_CACHE_DEFAULT=yes
 else
@@ -8177,6 +8191,14 @@ then
         ENABLED_TICKET_NONCE_MALLOC="yes"
         AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_TICKET_NONCE_MALLOC"
     fi
+elif test "$ENABLED_CURL" = "tiny"
+then
+    if test "x$ENABLED_OPENSSLEXTRA" = "xno"
+    then
+        ENABLED_OPENSSLEXTRA="x509small"
+    fi
+
+    AM_CFLAGS="$AM_CFLAGS -DHAVE_CURL"
 fi
 
 if test "$ENABLED_PSK" = "no" && test "$ENABLED_LEANPSK" = "no" \
@@ -9560,8 +9582,9 @@ fi
 AC_ARG_ENABLE([linuxkm-lkcapi-register],
     [AS_HELP_STRING([--enable-linuxkm-lkcapi-register],[Register wolfCrypt implementations with the Linux Kernel Crypto API backplane.
     Possible values are "none" or a comma-separated combination of "all", "all-kconfig", "sysfs-nodes-only", "cbc(aes)", "cfb(aes)",
-    "gcm(aes)", "rfc4106(gcm(aes))", "xts(aes)", "ctr(aes)", "ofb(aes)", "ecb(aes)", "sha1", "sha2", "sha3", "hmac(sha1)", "hmac(sha2)",
-    "hmac(sha3)", "stdrng", "stdrng-default", "ecdsa", "ecdh", "rsa", "dh", and negations of the foregoing algorithms by prefixing "-".
+    "gcm(aes)", "rfc4106(gcm(aes))", "xts(aes)", "ctr(aes)", "ofb(aes)", "ecb(aes)", "all-aes", "sha1", "sha2", "sha3", "all-sha",
+    "hmac(sha1)", "hmac(sha2)", "hmac(sha3)", "all-hmac", "stdrng", "stdrng-default", "ecdsa", "ecdh", "rsa", "dh", and negations of
+    the foregoing algorithms by prefixing "-".
     (default: none)])],
     [ENABLED_LINUXKM_LKCAPI_REGISTER=$enableval],
     [ENABLED_LINUXKM_LKCAPI_REGISTER=no]
@@ -9603,6 +9626,8 @@ then
         'ofb(aes)') test "$ENABLED_AESOFB" != "no" || AC_MSG_ERROR([linuxkm-lkcapi-register ${lkcapi_alg}: AES-OFB implementation not enabled.])
                     AM_CFLAGS="$AM_CFLAGS -DLINUXKM_LKCAPI_REGISTER_AESOFB" ;;
         'ecb(aes)') AM_CFLAGS="$AM_CFLAGS -DLINUXKM_LKCAPI_REGISTER_AESECB -DHAVE_AES_ECB" ;;
+        'all-aes') test "$ENABLED_AES" != "no" || AC_MSG_ERROR([linuxkm-lkcapi-register ${lkcapi_alg}: AES is disabled.])
+                    AM_CFLAGS="$AM_CFLAGS -DLINUXKM_LKCAPI_REGISTER_AES_ALL" ;;
         'sha1')     test "$ENABLED_SHA" != "no" || AC_MSG_ERROR([linuxkm-lkcapi-register ${lkcapi_alg}: SHA-1 implementation not enabled.])
                     AM_CFLAGS="$AM_CFLAGS -DLINUXKM_LKCAPI_REGISTER_SHA1" ;;
         'sha2')     test "$ENABLED_SHA224" != "no" || test "$ENABLED_SHA256" != "no" || test "$ENABLED_SHA384" != "no" || test "$ENABLED_SHA512" != "no" || \
@@ -9610,13 +9635,16 @@ then
                     AM_CFLAGS="$AM_CFLAGS -DLINUXKM_LKCAPI_REGISTER_SHA2" ;;
         'sha3')     test "$ENABLED_SHA3" != "no" || AC_MSG_ERROR([linuxkm-lkcapi-register ${lkcapi_alg}: SHA-3 implementation not enabled.])
                     AM_CFLAGS="$AM_CFLAGS -DLINUXKM_LKCAPI_REGISTER_SHA3" ;;
-        'hmac(sha1)')     test "$ENABLED_SHA" != "no" && test "$ENABLED_HMAC" != "no" || AC_MSG_ERROR([linuxkm-lkcapi-register ${lkcapi_alg}: SHA-1 HMAC implementation not enabled.])
+        'all-sha') AM_CFLAGS="$AM_CFLAGS -DLINUXKM_LKCAPI_REGISTER_SHA_ALL" ;;
+        'hmac(sha1)') test "$ENABLED_SHA" != "no" && test "$ENABLED_HMAC" != "no" || AC_MSG_ERROR([linuxkm-lkcapi-register ${lkcapi_alg}: SHA-1 HMAC implementation not enabled.])
                     AM_CFLAGS="$AM_CFLAGS -DLINUXKM_LKCAPI_REGISTER_SHA1_HMAC" ;;
         'hmac(sha2)') (test "$ENABLED_SHA224" != "no" || test "$ENABLED_SHA256" != "no" || test "$ENABLED_SHA384" != "no" || test "$ENABLED_SHA512" != "no") && \
                     test "$ENABLED_HMAC" != "no" || AC_MSG_ERROR([linuxkm-lkcapi-register ${lkcapi_alg}: No SHA-2 HMAC implementations are enabled.])
                     AM_CFLAGS="$AM_CFLAGS -DLINUXKM_LKCAPI_REGISTER_SHA2_HMAC" ;;
         'hmac(sha3)') test "$ENABLED_SHA3" != "no" && test "$ENABLED_HMAC" != "no" || AC_MSG_ERROR([linuxkm-lkcapi-register ${lkcapi_alg}: SHA-3 HMAC implementation not enabled.])
                     AM_CFLAGS="$AM_CFLAGS -DLINUXKM_LKCAPI_REGISTER_SHA3_HMAC" ;;
+        'all-hmac') test "$ENABLED_HMAC" != "no" || AC_MSG_ERROR([linuxkm-lkcapi-register ${lkcapi_alg}: HMAC implementation not enabled.])
+                    AM_CFLAGS="$AM_CFLAGS -DLINUXKM_LKCAPI_REGISTER_HMAC_ALL" ;;
         'stdrng') test "$ENABLED_HASHDRBG" != "no" || AC_MSG_ERROR([linuxkm-lkcapi-register ${lkcapi_alg}: HASHDRBG implementation not enabled.])
                     AM_CFLAGS="$AM_CFLAGS -DLINUXKM_LKCAPI_REGISTER_HASH_DRBG" ;;
         'stdrng-default') test "$ENABLED_HASHDRBG" != "no" || AC_MSG_ERROR([linuxkm-lkcapi-register ${lkcapi_alg}: HASHDRBG implementation not enabled.])
@@ -9638,12 +9666,15 @@ then
         '-ctr(aes)') AM_CFLAGS="$AM_CFLAGS -DLINUXKM_LKCAPI_DONT_REGISTER_AESCTR" ;;
         '-ofb(aes)') AM_CFLAGS="$AM_CFLAGS -DLINUXKM_LKCAPI_DONT_REGISTER_AESOFB" ;;
         '-ecb(aes)') AM_CFLAGS="$AM_CFLAGS -DLINUXKM_LKCAPI_DONT_REGISTER_AESECB" ;;
+        '-all-aes') AM_CFLAGS="$AM_CFLAGS -DLINUXKM_LKCAPI_DONT_REGISTER_AES_ALL" ;;
         '-sha1')     AM_CFLAGS="$AM_CFLAGS -DLINUXKM_LKCAPI_DONT_REGISTER_SHA1" ;;
         '-sha2')     AM_CFLAGS="$AM_CFLAGS -DLINUXKM_LKCAPI_DONT_REGISTER_SHA2" ;;
         '-sha3')     AM_CFLAGS="$AM_CFLAGS -DLINUXKM_LKCAPI_DONT_REGISTER_SHA3" ;;
+        '-all-sha')  AM_CFLAGS="$AM_CFLAGS -DLINUXKM_LKCAPI_DONT_REGISTER_SHA_ALL" ;;
         '-hmac(sha1)') AM_CFLAGS="$AM_CFLAGS -DLINUXKM_LKCAPI_DONT_REGISTER_SHA1_HMAC" ;;
         '-hmac(sha2)') AM_CFLAGS="$AM_CFLAGS -DLINUXKM_LKCAPI_DONT_REGISTER_SHA2_HMAC" ;;
         '-hmac(sha3)') AM_CFLAGS="$AM_CFLAGS -DLINUXKM_LKCAPI_DONT_REGISTER_SHA3_HMAC" ;;
+        '-all-hmac') AM_CFLAGS="$AM_CFLAGS -DLINUXKM_LKCAPI_DONT_REGISTER_HMAC_ALL" ;;
         '-stdrng')   AM_CFLAGS="$AM_CFLAGS -DLINUXKM_LKCAPI_DONT_REGISTER_HASH_DRBG" ;;
         '-stdrng-default') AM_CFLAGS="$AM_CFLAGS -DLINUXKM_LKCAPI_DONT_REGISTER_HASH_DRBG_DEFAULT" ;;
         '-ecdsa')    AM_CFLAGS="$AM_CFLAGS -DLINUXKM_LKCAPI_DONT_REGISTER_ECDSA" ;;
@@ -9795,6 +9826,20 @@ then
         CPPFLAGS=$(printf "%s" "$CPPFLAGS" | sed 's/-DOPENSSL_COMPATIBLE_DEFAULTS//g')
         AM_CFLAGS=$(printf "%s" "$AM_CFLAGS" | sed 's/-DOPENSSL_COMPATIBLE_DEFAULTS//g')
     fi
+fi
+
+# Make function 'wolfSSL_X509_EXTENSION_get_data' return different type of
+# data for each type of extension, as it used to do in the past, instead of
+# always returning the full OCTET STRING of the extension. Use only if you
+# need to keep compatibility with older versions.
+AC_ARG_ENABLE([old-extdata-fmt],
+    [AS_HELP_STRING([--enable-old-extdata-fmt],[Enable old format for extracting extension data (default: disabled)])],
+    [ ENABLED_OLD_EXTDATA_FMT=$enableval ],
+    [ ENABLED_OLD_EXTDATA_FMT=no ]
+    )
+
+if test "x$ENABLED_OLD_EXTDATA_FMT" = "xyes"; then
+  AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_OLD_EXTDATA_FMT"
 fi
 
 # determine if we have key validation mechanism
@@ -10909,6 +10954,7 @@ AC_CONFIG_FILES([Makefile
         wolfcrypt/test/test_paths.h
         ])
 AC_CONFIG_FILES([scripts/unit.test],[chmod +x scripts/unit.test])
+AC_CONFIG_FILES([debian/rules],[chmod +x debian/rules])
 
 AX_CREATE_GENERIC_CONFIG
 AX_AM_JOBSERVER([yes])

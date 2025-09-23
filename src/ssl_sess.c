@@ -6,7 +6,7 @@
  *
  * wolfSSL is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * wolfSSL is distributed in the hope that it will be useful,
@@ -290,7 +290,7 @@ WOLFSSL_SESSION* wolfSSL_get1_session(WOLFSSL* ssl)
 }
 
 /* session is a private struct, return if it is setup or not */
-WOLFSSL_API int wolfSSL_SessionIsSetup(WOLFSSL_SESSION* session)
+int wolfSSL_SessionIsSetup(WOLFSSL_SESSION* session)
 {
     if (session != NULL)
         return session->isSetup;

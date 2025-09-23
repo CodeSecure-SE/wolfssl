@@ -6,7 +6,7 @@
  *
  * wolfSSL is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * wolfSSL is distributed in the hope that it will be useful,
@@ -18,6 +18,9 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1335, USA
  */
+
+/* included by linuxkm/lkcapi_glue.c */
+#ifndef WC_SKIP_INCLUDED_C_FILES
 
 #ifndef LINUXKM_LKCAPI_REGISTER
     #error lkcapi_sha_glue.c included in non-LINUXKM_LKCAPI_REGISTER project.
@@ -92,6 +95,30 @@
  * to our rng_alg.generate() implementation.
  */
 #define WOLFKM_STDRNG_DRIVER ("sha2-256-drbg-nopr" WOLFKM_SHA_DRIVER_SUFFIX)
+
+#ifdef LINUXKM_LKCAPI_REGISTER_SHA_ALL
+    #define LINUXKM_LKCAPI_REGISTER_SHA1
+    #define LINUXKM_LKCAPI_REGISTER_SHA2
+    #define LINUXKM_LKCAPI_REGISTER_SHA3
+#endif
+
+#ifdef LINUXKM_LKCAPI_DONT_REGISTER_SHA_ALL
+    #define LINUXKM_LKCAPI_DONT_REGISTER_SHA1
+    #define LINUXKM_LKCAPI_DONT_REGISTER_SHA2
+    #define LINUXKM_LKCAPI_DONT_REGISTER_SHA3
+#endif
+
+#ifdef LINUXKM_LKCAPI_REGISTER_HMAC_ALL
+    #define LINUXKM_LKCAPI_REGISTER_SHA1_HMAC
+    #define LINUXKM_LKCAPI_REGISTER_SHA2_HMAC
+    #define LINUXKM_LKCAPI_REGISTER_SHA3_HMAC
+#endif
+
+#ifdef LINUXKM_LKCAPI_DONT_REGISTER_HMAC_ALL
+    #define LINUXKM_LKCAPI_DONT_REGISTER_SHA1_HMAC
+    #define LINUXKM_LKCAPI_DONT_REGISTER_SHA2_HMAC
+    #define LINUXKM_LKCAPI_DONT_REGISTER_SHA3_HMAC
+#endif
 
 #ifdef LINUXKM_LKCAPI_REGISTER_SHA2
     #define LINUXKM_LKCAPI_REGISTER_SHA2_224
@@ -350,10 +377,7 @@
         !defined(LINUXKM_LKCAPI_REGISTER_HASH_DRBG)
         #define LINUXKM_LKCAPI_REGISTER_HASH_DRBG
     #endif
-    #if (defined(LINUXKM_LKCAPI_REGISTER_ALL) && !defined(LINUXKM_LKCAPI_DONT_REGISTER_HASH_DRBG_DEFAULT)) && \
-        !defined(LINUXKM_LKCAPI_REGISTER_HASH_DRBG_DEFAULT)
-        #define LINUXKM_LKCAPI_REGISTER_HASH_DRBG_DEFAULT
-    #endif
+    /* setup for LINUXKM_LKCAPI_REGISTER_HASH_DRBG_DEFAULT is in linuxkm_wc_port.h */
 #else
     #undef LINUXKM_LKCAPI_REGISTER_HASH_DRBG
 #endif
@@ -956,6 +980,9 @@ static inline void wc_linuxkm_drbg_ctx_clear(struct wc_linuxkm_drbg_ctx * ctx)
             if (ctx->rngs[i].lock != 0) {
                 /* better to leak than to crash. */
                 pr_err("BUG: wc_linuxkm_drbg_ctx_clear called with DRBG #%d still locked.", i);
+                ctx->rngs = NULL;
+                ctx->n_rngs = 0;
+                return;
             }
             else
                 wc_FreeRng(&ctx->rngs[i].rng);
@@ -1265,7 +1292,7 @@ static int wc_linuxkm_drbg_loaded = 0;
 #ifdef LINUXKM_DRBG_GET_RANDOM_BYTES
 
 #if !(defined(HAVE_ENTROPY_MEMUSE) || defined(HAVE_INTEL_RDSEED) ||    \
-    defined(HAVE_AMD_RDSEED))
+      defined(HAVE_AMD_RDSEED) || defined(WC_LINUXKM_RDSEED_IN_GLUE_LAYER))
     #error LINUXKM_DRBG_GET_RANDOM_BYTES requires a native or intrinsic entropy source.
 #endif
 
@@ -2021,3 +2048,5 @@ static int wc_linuxkm_drbg_cleanup(void) {
 }
 
 #endif /* LINUXKM_LKCAPI_REGISTER_HASH_DRBG */
+
+#endif /* !WC_SKIP_INCLUDED_C_FILES */

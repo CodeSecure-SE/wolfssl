@@ -6,7 +6,7 @@
  *
  * wolfSSL is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * wolfSSL is distributed in the hope that it will be useful,
@@ -200,9 +200,9 @@ WOLFSSL_API int wc_DhCheckPubKey_ex(DhKey* key, const byte* pub, word32 pubSz,
                             const byte* prime, word32 primeSz);
 WOLFSSL_API int wc_DhCheckPubValue(const byte* prime, word32 primeSz,
                                    const byte* pub, word32 pubSz);
-WOLFSSL_API int wc_DhCheckPrivKey(DhKey* key, const byte* priv, word32 pubSz);
-WOLFSSL_API int wc_DhCheckPrivKey_ex(DhKey* key, const byte* priv, word32 pubSz,
-                            const byte* prime, word32 primeSz);
+WOLFSSL_API int wc_DhCheckPrivKey(DhKey* key, const byte* priv, word32 privSz);
+WOLFSSL_API int wc_DhCheckPrivKey_ex(DhKey* key, const byte* priv,
+        word32 privSz, const byte* prime, word32 primeSz);
 WOLFSSL_API int wc_DhCheckKeyPair(DhKey* key, const byte* pub, word32 pubSz,
                         const byte* priv, word32 privSz);
 WOLFSSL_API int wc_DhGenerateParams(WC_RNG *rng, int modSz, DhKey *dh);

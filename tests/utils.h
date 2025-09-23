@@ -6,7 +6,7 @@
  *
  * wolfSSL is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * wolfSSL is distributed in the hope that it will be useful,
@@ -66,6 +66,8 @@ int test_memio_setup_ex(struct test_memio_ctx *ctx,
     byte *serverKey, int serverKeySz);
 void test_memio_clear_buffer(struct test_memio_ctx *ctx, int is_client);
 int test_memio_inject_message(struct test_memio_ctx *ctx, int client, const char *data, int sz);
+int test_memio_copy_message(const struct test_memio_ctx *ctx, int client,
+        char *out, int *out_sz, int msg_pos);
 int test_memio_drop_message(struct test_memio_ctx *ctx, int client, int msg_pos);
 int test_memio_modify_message_len(struct test_memio_ctx *ctx, int client, int msg_pos, int new_len);
 int test_memio_remove_from_buffer(struct test_memio_ctx *ctx, int client, int off, int sz);

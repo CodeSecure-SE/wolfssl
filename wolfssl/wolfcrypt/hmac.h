@@ -6,7 +6,7 @@
  *
  * wolfSSL is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * wolfSSL is distributed in the hope that it will be useful,
@@ -169,11 +169,11 @@ struct Hmac {
 
 /* does init */
 WOLFSSL_API int wc_HmacSetKey(Hmac* hmac, int type, const byte* key,
-                              word32 keySz);
+                              word32 length);
 WOLFSSL_API int wc_HmacSetKey_ex(Hmac* hmac, int type, const byte* key,
                                  word32 length, int allowFlag);
-WOLFSSL_API int wc_HmacUpdate(Hmac* hmac, const byte* in, word32 sz);
-WOLFSSL_API int wc_HmacFinal(Hmac* hmac, byte* out);
+WOLFSSL_API int wc_HmacUpdate(Hmac* hmac, const byte* msg, word32 length);
+WOLFSSL_API int wc_HmacFinal(Hmac* hmac, byte* hash);
 #ifdef WOLFSSL_KCAPI_HMAC
 WOLFSSL_API int wc_HmacSetKey_Software(Hmac* hmac, int type, const byte* key,
                                        word32 keySz);

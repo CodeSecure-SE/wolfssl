@@ -6,7 +6,7 @@
  *
  * wolfSSL is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * wolfSSL is distributed in the hope that it will be useful,
@@ -25,6 +25,10 @@
 
 #ifndef WOLF_CRYPT_OID_SUM_H
 #define WOLF_CRYPT_OID_SUM_H
+
+/* Note for some CPUs smaller than 32 bit, the upper 16 bits of new OID
+ * values may be ignored. If collisions are encountered, consider WC_16BIT_CPU
+ * and/or WOLFSSL_OLD_OID_SUM to force smaller, old OID values. */
 
 enum Hash_Sum {
 #ifdef WOLFSSL_OLD_OID_SUM

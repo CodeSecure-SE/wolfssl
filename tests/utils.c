@@ -6,7 +6,7 @@
  *
  * wolfSSL is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * wolfSSL is distributed in the hope that it will be useful,
@@ -402,6 +402,38 @@ int test_memio_inject_message(struct test_memio_ctx* ctx, int client,
     msg_sizes[*msg_count] = sz;
     (*msg_count)++;
     *len += sz;
+    return 0;
+}
+
+int test_memio_copy_message(const struct test_memio_ctx *ctx, int client,
+        char *out, int *out_sz, int msg_pos)
+{
+    int msg_count;
+    const int* msg_sizes;
+    int i;
+    const byte* buff;
+
+    if (client) {
+        buff = ctx->c_buff;
+        msg_count = ctx->c_msg_count;
+        msg_sizes = ctx->c_msg_sizes;
+    }
+    else {
+        buff = ctx->s_buff;
+        msg_count = ctx->s_msg_count;
+        msg_sizes = ctx->s_msg_sizes;
+    }
+    if (msg_pos < 0 || msg_pos >= msg_count) {
+        return -1;
+    }
+    if (*out_sz < msg_sizes[msg_pos]) {
+        return -1;
+    }
+    for (i = 0; i < msg_pos; i++) {
+        buff += msg_sizes[i];
+    }
+    XMEMCPY(out, buff, (size_t)msg_sizes[msg_pos]);
+    *out_sz = msg_sizes[msg_pos];
     return 0;
 }
 

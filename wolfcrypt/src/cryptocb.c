@@ -6,7 +6,7 @@
  *
  * wolfSSL is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * wolfSSL is distributed in the hope that it will be useful,
@@ -172,7 +172,7 @@ static const char* GetCryptoCbCmdTypeStr(int type)
 }
 #endif
 
-WOLFSSL_API void wc_CryptoCb_InfoString(wc_CryptoInfo* info)
+void wc_CryptoCb_InfoString(wc_CryptoInfo* info)
 {
     if (info == NULL)
         return;
@@ -1595,6 +1595,40 @@ int wc_CryptoCb_ShaHash(wc_Sha* sha, const byte* in,
     return wc_CryptoCb_TranslateErrorCode(ret);
 }
 #endif /* !NO_SHA */
+
+#ifdef WOLFSSL_SHA224
+int wc_CryptoCb_Sha224Hash(wc_Sha224* sha224, const byte* in,
+    word32 inSz, byte* digest)
+{
+    int ret = WC_NO_ERR_TRACE(CRYPTOCB_UNAVAILABLE);
+    CryptoCb* dev;
+
+    /* locate registered callback */
+    if (sha224) {
+        dev = wc_CryptoCb_FindDevice(sha224->devId, WC_ALGO_TYPE_HASH);
+    }
+    else {
+        /* locate first callback and try using it */
+        dev = wc_CryptoCb_FindDeviceByIndex(0);
+    }
+
+    if (dev && dev->cb) {
+        wc_CryptoInfo cryptoInfo;
+        XMEMSET(&cryptoInfo, 0, sizeof(cryptoInfo));
+        cryptoInfo.algo_type = WC_ALGO_TYPE_HASH;
+        cryptoInfo.hash.type = WC_HASH_TYPE_SHA224;
+        cryptoInfo.hash.sha224 = sha224;
+        cryptoInfo.hash.in = in;
+        cryptoInfo.hash.inSz = inSz;
+        cryptoInfo.hash.digest = digest;
+
+        ret = dev->cb(dev->devId, &cryptoInfo, dev->ctx);
+    }
+
+    return wc_CryptoCb_TranslateErrorCode(ret);
+}
+#endif /* WOLFSSL_SHA224 */
+
 
 #ifndef NO_SHA256
 int wc_CryptoCb_Sha256Hash(wc_Sha256* sha256, const byte* in,
