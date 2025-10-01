@@ -65,7 +65,8 @@
 #endif
 
 #if defined(WC_ECC_NONBLOCK) && defined(WOLFSSL_PUBLIC_MP) && \
-    defined(HAVE_ECC_SIGN) && defined(HAVE_ECC_VERIFY)
+    defined(HAVE_ECC_SIGN) && defined(HAVE_ECC_VERIFY) && \
+    !defined(NO_STDINT_H)
     #include <stdint.h>
 #endif
 
@@ -284,11 +285,11 @@ const byte const_byte_array[] = "A+Gd\0\0\0";
     #ifdef XMALLOC_USER
         #include <stdlib.h>  /* we're using malloc / free direct here */
     #endif
-    #if !defined(STRING_USER) && !defined(WOLFSSL_LINUXKM)
+    #if !defined(STRING_USER) && !defined(NO_STDIO_FILESYSTEM)
         #include <stdio.h>
     #endif
 
-    #if defined(WOLFSSL_LINUXKM) && !defined(WOLFSSL_LINUXKM_VERBOSE_DEBUG)
+    #if defined(WOLFSSL_KERNEL_MODE) && !defined(WOLFSSL_KERNEL_VERBOSE_DEBUG)
         #undef printf
         #define printf(...) ({})
     #endif
@@ -890,8 +891,8 @@ void wc_test_render_error_message(const char* msg, wc_test_ret_t es)
     (void)msg;
     (void)es;
 
-#ifdef WOLFSSL_LINUXKM
-    #define err_sys_printf lkm_printf
+#ifdef WOLFSSL_KERNEL_MODE
+    #define err_sys_printf wc_km_printf
 #else
     #define err_sys_printf printf
 #endif
@@ -972,7 +973,7 @@ static wc_test_ret_t err_sys(const char* msg, wc_test_ret_t es)
 {
     wc_test_render_error_message(msg, es);
     print_fiducials();
-#ifdef WOLFSSL_LINUXKM
+#ifdef WOLFSSL_KERNEL_MODE
     EXIT_TEST(es);
 #else
     EXIT_TEST(-1);
@@ -988,7 +989,10 @@ typedef struct func_args {
 } func_args;
 #endif /* !HAVE_WOLFCRYPT_TEST_OPTIONS */
 
-#if defined(HAVE_FIPS) && !defined(WOLFSSL_LINUXKM)
+/* Kernel modules implement and install their own FIPS callback with similar
+ * functionality.
+ */
+#if defined(HAVE_FIPS) && !defined(WOLFSSL_KERNEL_MODE)
 static void myFipsCb(int ok, int err, const char* hash)
 {
     printf("in my Fips callback, ok = %d, err = %d\n", ok, err);
@@ -1000,7 +1004,7 @@ static void myFipsCb(int ok, int err, const char* hash)
         printf("into verifyCore[] in fips_test.c and rebuild\n");
     }
 }
-#endif /* HAVE_FIPS && !WOLFSSL_LINUXKM */
+#endif /* HAVE_FIPS && !WOLFSSL_KERNEL_MODE */
 
 #if defined(HAVE_FIPS) && FIPS_VERSION3_LT(6,0,0) && !defined(WC_NO_CONSTRUCTORS)
 
@@ -1601,7 +1605,7 @@ options: [-s max_relative_stack_bytes] [-m max_relative_heap_memory_bytes]\n\
     wc_SetLoggingHeap(HEAP_HINT);
 #endif
 
-#if defined(HAVE_FIPS) && !defined(WOLFSSL_LINUXKM)
+#if defined(HAVE_FIPS) && !defined(WOLFSSL_KERNEL_MODE)
     wolfCrypt_SetCb_fips(myFipsCb);
     #if FIPS_VERSION3_GE(6,0,0)
         printf("FIPS module version in use: %s\n",
@@ -14382,7 +14386,7 @@ static wc_test_ret_t aes_direct_test(Aes* enc, Aes* dec, byte* cipher, byte* pla
         if (ret != 0)
             ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
 #if !defined(HAVE_SELFTEST) && \
-    (defined(WOLFSSL_LINUXKM) || \
+    (defined(WOLFSSL_KERNEL_MODE) || \
      !defined(HAVE_FIPS) || \
      (defined(FIPS_VERSION_GE) && FIPS_VERSION_GE(5,3)))
         ret = wc_AesEncryptDirect(enc, cipher, niPlain);
@@ -14400,7 +14404,7 @@ static wc_test_ret_t aes_direct_test(Aes* enc, Aes* dec, byte* cipher, byte* pla
         if (ret != 0)
             ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
 #if !defined(HAVE_SELFTEST) && \
-    (defined(WOLFSSL_LINUXKM) || \
+    (defined(WOLFSSL_KERNEL_MODE) || \
      !defined(HAVE_FIPS) || \
      (defined(FIPS_VERSION_GE) && FIPS_VERSION_GE(5,3)))
         ret = wc_AesDecryptDirect(dec, plain, niCipher);
@@ -27489,7 +27493,7 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t scrypt_test(void)
         0x83, 0x60, 0xcb, 0xdf, 0xa2, 0xcc, 0x06, 0x40
     };
 #endif
-#if !defined(BENCH_EMBEDDED) && !defined(WOLFSSL_LINUXKM) && !defined(HAVE_INTEL_QA)
+#if !defined(BENCH_EMBEDDED) && !defined(WOLFSSL_KERNEL_MODE) && !defined(HAVE_INTEL_QA)
     WOLFSSL_SMALL_STACK_STATIC const byte verify3[] = {
         0x70, 0x23, 0xbd, 0xcb, 0x3a, 0xfd, 0x73, 0x48,
         0x46, 0x1c, 0x06, 0xcd, 0x81, 0xfd, 0x38, 0xeb,
@@ -27540,7 +27544,7 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t scrypt_test(void)
         return WC_TEST_RET_ENC_EC(ret);
 
     /* Don't run these test on embedded, since they use large mallocs */
-#if !defined(BENCH_EMBEDDED) && !defined(WOLFSSL_LINUXKM) && !defined(HAVE_INTEL_QA)
+#if !defined(BENCH_EMBEDDED) && !defined(WOLFSSL_KERNEL_MODE) && !defined(HAVE_INTEL_QA)
     ret = wc_scrypt(derived, (byte*)"pleaseletmein", 13,
                     (byte*)"SodiumChloride", 14, 14, 8, 1, sizeof(verify3));
     if (ret != 0)
@@ -27565,7 +27569,7 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t scrypt_test(void)
 #ifdef SCRYPT_TEST_ALL
     (void)verify4;
 #endif
-#endif /* !BENCH_EMBEDDED && !defined(WOLFSSL_LINUXKM) && !HAVE_INTEL_QA */
+#endif /* !BENCH_EMBEDDED && !defined(WOLFSSL_KERNEL_MODE) && !HAVE_INTEL_QA */
 
 #if !defined(BENCH_EMBEDDED)
     ret = wc_scrypt_ex(derived, (byte*)"password", 8, (byte*)"NaCl", 4, 1<<10,
@@ -27897,8 +27901,13 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t hkdf_test(void)
     L = (int)sizeof(okm1);
 
 #ifndef NO_SHA
+#if !defined(HAVE_SELFTEST) && (!defined(HAVE_FIPS) || FIPS_VERSION_GE(7,0))
+    ret = wc_HKDF_ex(WC_SHA, ikm1, (word32)sizeof(ikm1), NULL, 0, NULL, 0,
+                     okm1, (word32)L, HEAP_HINT, devId);
+#else
     ret = wc_HKDF(WC_SHA, ikm1, (word32)sizeof(ikm1), NULL, 0, NULL, 0,
-        okm1, (word32)L);
+                  okm1, (word32)L);
+#endif
     if (ret != 0)
         return WC_TEST_RET_ENC_EC(ret);
 
@@ -27908,8 +27917,13 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t hkdf_test(void)
 #ifndef HAVE_FIPS
     /* fips can't have key size under 14 bytes, salt is key too */
     L = (int)sizeof(okm1);
-    ret = wc_HKDF(WC_SHA, ikm1, 11, salt1, (word32)sizeof(salt1),
-        info1, (word32)sizeof(info1), okm1, (word32)L);
+#if !defined(HAVE_SELFTEST) && (!defined(HAVE_FIPS) || FIPS_VERSION_GE(7,0))
+    ret = wc_HKDF_ex(WC_SHA, ikm1, 11, salt1, (word32)sizeof(salt1), info1,
+                     (word32)sizeof(info1), okm1, (word32)L, HEAP_HINT, devId);
+#else
+    ret = wc_HKDF(WC_SHA, ikm1, 11, salt1, (word32)sizeof(salt1), info1,
+                  (word32)sizeof(info1), okm1, (word32)L);
+#endif
     if (ret != 0)
         return WC_TEST_RET_ENC_EC(ret);
 
@@ -27919,8 +27933,13 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t hkdf_test(void)
 #endif /* !NO_SHA */
 
 #ifndef NO_SHA256
+#if !defined(HAVE_SELFTEST) && (!defined(HAVE_FIPS) || FIPS_VERSION_GE(7,0))
+    ret = wc_HKDF_ex(WC_SHA256, ikm1, (word32)sizeof(ikm1), NULL, 0, NULL, 0,
+        okm1, (word32)L, HEAP_HINT, devId);
+#else
     ret = wc_HKDF(WC_SHA256, ikm1, (word32)sizeof(ikm1), NULL, 0, NULL, 0,
-        okm1, (word32)L);
+                     okm1, (word32)L);
+#endif
     if (ret != 0)
         return WC_TEST_RET_ENC_EC(ret);
 
@@ -27929,8 +27948,15 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t hkdf_test(void)
 
 #ifndef HAVE_FIPS
     /* fips can't have key size under 14 bytes, salt is key too */
-    ret = wc_HKDF(WC_SHA256, ikm1, (word32)sizeof(ikm1),
-        salt1, (word32)sizeof(salt1), info1, (word32)sizeof(info1), okm1, (word32)L);
+#if !defined(HAVE_SELFTEST)
+    ret = wc_HKDF_ex(WC_SHA256, ikm1, (word32)sizeof(ikm1),
+        salt1, (word32)sizeof(salt1), info1, (word32)sizeof(info1), okm1,
+        (word32)L, HEAP_HINT, devId);
+#else
+    ret = wc_HKDF(WC_SHA256, ikm1, (word32)sizeof(ikm1), salt1,
+                  (word32)sizeof(salt1), info1, (word32)sizeof(info1), okm1,
+                  (word32)L);
+#endif
     if (ret != 0)
         return WC_TEST_RET_ENC_EC(ret);
 
@@ -59364,7 +59390,7 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t mutex_test(void)
 
 #if defined(USE_WOLFSSL_MEMORY) && !defined(FREERTOS)
 
-#if !defined(WOLFSSL_NO_MALLOC) && !defined(WOLFSSL_LINUXKM) && \
+#if !defined(WOLFSSL_NO_MALLOC) && !defined(WOLFSSL_KERNEL_MODE) && \
     !defined(WOLFSSL_STATIC_MEMORY)
 static wc_test_ret_t malloc_cnt = 0;
 static wc_test_ret_t realloc_cnt = 0;
@@ -59432,7 +59458,7 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t memcb_test(void)
 {
     wc_test_ret_t ret = 0;
 #if !defined(WOLFSSL_NO_MALLOC) && !defined(WOLFSSL_NO_REALLOC) && \
-    !defined(WOLFSSL_LINUXKM) && !defined(WOLFSSL_STATIC_MEMORY)
+    !defined(WOLFSSL_KERNEL_MODE) && !defined(WOLFSSL_STATIC_MEMORY)
     byte* b = NULL;
 #endif
     wolfSSL_Malloc_cb  mc;
@@ -59446,7 +59472,7 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t memcb_test(void)
         return WC_TEST_RET_ENC_EC(ret);
 
 #if !defined(WOLFSSL_NO_MALLOC) && !defined(WOLFSSL_NO_REALLOC) && \
-    !defined(WOLFSSL_LINUXKM) && !defined(WOLFSSL_STATIC_MEMORY)
+    !defined(WOLFSSL_KERNEL_MODE) && !defined(WOLFSSL_STATIC_MEMORY)
 
     /* test realloc */
     b = (byte*)XREALLOC(b, 1024, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
@@ -59490,7 +59516,7 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t memcb_test(void)
 #endif /* !WOLFSSL_NO_MALLOC */
 
 #if !defined(WOLFSSL_NO_MALLOC) && !defined(WOLFSSL_NO_REALLOC) && \
-    !defined(WOLFSSL_LINUXKM) && !defined(WOLFSSL_STATIC_MEMORY)
+    !defined(WOLFSSL_KERNEL_MODE) && !defined(WOLFSSL_STATIC_MEMORY)
 exit_memcb:
 
     /* reset malloc/free/realloc counts */
@@ -60805,6 +60831,28 @@ static int myCryptoDevCb(int devIdArg, wc_CryptoInfo* info, void* ctx)
         info->cmac.cmac->devId = devIdArg;
     }
 #endif /* WOLFSSL_CMAC && !(NO_AES) && WOLFSSL_AES_DIRECT */
+#if defined(HAVE_HKDF) && !defined(NO_HMAC)
+    else if (info->algo_type == WC_ALGO_TYPE_KDF) {
+        if (info->kdf.type == WC_KDF_TYPE_HKDF) {
+            /* Redirect to software implementation for testing */
+
+#if !defined(HAVE_SELFTEST) && (!defined(HAVE_FIPS) || FIPS_VERSION_GE(7,0))
+            ret = wc_HKDF_ex(info->kdf.hkdf.hashType,
+                           info->kdf.hkdf.inKey, info->kdf.hkdf.inKeySz,
+                           info->kdf.hkdf.salt, info->kdf.hkdf.saltSz,
+                           info->kdf.hkdf.info, info->kdf.hkdf.infoSz,
+                           info->kdf.hkdf.out, info->kdf.hkdf.outSz,
+                           NULL, INVALID_DEVID);
+#else
+            ret = wc_HKDF(info->kdf.hkdf.hashType,
+                          info->kdf.hkdf.inKey, info->kdf.hkdf.inKeySz,
+                          info->kdf.hkdf.salt, info->kdf.hkdf.saltSz,
+                          info->kdf.hkdf.info, info->kdf.hkdf.infoSz,
+                          info->kdf.hkdf.out, info->kdf.hkdf.outSz);
+#endif
+        }
+    }
+#endif /* HAVE_HKDF && !NO_HMAC */
 
     (void)devIdArg;
     (void)myCtx;
@@ -60955,6 +61003,10 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t cryptocb_test(void)
     if (ret == 0)
         ret = hmac_sha3_test();
     #endif
+#endif
+#if defined(HAVE_HKDF) && !defined(NO_HMAC)
+    if (ret == 0)
+        ret = hkdf_test();
 #endif
 #ifndef NO_PWDBASED
     #if defined(HAVE_PBKDF2) && !defined(NO_SHA256) && !defined(NO_HMAC)

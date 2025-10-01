@@ -57,7 +57,7 @@
     }
 #endif
 
-#if defined(WOLFSSL_LINUXKM) && !defined(WOLFSSL_SP_ASM)
+#if defined(WOLFSSL_USE_SAVE_VECTOR_REGISTERS) && !defined(WOLFSSL_SP_ASM)
     /* force off unneeded vector register save/restore. */
     #undef SAVE_VECTOR_REGISTERS
     #define SAVE_VECTOR_REGISTERS(fail_clause) SAVE_NO_VECTOR_REGISTERS(fail_clause)
@@ -2114,7 +2114,7 @@ static int wc_DhAgree_Sync(DhKey* key, byte* agree, word32* agreeSz,
         }
 
         if ((ret == 0) && ct) {
-            word16 mask = 0xff;
+            volatile word16 mask = 0xff;
             sword16 o = (sword16)(*agreeSz - 1);
 
             *agreeSz = (word32)(i + 1);
