@@ -11549,15 +11549,17 @@ int wolfSSL_set_compression(WOLFSSL* ssl)
         #endif
             byte* myBuffer  = staticBuffer;
             int   dynamic   = 0;
-            word32 sending   = 0;
-            int   idx       = 0;
+            size_t sending   = 0;
+            size_t idx       = 0;
             int   i;
             int   ret;
 
             WOLFSSL_ENTER("wolfSSL_writev");
 
             for (i = 0; i < iovcnt; i++)
-                sending += iov[i].iov_len;
+                if (! WC_SAFE_SUM_UNSIGNED(size_t, sending, iov[i].iov_len,
+                                           sending))
+                    return BUFFER_E;
 
             if (sending > sizeof(staticBuffer)) {
                 myBuffer = (byte*)XMALLOC(sending, ssl->heap,
@@ -12848,19 +12850,16 @@ cleanup:
                                 srp_g, sizeof(srp_g)/sizeof(srp_g[0]),
                                 salt, sizeof(salt)/sizeof(salt[0])) < 0){
                 WOLFSSL_MSG("wc_SrpSetParam failed");
-                wc_FreeRng(&rng);
                 return WOLFSSL_FAILURE;
             }
             r = wc_SrpSetPassword(ctx->srp, (const byte*)password,
                                   (word32)XSTRLEN(password));
             if (r < 0) {
                 WOLFSSL_MSG("wc_SrpSetPassword failed.");
-                wc_FreeRng(&rng);
                 return WOLFSSL_FAILURE;
             }
             XFREE(ctx->srp_password, NULL, DYNAMIC_TYPE_SRP);
             ctx->srp_password = NULL;
-            wc_FreeRng(&rng);
         } else {
             /* save password for wolfSSL_set_srp_username */
             XFREE(ctx->srp_password, ctx->heap, DYNAMIC_TYPE_SRP);
