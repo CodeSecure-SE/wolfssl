@@ -5333,6 +5333,7 @@ void bench_aesxts(void)
         goto exit;
     }
 
+#ifdef HAVE_AES_DECRYPT
     RESET_MULTI_VALUE_STATS_VARS();
 
     bench_stats_start(&count, &start);
@@ -5355,6 +5356,7 @@ void bench_aesxts(void)
     bench_stats_sym_finish("AES-XTS-dec", 0, count, bench_size, start, ret);
 #ifdef MULTI_VALUE_STATISTICS
     bench_multi_value_stats(max, min, sum, squareSum, runs);
+#endif
 #endif
 
 exit:
@@ -8201,6 +8203,7 @@ void bench_ascon_hash(void)
 
 #ifdef WOLFSSL_CMAC
 
+#if defined(WOLFSSL_AES_128) || defined(WOLFSSL_AES_256)
 static void bench_cmac_helper(word32 keySz, const char* outMsg, int useDeviceID)
 {
     Cmac    cmac;
@@ -8273,6 +8276,7 @@ static void bench_cmac_helper(word32 keySz, const char* outMsg, int useDeviceID)
     bench_multi_value_stats(max, min, sum, squareSum, runs);
 #endif
 }
+#endif
 
 void bench_cmac(int useDeviceID)
 {
@@ -8282,7 +8286,7 @@ void bench_cmac(int useDeviceID)
 #ifdef WOLFSSL_AES_256
     bench_cmac_helper(32, "AES-256-CMAC", useDeviceID);
 #endif
-
+    (void)useDeviceID;
 }
 #endif /* WOLFSSL_CMAC */
 
@@ -9005,28 +9009,26 @@ static void bench_rsa_helper(int useDeviceID,
     WC_DECLARE_HEAP_ARRAY(enc, byte, BENCH_MAX_PENDING,
                                  rsaKeySz/8, HEAP_HINT);
 
-#if (!defined(WOLFSSL_RSA_VERIFY_INLINE) && \
-     !defined(WOLFSSL_RSA_PUBLIC_ONLY))
+#if !defined(WOLFSSL_RSA_VERIFY_ONLY) || !defined(WOLFSSL_RSA_PUBLIC_ONLY)
     WC_DECLARE_HEAP_ARRAY(out, byte, BENCH_MAX_PENDING,
                                     rsaKeySz/8, HEAP_HINT);
 #else
     byte* out[BENCH_MAX_PENDING];
 #endif
 
-    XMEMSET(out, 0, sizeof(out));
-
-    WC_ALLOC_HEAP_ARRAY(enc, byte, BENCH_MAX_PENDING,
-                                 rsaKeySz/8, HEAP_HINT);
-
-#if (!defined(WOLFSSL_RSA_VERIFY_INLINE) && \
-     !defined(WOLFSSL_RSA_PUBLIC_ONLY))
-    WC_ALLOC_HEAP_ARRAY(out, byte, BENCH_MAX_PENDING,
+#if !defined(WOLFSSL_RSA_VERIFY_ONLY) || !defined(WOLFSSL_RSA_PUBLIC_ONLY)
+    WC_CALLOC_HEAP_ARRAY(out, byte, BENCH_MAX_PENDING,
                                     rsaKeySz/8, HEAP_HINT);
     if (out[0] == NULL) {
         ret = MEMORY_E;
         goto exit;
     }
+#else
+    XMEMSET(out, 0, sizeof(out));
 #endif
+
+    WC_CALLOC_HEAP_ARRAY(enc, byte, BENCH_MAX_PENDING,
+                                 rsaKeySz/8, HEAP_HINT);
     if (enc[0] == NULL) {
         ret = MEMORY_E;
         goto exit;
@@ -9234,7 +9236,7 @@ exit_rsa_verifyinline:
 exit:
 
     WC_FREE_HEAP_ARRAY(enc, BENCH_MAX_PENDING, HEAP_HINT);
-#if !defined(WOLFSSL_RSA_VERIFY_INLINE) && !defined(WOLFSSL_RSA_PUBLIC_ONLY)
+#if !defined(WOLFSSL_RSA_VERIFY_ONLY) || !defined(WOLFSSL_RSA_PUBLIC_ONLY)
     WC_FREE_HEAP_ARRAY(out, BENCH_MAX_PENDING, HEAP_HINT);
 #endif
 #ifndef WOLFSSL_RSA_VERIFY_ONLY

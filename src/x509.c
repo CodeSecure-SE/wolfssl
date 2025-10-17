@@ -1057,9 +1057,8 @@ WOLFSSL_X509_EXTENSION* wolfSSL_X509_set_ext(WOLFSSL_X509* x509, int loc)
 
         if (((ext->obj->dynamic & WOLFSSL_ASN1_DYNAMIC_DATA) != 0) ||
             (ext->obj->obj == NULL)) {
+            byte* tmp;
         #ifdef WOLFSSL_NO_REALLOC
-            byte* tmp = NULL;
-
             tmp = (byte*)XMALLOC(objSz, NULL, DYNAMIC_TYPE_ASN1);
             if (tmp != NULL && ext->obj->obj != NULL) {
                 XMEMCPY(tmp, ext->obj->obj, ext->obj->objSz);
@@ -1070,8 +1069,11 @@ WOLFSSL_X509_EXTENSION* wolfSSL_X509_set_ext(WOLFSSL_X509* x509, int loc)
             }
             ext->obj->obj = tmp;
         #else
-            ext->obj->obj = (byte*)XREALLOC((byte*)ext->obj->obj, objSz,
-                                   NULL, DYNAMIC_TYPE_ASN1);
+            tmp = (byte*)XREALLOC((byte*)ext->obj->obj, objSz, NULL,
+                                  DYNAMIC_TYPE_ASN1);
+            if (tmp != NULL) {
+                ext->obj->obj = tmp;
+            }
         #endif
             if (ext->obj->obj == NULL) {
                 wolfSSL_X509_EXTENSION_free(ext);
@@ -10193,18 +10195,18 @@ int wolfSSL_X509_PUBKEY_set(WOLFSSL_X509_PUBKEY **x, WOLFSSL_EVP_PKEY *key)
     keyTypeObj = wolfSSL_OBJ_nid2obj(key->type);
     if (keyTypeObj == NULL) {
         if (ptype == WOLFSSL_V_ASN1_OBJECT)
-            ASN1_OBJECT_free((WOLFSSL_ASN1_OBJECT *)pval);
+            wolfSSL_ASN1_OBJECT_free((WOLFSSL_ASN1_OBJECT *)pval);
         else
-            ASN1_STRING_free((WOLFSSL_ASN1_STRING *)pval);
+            wolfSSL_ASN1_STRING_free((WOLFSSL_ASN1_STRING *)pval);
         goto error;
     }
     if (!wolfSSL_X509_ALGOR_set0(pk->algor, keyTypeObj, ptype, pval)) {
         WOLFSSL_MSG("Failed to create algorithm object");
-        ASN1_OBJECT_free(keyTypeObj);
+        wolfSSL_ASN1_OBJECT_free(keyTypeObj);
         if (ptype == WOLFSSL_V_ASN1_OBJECT)
-            ASN1_OBJECT_free((WOLFSSL_ASN1_OBJECT *)pval);
+            wolfSSL_ASN1_OBJECT_free((WOLFSSL_ASN1_OBJECT *)pval);
         else
-            ASN1_STRING_free((WOLFSSL_ASN1_STRING *)pval);
+            wolfSSL_ASN1_STRING_free((WOLFSSL_ASN1_STRING *)pval);
         goto error;
     }
 
