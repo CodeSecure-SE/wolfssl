@@ -500,36 +500,36 @@ enum {
                                  (word32)1)))
 #endif
 
-#define WC_SAFE_SUM_UNSIGNED_NO_WUR(type, in1, in2, out)    \
-        ((in2) <= (WC_MAX_UINT_OF(type) - (in1)) ?          \
-         ((out) = (in1) + (in2), 1) :                       \
+#define WC_SAFE_SUM_UNSIGNED_NO_WUR(type, in1, in2, out)             \
+        ((in2) <= (WC_MAX_UINT_OF(type) - (in1)) ?                   \
+         ((out) = (in1) + (in2), 1) :                                \
          ((out) = WC_MAX_UINT_OF(type), 0))
 
-#define WC_SAFE_SUM_UNSIGNED(type, in1, in2, out)           \
+#define WC_SAFE_SUM_UNSIGNED(type, in1, in2, out)                    \
         WC_WUR_INT(WC_SAFE_SUM_UNSIGNED_NO_WUR(type, in1, in2, out))
 
 #if defined(HAVE_SELFTEST) || (defined(HAVE_FIPS) && FIPS_VERSION3_LE(6,0,0))
-    #define WC_SAFE_SUM_WORD32(in1, in2, out) \
+    #define WC_SAFE_SUM_WORD32(in1, in2, out)                        \
             WC_SAFE_SUM_UNSIGNED_NO_WUR(word32, in1, in2, out)
 #else
-    #define WC_SAFE_SUM_WORD32(in1, in2, out) \
+    #define WC_SAFE_SUM_WORD32(in1, in2, out)                        \
             WC_SAFE_SUM_UNSIGNED(word32, in1, in2, out)
 #endif
 
-#define WC_SAFE_SUM_SIGNED_NO_WUR(type, in1, in2, out)      \
-        ((((in1) > 0) && ((in2) > 0)) ?                     \
-             ((in2) <= WC_MAX_SINT_OF(type) - (in1) ?          \
-              ((out) = (in1) + (in2), 1) :                  \
-              ((out) = (type)WC_MAX_SINT_OF(type), 0))         \
-             :                                              \
-             ((((in1) < 0) && ((in2) < 0)) ?                \
-              ((in2) >= WC_MIN_SINT_OF(type) - (in1) ?         \
-               ((out) = (in1) + (in2), 1) :                 \
-               ((out) = (type)WC_MIN_SINT_OF(type), 0))        \
-              :                                             \
+#define WC_SAFE_SUM_SIGNED_NO_WUR(type, in1, in2, out)               \
+        ((((in1) > 0) && ((in2) > 0)) ?                              \
+             ((in2) <= WC_MAX_SINT_OF(type) - (in1) ?                \
+              ((out) = (in1) + (in2), 1) :                           \
+              ((out) = (type)WC_MAX_SINT_OF(type), 0))               \
+             :                                                       \
+             ((((in1) < 0) && ((in2) < 0)) ?                         \
+              ((in2) >= WC_MIN_SINT_OF(type) - (in1) ?               \
+               ((out) = (in1) + (in2), 1) :                          \
+               ((out) = (type)WC_MIN_SINT_OF(type), 0))              \
+              :                                                      \
               ((out) = (in1) + (in2), 1)))
 
-#define WC_SAFE_SUM_SIGNED(type, in1, in2, out)             \
+#define WC_SAFE_SUM_SIGNED(type, in1, in2, out)                      \
         WC_WUR_INT(WC_SAFE_SUM_SIGNED_NO_WUR(type, in1, in2, out))
 
 #if defined(HAVE_IO_POOL)
@@ -2071,6 +2071,13 @@ WOLFSSL_API word32 CheckRunTimeSettings(void);
         #define SAVE_NO_VECTOR_REGISTERS2() WC_CHECK_FOR_INTR_SIGNALS()
     #endif
 #endif
+#ifndef WC_SIG_IGNORE_BEGIN
+    #define WC_SIG_IGNORE_BEGIN() 0
+#endif
+#ifndef WC_SIG_IGNORE_END
+    #define WC_SIG_IGNORE_END() 0
+#endif
+
 #ifndef RESTORE_NO_VECTOR_REGISTERS
     #define RESTORE_NO_VECTOR_REGISTERS() WC_RELAX_LONG_LOOP()
 #endif
