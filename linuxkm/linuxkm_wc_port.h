@@ -1368,6 +1368,8 @@
     #endif /* HAVE_FIPS */
 
     #ifdef WOLFSSL_LINUXKM_USE_MUTEXES
+        #define WC_MUTEX_OPS_INLINE
+
         #ifdef LINUXKM_LKCAPI_REGISTER
             /* must use spin locks when registering implementations with the
              * kernel, because mutexes are forbidden when calling with nonzero
@@ -1398,7 +1400,7 @@
             return 0;
         }
 
-        static inline int wc_LockMutex(wolfSSL_Mutex* m)
+        static __must_check inline int wc_LockMutex(wolfSSL_Mutex* m)
         {
             if (in_nmi() || hardirq_count() || in_softirq())
                 return -1;
@@ -1412,6 +1414,8 @@
             return 0;
         }
     #else
+        #define WC_MUTEX_OPS_INLINE
+
         /* if BUILDING_WOLFSSL, spinlock.h will have already been included
          * recursively above, with the bevy of warnings suppressed, and the
          * below include will be a redundant no-op.
@@ -1443,14 +1447,14 @@
         /* wc_lkm_LockMutex() can't be used inline in __PIE__ objects, due to
          * direct access to pv_ops.
          */
-        static __always_inline int wc_LockMutex(wolfSSL_Mutex *m)
+        static __must_check __always_inline int wc_LockMutex(wolfSSL_Mutex *m)
         {
             return WC_PIE_INDIRECT_SYM(wc_lkm_LockMutex)(m);
         }
 
         #else /* !__PIE__ */
 
-        static __always_inline int wc_LockMutex(wolfSSL_Mutex *m)
+        static __must_check __always_inline int wc_LockMutex(wolfSSL_Mutex *m)
         {
             return wc_lkm_LockMutex(m);
         }
