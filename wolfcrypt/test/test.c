@@ -43,10 +43,6 @@
     #define WOLFSSL_DEBUG_TRACE_ERROR_CODES_ALWAYS
 #endif
 
-#ifdef WOLFSSL_ASYNC_CRYPT
-    #define WOLFSSL_SMALL_STACK
-#endif
-
 #if !defined(NO_CRYPT_TEST) || defined(WC_TEST_EXPORT_SUBTESTS)
 
 #include <wolfssl/version.h>
@@ -20061,8 +20057,6 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t memory_test(void)
 #endif
         int int_expected;
         unsigned int uint_expected;
-        void * a_ptr = NULL;
-        void * ptr_expected = NULL;
 
         if (WOLFSSL_ATOMIC_LOAD(a_int) != -2)
             return WC_TEST_RET_ENC_NC;
@@ -20134,12 +20128,17 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t memory_test(void)
         if (WOLFSSL_ATOMIC_LOAD(a_uint) != 7)
             return WC_TEST_RET_ENC_NC;
 
-        a_ptr = NULL;
-        ptr_expected = NULL;
-        if (! wolfSSL_Atomic_Ptr_CompareExchange(&a_ptr, &ptr_expected, &ret))
-            return WC_TEST_RET_ENC_NC;
-        if (a_ptr != &ret)
-            return WC_TEST_RET_ENC_NC;
+        {
+            void * volatile a_ptr = NULL;
+            void * ptr_expected = NULL;
+            static const char s[] = "";
+            if (! wolfSSL_Atomic_Ptr_CompareExchange(&a_ptr,
+                                                     &ptr_expected,
+                                                     (void *)&s))
+                return WC_TEST_RET_ENC_NC;
+            if (a_ptr != s)
+                return WC_TEST_RET_ENC_NC;
+        }
     }
 
     return ret;
