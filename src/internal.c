@@ -33365,7 +33365,7 @@ static int AddPSKtoPreMasterSecret(WOLFSSL* ssl)
 static void MakePSKPreMasterSecret(Arrays* arrays, byte use_psk_key)
 {
     byte* pms = arrays->preMasterSecret;
-    word16 sz;
+    word16 sz = 0;
 
     /* sz + (use_psk_key ? sz 0s : sz unaltered) + length of psk + psk */
     if (!use_psk_key) {
@@ -35235,6 +35235,7 @@ static int DoSessionTicket(WOLFSSL* ssl, const byte* input, word32* inOutIdx,
             case WC_NO_ERR_TRACE(INVALID_PARAMETER):
             case WC_NO_ERR_TRACE(HRR_COOKIE_ERROR):
             case WC_NO_ERR_TRACE(BAD_BINDER):
+            case WC_NO_ERR_TRACE(DUPLICATE_TLS_EXT_E):
                 return illegal_parameter;
             case WC_NO_ERR_TRACE(INCOMPLETE_DATA):
                 return missing_extension;
