@@ -7512,7 +7512,7 @@ then
 fi
 
 # Small Stack - Cache on object
-if test "$KERNEL_MODE_DEFAULTS" = "yes" && (test "$ENABLED_FIPS" = "no" || test "$HAVE_FIPS_VERSION" -ge 6)
+if test "$KERNEL_MODE_DEFAULTS" = "yes"
 then
     ENABLED_SMALL_STACK_CACHE_DEFAULT=yes
 else
@@ -10273,6 +10273,12 @@ then
     if test "$ENABLED_CURVE25519" = "no128bit" || test "$ENABLED_32BIT" = "yes"
     then
         AM_CFLAGS="$AM_CFLAGS -DNO_CURVED25519_128BIT"
+    fi
+
+    if test "$ENABLED_CURVE25519" = "ed"
+    then
+        AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_CURVE25519_USE_ED25519"
+        AM_CCASFLAGS="$AM_CCASFLAGS -DWOLFSSL_CURVE25519_USE_ED25519"
     fi
 
     AM_CFLAGS="$AM_CFLAGS -DHAVE_CURVE25519"

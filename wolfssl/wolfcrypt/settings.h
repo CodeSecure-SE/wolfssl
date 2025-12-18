@@ -2605,7 +2605,6 @@ extern void uITRON4_free(void *p) ;
     #include <stdlib.h>
 
     #define WOLFSSL_DH_CONST
-    #define WOLFSSL_HAVE_MAX
     #define NO_WRITEV
     #define NO_STDLIB_ISASCII
 
@@ -2616,7 +2615,6 @@ extern void uITRON4_free(void *p) ;
 
     void *z_realloc(void *ptr, size_t size);
     #define realloc   z_realloc
-    #define max MAX
 
     #if !defined(CONFIG_NET_SOCKETS_POSIX_NAMES) && !defined(CONFIG_POSIX_API)
     #define CONFIG_NET_SOCKETS_POSIX_NAMES
@@ -4321,6 +4319,13 @@ extern void uITRON4_free(void *p) ;
     !defined(WOLFSSL_STATIC_MEMORY)
     #error Small stack cannot be used with no malloc (WOLFSSL_NO_MALLOC) and \
            without staticmemory (WOLFSSL_STATIC_MEMORY)
+#endif
+
+/* Undefine WOLFSSL_SMALL_STACK_CACHE if WOLFSSL_SMALL_STACK is undefined --
+ * they only work together.
+ */
+#if defined(WOLFSSL_SMALL_STACK_CACHE) && !defined(WOLFSSL_SMALL_STACK)
+    #undef WOLFSSL_SMALL_STACK_CACHE
 #endif
 
 /* If malloc is disabled make sure it is also disabled in SP math */
