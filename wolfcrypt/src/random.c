@@ -369,6 +369,11 @@ static int Hash_df(DRBG_internal* drbg, byte* out, word32 outSz, byte type,
     XFREE(digest, drbg->heap, DYNAMIC_TYPE_DIGEST);
 #endif
 
+#ifdef WC_VERBOSE_RNG
+    if (ret != 0)
+        WOLFSSL_DEBUG_PRINTF("%s failed with err = %d", __FUNCTION__, ret);
+#endif
+
     return (ret == 0) ? DRBG_SUCCESS : DRBG_FAILURE;
 }
 
@@ -406,6 +411,12 @@ static int Hash_DRBG_Reseed(DRBG_internal* drbg, const byte* seed, word32 seedSz
 #ifndef WOLFSSL_SMALL_STACK_CACHE
     WC_FREE_VAR_EX(newV, drbg->heap, DYNAMIC_TYPE_TMP_BUFFER);
 #endif
+
+    #ifdef WC_VERBOSE_RNG
+    if (ret != 0)
+        WOLFSSL_DEBUG_PRINTF("Hash_DRBG_Reseed failed with err %d.", ret);
+    #endif
+
     return ret;
 }
 
@@ -525,6 +536,19 @@ static int Hash_gen(DRBG_internal* drbg, byte* out, word32 outSz, const byte* V)
     WC_FREE_VAR_EX(data, drbg->heap, DYNAMIC_TYPE_TMP_BUFFER);
 #endif
 
+    #ifdef WC_VERBOSE_RNG
+    if ((ret != DRBG_SUCCESS) && (ret != DRBG_FAILURE)) {
+        /* Note, if we're just going to return DRBG_FAILURE to the caller, then
+         * there's no point printing it out here because (1) the lower-level
+         * code that was remapped to DRBG_FAILURE already got printed before the
+         * remapping, so a DRBG_FAILURE message would just be spamming the log,
+         * and (2) the caller will actually see the DRBG_FAILURE code, and is
+         * free to (and probably will) log it itself.
+         */
+        WOLFSSL_DEBUG_PRINTF("Hash_gen failed with err %d.", ret);
+    }
+    #endif
+
     return (ret == 0) ? DRBG_SUCCESS : DRBG_FAILURE;
 }
 
@@ -635,6 +659,13 @@ static int Hash_DRBG_Generate(DRBG_internal* drbg, byte* out, word32 outSz)
     #endif
     }
 
+    #ifdef WC_VERBOSE_RNG
+    if ((ret != DRBG_SUCCESS) && (ret != DRBG_FAILURE)) {
+        /* see note above regarding log spam reduction */
+        WOLFSSL_DEBUG_PRINTF("Hash_DRBG_Generate failed with err %d.", ret);
+    }
+    #endif
+
     return (ret == 0) ? DRBG_SUCCESS : DRBG_FAILURE;
 }
 
@@ -721,7 +752,6 @@ int wc_RNG_TestSeed(const byte* seed, word32 seedSz)
         if (ConstantCompare(seed + seedIdx,
                             seed + seedIdx + scratchSz,
                             (int)scratchSz) == 0) {
-
             ret = DRBG_CONT_FAILURE;
         }
         seedIdx += SEED_BLOCK_SZ;
@@ -825,6 +855,11 @@ static int _InitRng(WC_RNG* rng, byte* nonce, word32 nonceSz,
     }
 #endif
 
+#if defined(WOLFSSL_KEEP_RNG_SEED_FD_OPEN) && !defined(USE_WINDOWS_API)
+    if (!rng->seed.seedFdOpen)
+        rng->seed.fd = XBADFD;
+#endif
+
 #ifdef CUSTOM_RAND_GENERATE_BLOCK
     ret = 0; /* success */
 #else
@@ -926,6 +961,9 @@ static int _InitRng(WC_RNG* rng, byte* nonce, word32 nonceSz,
             else {
                 ret = seedCb(&rng->seed, seed, seedSz);
                 if (ret != 0) {
+#ifdef WC_VERBOSE_RNG
+                    WOLFSSL_DEBUG_PRINTF("seedCb in _InitRng() failed with err = %d", ret);
+#endif
                     ret = DRBG_FAILURE;
                 }
             }
@@ -935,6 +973,8 @@ static int _InitRng(WC_RNG* rng, byte* nonce, word32 nonceSz,
             if (ret != 0) {
     #if defined(DEBUG_WOLFSSL)
                 WOLFSSL_MSG_EX("Seed generation failed... %d", ret);
+    #elif defined(WC_VERBOSE_RNG)
+                WOLFSSL_DEBUG_PRINTF("wc_GenerateSeed() in _InitRng() failed with err %d", ret);
     #endif
                 ret = DRBG_FAILURE;
                 rng->status = DRBG_FAILED;
@@ -946,7 +986,12 @@ static int _InitRng(WC_RNG* rng, byte* nonce, word32 nonceSz,
             if (ret != 0) {
                 WOLFSSL_MSG_EX("wc_RNG_TestSeed failed... %d", ret);
             }
+    #elif defined(WC_VERBOSE_RNG)
+            if (ret != DRBG_SUCCESS) {
+                WOLFSSL_DEBUG_PRINTF("wc_RNG_TestSeed() in _InitRng() returned err %d.", ret);
+            }
     #endif
+
             if (ret == DRBG_SUCCESS)
                 ret = Hash_DRBG_Instantiate((DRBG_internal *)rng->drbg,
             #if defined(HAVE_FIPS) || !defined(WOLFSSL_RNG_USE_FULL_SEED)
@@ -1120,19 +1165,30 @@ static int PollAndReSeed(WC_RNG* rng)
             else {
                 ret = seedCb(&rng->seed, newSeed, SEED_SZ + SEED_BLOCK_SZ);
                 if (ret != 0) {
+    #ifdef WC_VERBOSE_RNG
+                    WOLFSSL_DEBUG_PRINTF("seedCb() in PollAndReSeed() failed with err %d", ret);
+    #endif
                     ret = DRBG_FAILURE;
                 }
             }
         #else
             ret = wc_GenerateSeed(&rng->seed, newSeed,
                               SEED_SZ + SEED_BLOCK_SZ);
-        #endif
-            if (ret != 0)
+            if (ret != 0) {
+    #ifdef WC_VERBOSE_RNG
+                WOLFSSL_DEBUG_PRINTF("wc_GenerateSeed() in PollAndReSeed() failed with err %d", ret);
+    #endif
                 ret = DRBG_FAILURE;
+            }
+        #endif
         }
-        if (ret == DRBG_SUCCESS)
+        if (ret == DRBG_SUCCESS) {
             ret = wc_RNG_TestSeed(newSeed, SEED_SZ + SEED_BLOCK_SZ);
-
+    #ifdef WC_VERBOSE_RNG
+            if (ret != DRBG_SUCCESS)
+                WOLFSSL_DEBUG_PRINTF("wc_RNG_TestSeed() in PollAndReSeed() returned err %d.", ret);
+    #endif
+        }
         if (ret == DRBG_SUCCESS)
             ret = Hash_DRBG_Reseed((DRBG_internal *)rng->drbg,
                                    newSeed + SEED_BLOCK_SZ, SEED_SZ);
@@ -1202,6 +1258,10 @@ int wc_RNG_GenerateBlock(WC_RNG* rng, byte* output, word32 sz)
 #ifdef CUSTOM_RAND_GENERATE_BLOCK
     XMEMSET(output, 0, sz);
     ret = (int)CUSTOM_RAND_GENERATE_BLOCK(output, sz);
+    #ifdef WC_VERBOSE_RNG
+    if (ret != 0)
+        WOLFSSL_DEBUG_PRINTF("CUSTOM_RAND_GENERATE_BLOCK failed with err %d.", ret);
+    #endif
 #else
 
 #ifdef HAVE_HASHDRBG
@@ -1302,6 +1362,15 @@ int wc_FreeRng(WC_RNG* rng)
     /* don't overwrite previously set error */
     if (wc_VersalTrngReset() && !ret)
         ret = WC_HW_E;
+#endif
+
+#if defined(WOLFSSL_KEEP_RNG_SEED_FD_OPEN) && defined(XCLOSE) && \
+    !defined(USE_WINDOWS_API)
+    if(rng->seed.seedFdOpen && rng->seed.fd != XBADFD) {
+        XCLOSE(rng->seed.fd);
+        rng->seed.fd = XBADFD;
+        rng->seed.seedFdOpen = 0;
+    }
 #endif
 
     return ret;
@@ -3498,25 +3567,55 @@ int wc_GenerateSeed(OS_Seed* os, byte* output, word32 sz)
     #endif
 
 #ifndef NO_FILESYSTEM
-    #ifndef NO_DEV_URANDOM /* way to disable use of /dev/urandom */
+    #ifdef WOLFSSL_KEEP_RNG_SEED_FD_OPEN
+        if (!os->seedFdOpen)
+        {
+        #ifndef NO_DEV_URANDOM /* way to disable use of /dev/urandom */
+            os->fd = open("/dev/urandom", O_RDONLY);
+            #if defined(DEBUG_WOLFSSL)
+                WOLFSSL_MSG("opened /dev/urandom.");
+            #endif /* DEBUG_WOLFSSL */
+            if (os->fd == XBADFD)
+        #endif /* NO_DEV_URANDOM */
+            {
+                /* may still have /dev/random */
+                os->fd = open("/dev/random", O_RDONLY);
+            #if defined(DEBUG_WOLFSSL)
+                WOLFSSL_MSG("opened /dev/random.");
+            #endif /* DEBUG_WOLFSSL */
+                if (os->fd == XBADFD)
+                    return OPEN_RAN_E;
+                else {
+                    os->keepSeedFdOpen = 0;
+                    os->seedFdOpen = 1;
+                }
+            }
+            else {
+                os->keepSeedFdOpen = 1;
+                os->seedFdOpen = 1;
+            }
+        }
+    #else /* WOLFSSL_KEEP_RNG_SEED_FD_OPEN */
+        #ifndef NO_DEV_URANDOM /* way to disable use of /dev/urandom */
         os->fd = open("/dev/urandom", O_RDONLY);
         #if defined(DEBUG_WOLFSSL)
             WOLFSSL_MSG("opened /dev/urandom.");
-        #endif
-        if (os->fd == -1)
-    #endif
+        #endif /* DEBUG_WOLFSSL */
+        if (os->fd == XBADFD)
+        #endif /* !NO_DEV_URANDOM */
         {
             /* may still have /dev/random */
             os->fd = open("/dev/random", O_RDONLY);
-    #if defined(DEBUG_WOLFSSL)
+        #if defined(DEBUG_WOLFSSL)
             WOLFSSL_MSG("opened /dev/random.");
-    #endif
-            if (os->fd == -1)
+        #endif /* DEBUG_WOLFSSL */
+            if (os->fd == XBADFD)
                 return OPEN_RAN_E;
         }
+    #endif /* WOLFSSL_KEEP_RNG_SEED_FD_OPEN */
     #if defined(DEBUG_WOLFSSL)
         WOLFSSL_MSG("rnd read...");
-    #endif
+    #endif /* DEBUG_WOLFSSL */
         while (sz) {
             int len = (int)read(os->fd, output, sz);
             if (len == -1) {
@@ -3533,11 +3632,20 @@ int wc_GenerateSeed(OS_Seed* os, byte* output, word32 sz)
     #else
                 ret = RAN_BLOCK_E;
                 break;
-    #endif
+    #endif /* BLOCKING || WC_RNG_BLOCKING */
             }
         }
+    #ifdef WOLFSSL_KEEP_RNG_SEED_FD_OPEN
+        if (!os->keepSeedFdOpen && os->seedFdOpen)
+        {
+            close(os->fd);
+            os->fd = -1;
+            os->seedFdOpen = 0;
+        }
+    #else
         close(os->fd);
-#else
+    #endif /* WOLFSSL_KEEP_RNG_SEED_FD_OPEN */
+#else /* NO_FILESYSTEM */
         (void)output;
         (void)sz;
         ret = NOT_COMPILED_IN;
