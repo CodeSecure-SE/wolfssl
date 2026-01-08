@@ -3389,6 +3389,13 @@ then
             ENABLED_ARMASM_CRYPTO=no
             ;;
         sha256-small)
+            case $host_cpu in
+            *arm*)
+                ;;
+            *)
+                AC_MSG_ERROR([SHA256 small option only available on 32-bit ARM CPU.])
+                break;;
+            esac
             ENABLED_ARMASM_SHA256_SMALL=yes
             ;;
         sha512-crypto | sha3-crypto)
@@ -3458,8 +3465,25 @@ then
             esac
             ENABLED_ARMASM_BARRIER_DETECT=yes
             ;;
+        aes-block-dup)
+            case $host_cpu in
+            *arm*)
+                ;;
+            *)
+                AC_MSG_ERROR([AES assembly option only available on 32-bit ARM CPU.])
+                break;;
+            esac
+            ENABLED_ARMASM_AES_BLOCK_INLINE=yes
+            ;;
         *)
-            AC_MSG_ERROR([Invalid choice of ARM asm inclusions (yes, sha512-crypto, sha3-crypto): $ENABLED_ARMASM.])
+            case $host_cpu in
+            *aarch64*)
+                AC_MSG_ERROR([Invalid choice of ARM asm inclusions (yes, inline, no-crypto, sha512-crypto, sha3-crypto, no-sha512-crypto, no-sha3-crypto, barrier-sb, barrier-detect): $ENABLED_ARMASM.])
+                break;;
+            *arm*)
+                AC_MSG_ERROR([Invalid choice of ARM asm inclusions (yes, inline, no-crypto, sha256-small, aes-block-dup): $ENABLED_ARMASM.])
+                break;;
+            esac
             break;;
         esac
     done
@@ -3624,6 +3648,9 @@ fi
 if test "$ENABLED_ARMASM_INLINE" = "yes"; then
     AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_ARMASM_INLINE"
 fi
+if test "$ENABLED_ARMASM_AES_BLOCK_INLINE" = "yes"; then
+    AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_ARMASM_AES_BLOCK_INLINE"
+fi
 
 # RISC-V Assembly
 AC_ARG_ENABLE([riscv-asm],
@@ -3721,6 +3748,9 @@ then
       inline)
         ENABLED_PPC32_ASM_INLINE=yes
         ;;
+      inline-reg)
+        ENABLED_PPC32_ASM_INLINE_REG=yes
+        ;;
       small)
         ENABLED_PPC32_ASM_SMALL=yes
         ;;
@@ -3738,7 +3768,7 @@ then
     AC_MSG_NOTICE([32-bit PowerPC assembly for SHA-256])
     ENABLED_PPC32_ASM=yes
 fi
-if test "$ENABLED_PPC32_ASM_INLINE" = "yes"; then
+if test "$ENABLED_PPC32_ASM_INLINE" = "yes" || test "$ENABLED_PPC32_ASM_INLINE_REG" = "yes"; then
     AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_PPC32_ASM_INLINE"
 else
     AM_CCASFLAGS="$AM_CCASFLAGS -DWOLFSSL_PPC32_ASM"
@@ -10287,6 +10317,12 @@ then
         AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_CURVE25519_USE_ED25519"
         AM_CCASFLAGS="$AM_CCASFLAGS -DWOLFSSL_CURVE25519_USE_ED25519"
     fi
+    if test "$ENABLED_CURVE25519" = "not-ed"
+    then
+        AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_CURVE25519_NOT_USE_ED25519"
+        AM_CCASFLAGS="$AM_CCASFLAGS -DWOLFSSL_CURVE25519_NOT_USE_ED25519"
+    fi
+
 
     AM_CFLAGS="$AM_CFLAGS -DHAVE_CURVE25519"
     AM_CCASFLAGS="$AM_CCASFLAGS -DHAVE_CURVE25519"
@@ -11006,6 +11042,7 @@ AM_CONDITIONAL([BUILD_ARM_64],[test "$ENABLED_ARM_64" = "yes"  || test "$ENABLED
 AM_CONDITIONAL([BUILD_RISCV_ASM],[test "x$ENABLED_RISCV_ASM" = "xyes"])
 AM_CONDITIONAL([BUILD_PPC32_ASM],[test "x$ENABLED_PPC32_ASM" = "xyes"])
 AM_CONDITIONAL([BUILD_PPC32_ASM_INLINE],[test "x$ENABLED_PPC32_ASM_INLINE" = "xyes"])
+AM_CONDITIONAL([BUILD_PPC32_ASM_INLINE_REG],[test "x$ENABLED_PPC32_ASM_INLINE_REG" = "xyes"])
 AM_CONDITIONAL([BUILD_XILINX],[test "x$ENABLED_XILINX" = "xyes"])
 AM_CONDITIONAL([BUILD_AESNI],[test "x$ENABLED_AESNI" = "xyes"])
 AM_CONDITIONAL([BUILD_INTELASM],[test "x$ENABLED_INTELASM" = "xyes"])
@@ -11676,6 +11713,10 @@ echo "   * RISC-V ASM                  $ENABLED_RISCV_ASM"
 if test "$ENABLED_PPC32_ASM_INLINE" = "yes"
 then
     ENABLED_PPC32_ASM="inline C"
+fi
+if test "$ENABLED_PPC32_ASM_INLINE_REG" = "yes"
+then
+    ENABLED_PPC32_ASM="inline C Reg"
 fi
 echo "   * PPC32 ASM                   $ENABLED_PPC32_ASM"
 echo "   * Write duplicate:            $ENABLED_WRITEDUP"
