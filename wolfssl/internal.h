@@ -1526,15 +1526,10 @@ enum Misc {
     MAXEARLYDATASZ_LEN = 4,     /* maxEarlyDataSz size in ticket */
 #endif
 #endif
-#if defined(HAVE_FALCON) || defined(HAVE_DILITHIUM)
-    ENCRYPT_LEN     = 5120,     /* Allow 5k byte buffer for dilithium and
-                                 * hybridization with other algs. */
-#else
 #ifndef NO_PSK
     ENCRYPT_LEN     = (ENCRYPT_BASE_BITS / 8) + MAX_PSK_KEY_LEN + 2,
 #else
     ENCRYPT_LEN     = (ENCRYPT_BASE_BITS / 8),
-#endif
 #endif
     SIZEOF_SENDER   =  4,       /* clnt or srvr           */
     FINISHED_SZ     = 36,       /* WC_MD5_DIGEST_SIZE + WC_SHA_DIGEST_SIZE */
@@ -2189,9 +2184,9 @@ WOLFSSL_LOCAL WARN_UNUSED_RESULT DerBuffer *wolfssl_priv_der_unblind(
     const DerBuffer* key, const DerBuffer* mask);
 WOLFSSL_LOCAL void wolfssl_priv_der_unblind_free(DerBuffer* key);
 #endif
-WOLFSSL_LOCAL int  DecodePrivateKey(WOLFSSL *ssl, word32* length);
+WOLFSSL_LOCAL int  DecodePrivateKey(WOLFSSL *ssl, word32* sigLen);
 #ifdef WOLFSSL_DUAL_ALG_CERTS
-WOLFSSL_LOCAL int  DecodeAltPrivateKey(WOLFSSL *ssl, word32* length);
+WOLFSSL_LOCAL int  DecodeAltPrivateKey(WOLFSSL *ssl, word32* sigLen);
 #endif
 #if defined(WOLF_PRIVATE_KEY_ID) || defined(HAVE_PK_CALLBACKS)
 WOLFSSL_LOCAL int GetPrivateKeySigSize(WOLFSSL* ssl);
