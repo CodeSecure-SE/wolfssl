@@ -31518,6 +31518,58 @@ static int test_wolfSSL_CTX_LoadCRL(void)
     return EXPECT_RESULT();
 }
 
+static int test_wolfSSL_CTX_LoadCRL_largeCRLnum(void)
+{
+    EXPECT_DECLS;
+#if defined(HAVE_CRL) && !defined(NO_RSA) && !defined(NO_FILESYSTEM) && \
+    defined(HAVE_CRL_UPDATE_CB)
+    WOLFSSL_CERT_MANAGER* cm = NULL;
+    const char* caCert     =  "./certs/ca-cert.pem";
+    const char* crl_lrgcrlnum = "./certs/crl/extra-crls/large_crlnum.pem";
+    const char* crl_lrgcrlnum2 = "./certs/crl/extra-crls/large_crlnum2.pem";
+    const char* exp_crlnum = "D8AFADA7F08B38E6178BD0E5CD7B0DF80071BA74";
+    byte *crlLrgCrlNumBuff = NULL;
+    word32  crlLrgCrlNumSz;
+    CrlInfo crlInfo;
+    XFILE f;
+    word32 sz;
+
+    cm = wolfSSL_CertManagerNew();
+    ExpectNotNull(cm);
+    ExpectIntEQ(wolfSSL_CertManagerLoadCA(cm, caCert, NULL),
+        WOLFSSL_SUCCESS);
+    ExpectIntEQ(wolfSSL_CertManagerLoadCRLFile(cm, crl_lrgcrlnum,
+                                                WOLFSSL_FILETYPE_PEM),
+        WOLFSSL_SUCCESS);
+
+    AssertTrue((f = XFOPEN(crl_lrgcrlnum, "rb")) != XBADFILE);
+    AssertTrue(XFSEEK(f, 0, XSEEK_END) == 0);
+    AssertIntGE(sz = (word32) XFTELL(f), 1);
+    AssertTrue(XFSEEK(f, 0, XSEEK_SET) == 0);
+    AssertTrue( \
+        (crlLrgCrlNumBuff =
+            (byte*)XMALLOC(sz, NULL, DYNAMIC_TYPE_FILE)) != NULL);
+    AssertTrue(XFREAD(crlLrgCrlNumBuff, 1, sz, f) == sz);
+    XFCLOSE(f);
+    crlLrgCrlNumSz = sz;
+
+    AssertIntEQ(wolfSSL_CertManagerGetCRLInfo(
+        cm, &crlInfo, crlLrgCrlNumBuff, crlLrgCrlNumSz, WOLFSSL_FILETYPE_PEM),
+        WOLFSSL_SUCCESS);
+    AssertIntEQ(XMEMCMP(
+        crlInfo.crlNumber, exp_crlnum, XSTRLEN(exp_crlnum)), 0);
+    /* Expect to fail loading CRL because of >21 octets CRL number */
+    ExpectIntEQ(wolfSSL_CertManagerLoadCRLFile(cm, crl_lrgcrlnum2,
+                                                WOLFSSL_FILETYPE_PEM),
+        ASN_PARSE_E);
+
+    XFREE(crlLrgCrlNumBuff, NULL, DYNAMIC_TYPE_FILE);
+    wolfSSL_CertManagerFree(cm);
+#endif
+    return EXPECT_RESULT();
+
+}
+
 #if defined(HAVE_CRL) && !defined(NO_RSA) && !defined(NO_FILESYSTEM) && \
     defined(HAVE_CRL_UPDATE_CB)
 int crlUpdateTestStatus = 0;
@@ -31575,7 +31627,7 @@ static void updateCrlCb(CrlInfo* old, CrlInfo* cnew)
     AssertIntEQ(crl1Info.nextDateMaxLen, old->nextDateMaxLen);
     AssertIntEQ(crl1Info.nextDateFormat, old->nextDateFormat);
     AssertIntEQ(XMEMCMP(
-        crl1Info.crlNumber, old->crlNumber, CRL_MAX_NUM_SZ), 0);
+        crl1Info.crlNumber, old->crlNumber, sizeof(old->crlNumber)), 0);
     AssertIntEQ(XMEMCMP(
         crl1Info.issuerHash, old->issuerHash, old->issuerHashLen), 0);
     AssertIntEQ(XMEMCMP(
@@ -31590,7 +31642,7 @@ static void updateCrlCb(CrlInfo* old, CrlInfo* cnew)
     AssertIntEQ(crlRevInfo.nextDateMaxLen, cnew->nextDateMaxLen);
     AssertIntEQ(crlRevInfo.nextDateFormat, cnew->nextDateFormat);
     AssertIntEQ(XMEMCMP(
-        crlRevInfo.crlNumber, cnew->crlNumber, CRL_MAX_NUM_SZ), 0);
+        crlRevInfo.crlNumber, cnew->crlNumber, sizeof(cnew->crlNumber)), 0);
     AssertIntEQ(XMEMCMP(
         crlRevInfo.issuerHash, cnew->issuerHash, cnew->issuerHashLen), 0);
     AssertIntEQ(XMEMCMP(
@@ -34750,6 +34802,7 @@ static int error_test(void)
     if (EXPECT_FAIL())
         return OPEN_RAN_E;
 #else
+    int start_idx = 0;
     int i;
     int j = 0;
     /* Values that are not or no longer error codes. */
@@ -34763,14 +34816,12 @@ static int error_test(void)
 
 #if defined(OPENSSL_EXTRA) || defined(OPENSSL_EXTRA_X509_SMALL) || \
     defined(HAVE_WEBSERVER) || defined(HAVE_MEMCACHED)
-        { -11, -12 },
-        { -15, -17 },
-        { -19, -19 },
-        { -26, -27 },
-        { -30, WC_SPAN1_FIRST_E + 1 },
-#else
-        { -9, WC_SPAN1_FIRST_E + 1 },
+        {11, 11},
+        {17, 15},
+        {19, 19},
+        {27, 26 },
 #endif
+        { -9, WC_SPAN1_FIRST_E + 1 },
         { -124, -124 },
         { -167, -169 },
         { -300, -300 },
@@ -34788,7 +34839,10 @@ static int error_test(void)
      * APIs. Check that the values that are not errors map to the unknown
      * string.
      */
-    for (i = 0; i >= MIN_CODE_E; i--) {
+#if defined(OPENSSL_EXTRA)
+    start_idx = WC_OSSL_V509_V_ERR_MAX - 1;
+#endif
+    for (i = start_idx; i >= MIN_CODE_E; i--) {
         int this_missing = 0;
         for (j = 0; j < (int)XELEM_CNT(missing); ++j) {
             if ((i <= missing[j].first) && (i >= missing[j].last)) {
@@ -42089,6 +42143,7 @@ TEST_CASE testCases[] = {
     TEST_DECL(test_wolfSSL_use_certificate_chain_file),
     TEST_DECL(test_wolfSSL_CTX_trust_peer_cert),
     TEST_DECL(test_wolfSSL_CTX_LoadCRL),
+    TEST_DECL(test_wolfSSL_CTX_LoadCRL_largeCRLnum),
     TEST_DECL(test_wolfSSL_crl_update_cb),
     TEST_DECL(test_wolfSSL_CTX_SetTmpDH_file),
     TEST_DECL(test_wolfSSL_CTX_SetTmpDH_buffer),
