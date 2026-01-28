@@ -19873,6 +19873,7 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t XChaCha20Poly1305_test(void) {
     };
 
     wc_test_ret_t ret;
+    ChaChaPoly_Aead aead;
 
 
 #if defined(WOLFSSL_SMALL_STACK) && !defined(WOLFSSL_NO_MALLOC)
@@ -19914,6 +19915,177 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t XChaCha20Poly1305_test(void) {
 
     if (XMEMCMP(buf2, Plaintext, sizeof Plaintext))
         ERROR_OUT(WC_TEST_RET_ENC_NC, out);
+
+    /* Test wc_XChaCha20Poly1305_Init bad parameters */
+    ret = wc_XChaCha20Poly1305_Init(NULL, AAD, sizeof AAD,
+                                    IV, sizeof IV,
+                                    Key, sizeof Key, 1);
+    if (ret == 0)
+        ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
+
+    ret = wc_XChaCha20Poly1305_Init(&aead, AAD, sizeof AAD,
+                                    NULL, sizeof IV,
+                                    Key, sizeof Key, 1);
+    if (ret != WC_NO_ERR_TRACE(BAD_FUNC_ARG))
+        ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
+
+    ret = wc_XChaCha20Poly1305_Init(&aead, AAD, sizeof AAD,
+                                    IV, sizeof IV,
+                                    NULL, sizeof Key, 1);
+    if (ret != WC_NO_ERR_TRACE(BAD_FUNC_ARG))
+        ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
+
+    /* Wrong nonce size (12 instead of 24) */
+    ret = wc_XChaCha20Poly1305_Init(&aead, AAD, sizeof AAD,
+                                    IV, CHACHA20_POLY1305_AEAD_IV_SIZE,
+                                    Key, sizeof Key, 1);
+    if (ret != WC_NO_ERR_TRACE(BAD_FUNC_ARG))
+        ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
+
+    /* Wrong key size (16 instead of 32) */
+    ret = wc_XChaCha20Poly1305_Init(&aead, AAD, sizeof AAD,
+                                    IV, sizeof IV,
+                                    Key, 16, 1);
+    if (ret != WC_NO_ERR_TRACE(BAD_FUNC_ARG))
+        ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
+
+    /* Test wc_XChaCha20Poly1305_Encrypt bad parameters */
+    ret = wc_XChaCha20Poly1305_Encrypt(NULL, sizeof Ciphertext + sizeof Tag,
+                                       Plaintext, sizeof Plaintext,
+                                       AAD, sizeof AAD,
+                                       IV, sizeof IV,
+                                       Key, sizeof Key);
+    if (ret != WC_NO_ERR_TRACE(BAD_FUNC_ARG))
+        ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
+
+    ret = wc_XChaCha20Poly1305_Encrypt(buf1, sizeof Ciphertext + sizeof Tag,
+                                       NULL, sizeof Plaintext,
+                                       AAD, sizeof AAD,
+                                       IV, sizeof IV,
+                                       Key, sizeof Key);
+    if (ret != WC_NO_ERR_TRACE(BAD_FUNC_ARG))
+        ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
+
+    ret = wc_XChaCha20Poly1305_Encrypt(buf1, sizeof Ciphertext + sizeof Tag,
+                                       Plaintext, sizeof Plaintext,
+                                       NULL, sizeof AAD,
+                                       IV, sizeof IV,
+                                       Key, sizeof Key);
+    if (ret != WC_NO_ERR_TRACE(BAD_FUNC_ARG))
+        ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
+
+    ret = wc_XChaCha20Poly1305_Encrypt(buf1, sizeof Ciphertext + sizeof Tag,
+                                       Plaintext, sizeof Plaintext,
+                                       AAD, sizeof AAD,
+                                       NULL, sizeof IV,
+                                       Key, sizeof Key);
+    if (ret != WC_NO_ERR_TRACE(BAD_FUNC_ARG))
+        ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
+
+    ret = wc_XChaCha20Poly1305_Encrypt(buf1, sizeof Ciphertext + sizeof Tag,
+                                       Plaintext, sizeof Plaintext,
+                                       AAD, sizeof AAD,
+                                       IV, sizeof IV,
+                                       NULL, sizeof Key);
+    if (ret != WC_NO_ERR_TRACE(BAD_FUNC_ARG))
+        ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
+
+    /* Wrong nonce size (12 instead of 24) */
+    ret = wc_XChaCha20Poly1305_Encrypt(buf1, sizeof Ciphertext + sizeof Tag,
+                                       Plaintext, sizeof Plaintext,
+                                       AAD, sizeof AAD,
+                                       IV, CHACHA20_POLY1305_AEAD_IV_SIZE,
+                                       Key, sizeof Key);
+    if (ret != WC_NO_ERR_TRACE(BAD_FUNC_ARG))
+        ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
+
+    /* Wrong key size (16 instead of 32) */
+    ret = wc_XChaCha20Poly1305_Encrypt(buf1, sizeof Ciphertext + sizeof Tag,
+                                       Plaintext, sizeof Plaintext,
+                                       AAD, sizeof AAD,
+                                       IV, sizeof IV,
+                                       Key, 16);
+    if (ret != WC_NO_ERR_TRACE(BAD_FUNC_ARG))
+        ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
+
+    /* Insufficient buffer space */
+    ret = wc_XChaCha20Poly1305_Encrypt(buf1, sizeof Plaintext,
+                                       Plaintext, sizeof Plaintext,
+                                       AAD, sizeof AAD,
+                                       IV, sizeof IV,
+                                       Key, sizeof Key);
+    if (ret != WC_NO_ERR_TRACE(BUFFER_E))
+        ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
+
+    /* Test wc_XChaCha20Poly1305_Decrypt bad parameters */
+    ret = wc_XChaCha20Poly1305_Decrypt(NULL, sizeof Plaintext,
+                                       buf1, sizeof Ciphertext + sizeof Tag,
+                                       AAD, sizeof AAD,
+                                       IV, sizeof IV,
+                                       Key, sizeof Key);
+    if (ret != WC_NO_ERR_TRACE(BAD_FUNC_ARG))
+        ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
+
+    ret = wc_XChaCha20Poly1305_Decrypt(buf2, sizeof Plaintext,
+                                       NULL, sizeof Ciphertext + sizeof Tag,
+                                       AAD, sizeof AAD,
+                                       IV, sizeof IV,
+                                       Key, sizeof Key);
+    if (ret != WC_NO_ERR_TRACE(BAD_FUNC_ARG))
+        ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
+
+    ret = wc_XChaCha20Poly1305_Decrypt(buf2, sizeof Plaintext,
+                                       buf1, sizeof Ciphertext + sizeof Tag,
+                                       NULL, sizeof AAD,
+                                       IV, sizeof IV,
+                                       Key, sizeof Key);
+    if (ret != WC_NO_ERR_TRACE(BAD_FUNC_ARG))
+        ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
+
+    ret = wc_XChaCha20Poly1305_Decrypt(buf2, sizeof Plaintext,
+                                       buf1, sizeof Ciphertext + sizeof Tag,
+                                       AAD, sizeof AAD,
+                                       NULL, sizeof IV,
+                                       Key, sizeof Key);
+    if (ret != WC_NO_ERR_TRACE(BAD_FUNC_ARG))
+        ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
+
+    ret = wc_XChaCha20Poly1305_Decrypt(buf2, sizeof Plaintext,
+                                       buf1, sizeof Ciphertext + sizeof Tag,
+                                       AAD, sizeof AAD,
+                                       IV, sizeof IV,
+                                       NULL, sizeof Key);
+    if (ret != WC_NO_ERR_TRACE(BAD_FUNC_ARG))
+        ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
+
+    /* Wrong nonce size (12 instead of 24) */
+    ret = wc_XChaCha20Poly1305_Decrypt(buf2, sizeof Plaintext,
+                                       buf1, sizeof Ciphertext + sizeof Tag,
+                                       AAD, sizeof AAD,
+                                       IV, CHACHA20_POLY1305_AEAD_IV_SIZE,
+                                       Key, sizeof Key);
+    if (ret != WC_NO_ERR_TRACE(BAD_FUNC_ARG))
+        ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
+
+    /* Wrong key size (16 instead of 32) */
+    ret = wc_XChaCha20Poly1305_Decrypt(buf2, sizeof Plaintext,
+                                       buf1, sizeof Ciphertext + sizeof Tag,
+                                       AAD, sizeof AAD,
+                                       IV, sizeof IV,
+                                       Key, 16);
+    if (ret != WC_NO_ERR_TRACE(BAD_FUNC_ARG))
+        ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
+
+    /* Insufficient buffer space */
+    ret = wc_XChaCha20Poly1305_Decrypt(buf2, sizeof Plaintext - 1,
+                                       buf1, sizeof Ciphertext + sizeof Tag,
+                                       AAD, sizeof AAD,
+                                       IV, sizeof IV,
+                                       Key, sizeof Key);
+    if (ret != WC_NO_ERR_TRACE(BUFFER_E))
+        ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
+
+    ret = 0;
 
   out:
 
@@ -22716,6 +22888,22 @@ static wc_test_ret_t rsa_decode_test(RsaKey* keyPub)
         ret = WC_TEST_RET_ENC_NC;
         goto done;
     }
+
+#ifdef USE_CERT_BUFFERS_2048
+    /* Test that public key decode rejects a private key */
+    wc_FreeRsaKey(keyPub);
+    ret = wc_InitRsaKey(keyPub, NULL);
+    if (ret != 0)
+        return WC_TEST_RET_ENC_EC(ret);
+    inOutIdx = 0;
+    ret = wc_RsaPublicKeyDecode(client_key_der_2048, &inOutIdx, keyPub,
+                                sizeof_client_key_der_2048);
+    if (ret != WC_NO_ERR_TRACE(ASN_RSA_KEY_E)) {
+        ret = WC_TEST_RET_ENC_EC(ret);
+        goto done;
+    }
+    ret = 0; /* success - public key decode correctly rejected private key */
+#endif
 
 done:
     wc_FreeRsaKey(keyPub);
