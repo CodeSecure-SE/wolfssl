@@ -4847,10 +4847,17 @@ ENABLED_ED25519_SMALL=no
 
 # CURVE25519
 AC_ARG_ENABLE([curve25519],
-    [AS_HELP_STRING([--enable-curve25519],[Enable Curve25519 (default: disabled)])],
+    [AS_HELP_STRING([--enable-curve25519],[Enable Curve25519 (default: disabled). Set to "nonblock" to enable non-blocking support for key gen and shared secret])],
     [ ENABLED_CURVE25519=$enableval ],
     [ ENABLED_CURVE25519=no ]
     )
+
+# Handle curve25519 nonblock option - enable asynccrypt and asynccrypt-sw early
+if test "$ENABLED_CURVE25519" = "nonblock"
+then
+    test -z "$enable_asynccrypt" && enable_asynccrypt=yes
+    test -z "$enable_asynccrypt_sw" && enable_asynccrypt_sw=yes
+fi
 
 if test "$ENABLED_CURVE25519" = "no" && test "$ENABLED_QUIC" = "yes" && test "$ENABLED_FIPS" = "no"
 then
@@ -6601,6 +6608,9 @@ AS_CASE([$ENABLED_SELFTEST],
         ENABLED_SELFTEST="yes"
         SELFTEST_VERSION="v1"
     ])
+
+AS_IF([test "x$ENABLED_SELFTEST" = "xyes" && test ! -s "${srcdir}/wolfcrypt/src/selftest.c"],
+    [AC_MSG_ERROR([selftest.c is missing, --enable-selftest requires the CAVP selftest source])])
 
 AS_CASE([$SELFTEST_VERSION],
     ["v2"],[
@@ -10359,10 +10369,15 @@ fi
 
 if test "$ENABLED_CURVE25519" != "no"
 then
-    if test "$ENABLED_CURVE25519" = "small" || test "$ENABLED_LOWRESOURCE" = "yes"
+    if test "$ENABLED_CURVE25519" = "small" || test "$ENABLED_CURVE25519" = "nonblock" || test "$ENABLED_LOWRESOURCE" = "yes"
     then
         AM_CFLAGS="$AM_CFLAGS -DCURVE25519_SMALL"
         ENABLED_CURVE25519_SMALL=yes
+    fi
+
+    if test "$ENABLED_CURVE25519" = "nonblock"
+    then
+        AM_CFLAGS="$AM_CFLAGS -DWC_X25519_NONBLOCK"
     fi
 
     if test "$ENABLED_CURVE25519" = "no128bit" || test "$ENABLED_32BIT" = "yes"
