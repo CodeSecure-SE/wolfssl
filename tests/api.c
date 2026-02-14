@@ -20097,6 +20097,262 @@ static int test_MakeCertWithCaFalse(void)
     return EXPECT_RESULT();
 }
 
+/* Mock callback for testing wc_SignCert_cb */
+#if defined(WOLFSSL_CERT_SIGN_CB) && (defined(WOLFSSL_CERT_GEN) || defined(WOLFSSL_CERT_REQ))
+/* Context structure for mock signing callback */
+typedef struct {
+    void* key;      /* Pointer to RSA or ECC key */
+    WC_RNG* rng;    /* Random number generator (required for ECC) */
+} MockSignCtx;
+
+static int mockSignCb(const byte* in, word32 inLen, byte* out, word32* outLen,
+                      int sigAlgo, int keyType, void* ctx)
+{
+    int ret = 0;
+    MockSignCtx* signCtx = (MockSignCtx*)ctx;
+
+    if (signCtx == NULL || signCtx->key == NULL || in == NULL ||
+        out == NULL || outLen == NULL) {
+        return BAD_FUNC_ARG;
+    }
+
+    (void)sigAlgo;
+
+#ifndef NO_RSA
+    if (keyType == RSA_TYPE) {
+        RsaKey* rsaKey = (RsaKey*)signCtx->key;
+        word32 outSz = *outLen;
+
+        /* For RSA, input is DER-encoded digest (DigestInfo structure) */
+        ret = wc_RsaSSL_Sign(in, inLen, out, outSz, rsaKey, signCtx->rng);
+        if (ret > 0) {
+            *outLen = (word32)ret;
+            ret = 0;
+        }
+    }
+    else
+#endif
+#ifdef HAVE_ECC
+    if (keyType == ECC_TYPE) {
+        ecc_key* eccKey = (ecc_key*)signCtx->key;
+        word32 outSz = *outLen;
+
+        /* For ECC, input is raw hash, sign it (RNG required for ECDSA k value) */
+        ret = wc_ecc_sign_hash(in, inLen, out, &outSz, signCtx->rng, eccKey);
+        if (ret == 0) {
+            *outLen = outSz;
+        }
+    }
+    else
+#endif
+    {
+        ret = BAD_FUNC_ARG;
+    }
+
+    return ret;
+}
+
+/* Mock callback that always returns an error for testing */
+static int mockSignCbError(const byte* in, word32 inLen, byte* out,
+                           word32* outLen, int sigAlgo, int keyType, void* ctx)
+{
+    (void)in;
+    (void)inLen;
+    (void)out;
+    (void)outLen;
+    (void)sigAlgo;
+    (void)keyType;
+    (void)ctx;
+    return BAD_STATE_E; /* Return an error */
+}
+#endif
+
+#ifdef WOLFSSL_CERT_SIGN_CB
+static int test_wc_SignCert_cb(void)
+{
+    EXPECT_DECLS;
+#if defined(WOLFSSL_CERT_GEN) && !defined(NO_ASN_TIME)
+
+#ifdef HAVE_ECC
+    /* Test with ECC key */
+    {
+        Cert cert;
+        byte der[FOURK_BUF];
+        int derSize = 0;
+        WC_RNG rng;
+        ecc_key key;
+        MockSignCtx signCtx;
+        DecodedCert decodedCert;
+        int ret;
+
+        XMEMSET(&rng, 0, sizeof(WC_RNG));
+        XMEMSET(&key, 0, sizeof(ecc_key));
+        XMEMSET(&cert, 0, sizeof(Cert));
+        XMEMSET(&signCtx, 0, sizeof(MockSignCtx));
+        XMEMSET(&decodedCert, 0, sizeof(DecodedCert));
+
+        ExpectIntEQ(wc_InitRng(&rng), 0);
+        ExpectIntEQ(wc_ecc_init(&key), 0);
+        ExpectIntEQ(wc_ecc_make_key(&rng, 32, &key), 0);
+        ExpectIntEQ(wc_InitCert(&cert), 0);
+
+        (void)XSTRNCPY(cert.subject.country, "US", CTC_NAME_SIZE);
+        (void)XSTRNCPY(cert.subject.state, "state", CTC_NAME_SIZE);
+        (void)XSTRNCPY(cert.subject.locality, "locality", CTC_NAME_SIZE);
+        (void)XSTRNCPY(cert.subject.org, "org", CTC_NAME_SIZE);
+        (void)XSTRNCPY(cert.subject.unit, "unit", CTC_NAME_SIZE);
+        (void)XSTRNCPY(cert.subject.commonName, "www.example.com",
+            CTC_NAME_SIZE);
+        (void)XSTRNCPY(cert.subject.email, "test@example.com", CTC_NAME_SIZE);
+
+        cert.selfSigned = 1;
+        cert.isCA       = 0;
+        cert.sigType    = CTC_SHA256wECDSA;
+
+        /* Make cert body */
+        ExpectIntGT(wc_MakeCert(&cert, der, FOURK_BUF, NULL, &key, &rng), 0);
+
+        /* Setup signing context with key and RNG */
+        signCtx.key = &key;
+        signCtx.rng = &rng;
+
+        /* Sign using callback API */
+        ExpectIntGT(derSize = wc_SignCert_cb(cert.bodySz, cert.sigType, der,
+            FOURK_BUF, ECC_TYPE, mockSignCb, &signCtx, &rng), 0);
+
+        /* Verify the certificate was created properly */
+        ExpectIntGT(derSize, 0);
+
+        /* Parse the certificate and verify it's well-formed */
+        if (EXPECT_SUCCESS()) {
+            wc_InitDecodedCert(&decodedCert, der, (word32)derSize, NULL);
+            ExpectIntEQ(wc_ParseCert(&decodedCert, CERT_TYPE, NO_VERIFY, NULL),
+                0);
+            /* Verify signature algorithm matches what we set */
+            ExpectIntEQ(decodedCert.signatureOID, CTC_SHA256wECDSA);
+            wc_FreeDecodedCert(&decodedCert);
+        }
+
+        /* Test error cases */
+        /* NULL callback */
+        ExpectIntEQ(wc_SignCert_cb(cert.bodySz, cert.sigType, der,
+            FOURK_BUF, ECC_TYPE, NULL, &signCtx, &rng), BAD_FUNC_ARG);
+        /* NULL buffer */
+        ExpectIntEQ(wc_SignCert_cb(cert.bodySz, cert.sigType, NULL,
+            FOURK_BUF, ECC_TYPE, mockSignCb, &signCtx, &rng), BAD_FUNC_ARG);
+        /* Zero buffer size */
+        ExpectIntEQ(wc_SignCert_cb(cert.bodySz, cert.sigType, der,
+            0, ECC_TYPE, mockSignCb, &signCtx, &rng), BAD_FUNC_ARG);
+        /* Negative requestSz - should return the negative value */
+        ExpectIntLT(wc_SignCert_cb(-1, cert.sigType, der,
+            FOURK_BUF, ECC_TYPE, mockSignCb, &signCtx, &rng), 0);
+        /* Callback returning error */
+        ExpectIntEQ(wc_SignCert_cb(cert.bodySz, cert.sigType, der,
+            FOURK_BUF, ECC_TYPE, mockSignCbError, &signCtx, &rng), BAD_STATE_E);
+    #ifndef NO_RSA
+        /* Invalid keyType for ECC signature */
+        ExpectIntEQ(wc_SignCert_cb(cert.bodySz, cert.sigType, der,
+            FOURK_BUF, ED25519_TYPE, mockSignCb, &signCtx, &rng), BAD_FUNC_ARG);
+    #endif
+
+        ret = wc_ecc_free(&key);
+        ExpectIntEQ(ret, 0);
+        ret = wc_FreeRng(&rng);
+        ExpectIntEQ(ret, 0);
+    }
+#endif /* HAVE_ECC */
+
+#if !defined(NO_RSA) && defined(WOLFSSL_KEY_GEN)
+    /* Test with RSA key */
+    {
+        Cert cert;
+        byte der[FOURK_BUF];
+        int derSize = 0;
+        WC_RNG rng;
+        RsaKey key;
+        MockSignCtx signCtx;
+        DecodedCert decodedCert;
+        int ret;
+
+        XMEMSET(&rng, 0, sizeof(WC_RNG));
+        XMEMSET(&key, 0, sizeof(RsaKey));
+        XMEMSET(&cert, 0, sizeof(Cert));
+        XMEMSET(&signCtx, 0, sizeof(MockSignCtx));
+        XMEMSET(&decodedCert, 0, sizeof(DecodedCert));
+
+        ExpectIntEQ(wc_InitRng(&rng), 0);
+        ExpectIntEQ(wc_InitRsaKey(&key, NULL), 0);
+        ExpectIntEQ(wc_MakeRsaKey(&key, 2048, WC_RSA_EXPONENT, &rng), 0);
+        ExpectIntEQ(wc_InitCert(&cert), 0);
+
+        (void)XSTRNCPY(cert.subject.country, "US", CTC_NAME_SIZE);
+        (void)XSTRNCPY(cert.subject.state, "state", CTC_NAME_SIZE);
+        (void)XSTRNCPY(cert.subject.locality, "locality", CTC_NAME_SIZE);
+        (void)XSTRNCPY(cert.subject.org, "org", CTC_NAME_SIZE);
+        (void)XSTRNCPY(cert.subject.unit, "unit", CTC_NAME_SIZE);
+        (void)XSTRNCPY(cert.subject.commonName, "www.example.com",
+            CTC_NAME_SIZE);
+        (void)XSTRNCPY(cert.subject.email, "test@example.com", CTC_NAME_SIZE);
+
+        cert.selfSigned = 1;
+        cert.isCA       = 0;
+        cert.sigType    = CTC_SHA256wRSA;
+
+        /* Make cert body */
+        ExpectIntGT(wc_MakeCert(&cert, der, FOURK_BUF, &key, NULL, &rng), 0);
+
+        /* Setup signing context with key and RNG */
+        signCtx.key = &key;
+        signCtx.rng = &rng;
+
+        /* Sign using callback API with RSA */
+        ExpectIntGT(derSize = wc_SignCert_cb(cert.bodySz, cert.sigType, der,
+            FOURK_BUF, RSA_TYPE, mockSignCb, &signCtx, &rng), 0);
+
+        /* Verify the certificate was created properly */
+        ExpectIntGT(derSize, 0);
+
+        /* Parse the certificate and verify it's well-formed */
+        if (EXPECT_SUCCESS()) {
+            wc_InitDecodedCert(&decodedCert, der, (word32)derSize, NULL);
+            ExpectIntEQ(wc_ParseCert(&decodedCert, CERT_TYPE, NO_VERIFY, NULL),
+                0);
+            /* Verify signature algorithm matches what we set */
+            ExpectIntEQ(decodedCert.signatureOID, CTC_SHA256wRSA);
+            wc_FreeDecodedCert(&decodedCert);
+        }
+
+        /* Test error cases */
+        /* NULL callback */
+        ExpectIntEQ(wc_SignCert_cb(cert.bodySz, cert.sigType, der,
+            FOURK_BUF, RSA_TYPE, NULL, &signCtx, &rng), BAD_FUNC_ARG);
+        /* NULL buffer */
+        ExpectIntEQ(wc_SignCert_cb(cert.bodySz, cert.sigType, NULL,
+            FOURK_BUF, RSA_TYPE, mockSignCb, &signCtx, &rng), BAD_FUNC_ARG);
+        /* Zero buffer size */
+        ExpectIntEQ(wc_SignCert_cb(cert.bodySz, cert.sigType, der,
+            0, RSA_TYPE, mockSignCb, &signCtx, &rng), BAD_FUNC_ARG);
+        /* Callback returning error */
+        ExpectIntEQ(wc_SignCert_cb(cert.bodySz, cert.sigType, der,
+            FOURK_BUF, RSA_TYPE, mockSignCbError, &signCtx, &rng), BAD_STATE_E);
+    #ifdef HAVE_ECC
+        /* Invalid keyType */
+        ExpectIntEQ(wc_SignCert_cb(cert.bodySz, cert.sigType, der,
+            FOURK_BUF, ED448_TYPE, mockSignCb, &signCtx, &rng), BAD_FUNC_ARG);
+    #endif
+
+        ret = wc_FreeRsaKey(&key);
+        ExpectIntEQ(ret, 0);
+        ret = wc_FreeRng(&rng);
+        ExpectIntEQ(ret, 0);
+    }
+#endif /* !NO_RSA && WOLFSSL_KEY_GEN */
+
+#endif /* WOLFSSL_CERT_GEN && !NO_ASN_TIME */
+    return EXPECT_RESULT();
+}
+#endif /* WOLFSSL_CERT_SIGN_CB */
+
 static int test_ERR_load_crypto_strings(void)
 {
 #if defined(OPENSSL_ALL)
@@ -20225,11 +20481,11 @@ static int test_sk_X509(void)
     return EXPECT_RESULT();
 }
 
-static int test_sk_X509_CRL(void)
+static int test_sk_X509_CRL_decode(void)
 {
     EXPECT_DECLS;
-#if defined(OPENSSL_ALL) && !defined(NO_CERTS) && defined(HAVE_CRL) && \
-    !defined(NO_RSA)
+#if (defined(OPENSSL_ALL) || defined(OPENSSL_EXTRA)) && !defined(NO_CERTS) && \
+    defined(HAVE_CRL) && !defined(NO_RSA)
     X509_CRL* crl = NULL;
     XFILE fp = XBADFILE;
     STACK_OF(X509_CRL)* s = NULL;
@@ -20321,11 +20577,17 @@ static int test_sk_X509_CRL(void)
     ExpectIntEQ(wolfSSL_X509_CRL_get_signature_type(&empty), 0);
     ExpectIntEQ(wolfSSL_X509_CRL_get_signature_nid(NULL), 0);
     ExpectIntEQ(wolfSSL_X509_CRL_get_signature_nid(&empty), 0);
-    ExpectIntEQ(wolfSSL_X509_CRL_get_signature(NULL, NULL, NULL), BAD_FUNC_ARG);
-    ExpectIntEQ(wolfSSL_X509_CRL_get_signature(crl , NULL, NULL), BAD_FUNC_ARG);
-    ExpectIntEQ(wolfSSL_X509_CRL_get_signature(NULL, NULL, &len), BAD_FUNC_ARG);
-    ExpectIntEQ(wolfSSL_X509_CRL_get_signature(&empty, NULL, &len),
-        BAD_FUNC_ARG);
+    {
+        int sigSz = 0;
+        ExpectIntEQ(wolfSSL_X509_CRL_get_signature(NULL, NULL, NULL),
+            BAD_FUNC_ARG);
+        ExpectIntEQ(wolfSSL_X509_CRL_get_signature(crl, NULL, NULL),
+            BAD_FUNC_ARG);
+        ExpectIntEQ(wolfSSL_X509_CRL_get_signature(NULL, NULL, &sigSz),
+            BAD_FUNC_ARG);
+        ExpectIntEQ(wolfSSL_X509_CRL_get_signature(&empty, NULL, &sigSz),
+            BAD_FUNC_ARG);
+    }
     ExpectIntEQ(wolfSSL_X509_REVOKED_get_serial_number(NULL, NULL, NULL),
         BAD_FUNC_ARG);
     ExpectIntEQ(wolfSSL_X509_REVOKED_get_serial_number(rev , NULL, NULL),
@@ -20342,15 +20604,12 @@ static int test_sk_X509_CRL(void)
     ExpectIntEQ(wolfSSL_X509_CRL_get_signature_type(crl), CTC_SHA256wRSA);
     ExpectIntEQ(wolfSSL_X509_CRL_get_signature_nid(crl),
         WC_NID_sha256WithRSAEncryption);
-    ExpectIntEQ(wolfSSL_X509_CRL_get_signature(crl, NULL, &len),
-        WOLFSSL_SUCCESS);
-    ExpectIntEQ(len, 256);
-    len--;
-    ExpectIntEQ(wolfSSL_X509_CRL_get_signature(crl, buff, &len), BUFFER_E);
-    len += 2;
-    ExpectIntEQ(wolfSSL_X509_CRL_get_signature(crl, buff, &len),
-        WOLFSSL_SUCCESS);
-    ExpectIntEQ(len, 256);
+    {
+        int sigSz = 0;
+        ExpectIntEQ(wolfSSL_X509_CRL_get_signature(crl, NULL, &sigSz),
+            WOLFSSL_SUCCESS);
+        ExpectIntEQ(sigSz, 256);
+    }
     ExpectNotNull(wolfSSL_X509_CRL_get_lastUpdate(crl));
     ExpectNotNull(wolfSSL_X509_CRL_get_nextUpdate(crl));
 
@@ -20416,6 +20675,362 @@ static int test_sk_X509_CRL(void)
     ExpectPtrEq(sk_X509_CRL_value(s, 0), crl);
 
     sk_X509_CRL_free(s);
+#endif
+    return EXPECT_RESULT();
+}
+
+#if (defined(OPENSSL_ALL) || defined(OPENSSL_EXTRA)) && !defined(NO_CERTS) && \
+    defined(HAVE_CRL) && !defined(NO_FILESYSTEM) && \
+    !defined(NO_STDIO_FILESYSTEM) && defined(WOLFSSL_CERT_GEN)
+/* Helper function to create, sign, and write a CRL */
+static int generate_crl_test(const char* keyFile, const char* certFile,
+                             const char* derFile, const char* pemFile,
+                             const char* certToRevokePath)
+{
+    EXPECT_DECLS;
+    X509_NAME* issuer = NULL;
+    X509_NAME* decodedIssuer = NULL;
+    WOLFSSL_X509* cert = NULL;
+    WOLFSSL_ASN1_TIME asnTime;
+    XFILE fp = XBADFILE;
+    WOLFSSL_X509_CRL* crl = NULL;
+    WOLFSSL_X509_CRL* decodedCrl = NULL;
+    WOLFSSL_EVP_PKEY* pkey = NULL;
+    int i = 0;
+    int revokedCount = 0;
+    byte certSerial[EXTERNAL_SERIAL_SIZE];
+    int certSerialSz = 0;
+    byte serialsToRevokeBytes[][1] = { { 0x02 }, { 0x03 }, { 0x04 } };
+    static const int numSerials =
+        (int)(sizeof(serialsToRevokeBytes) /
+              sizeof(serialsToRevokeBytes[0]));
+    WOLFSSL_ASN1_INTEGER serialsToRevoke[3] = {
+        { .intData = {0}, .negative = 0,
+          .data = serialsToRevokeBytes[0],
+          .dataMax = sizeof(serialsToRevokeBytes[0]),
+          .isDynamic = 0,
+          .length = sizeof(serialsToRevokeBytes[0]),
+          .type = 0 },
+        { .intData = {0}, .negative = 0,
+          .data = serialsToRevokeBytes[1],
+          .dataMax = sizeof(serialsToRevokeBytes[1]),
+          .isDynamic = 0,
+          .length = sizeof(serialsToRevokeBytes[1]),
+          .type = 0 },
+        { .intData = {0}, .negative = 0,
+          .data = serialsToRevokeBytes[2],
+          .dataMax = sizeof(serialsToRevokeBytes[2]),
+          .isDynamic = 0,
+          .length = sizeof(serialsToRevokeBytes[2]),
+          .type = 0 }
+    };
+    WOLFSSL_X509_REVOKED revoked[3] = {
+        { .serialNumber = &serialsToRevoke[0] },
+        { .serialNumber = &serialsToRevoke[1] },
+        { .serialNumber = &serialsToRevoke[2] }
+    };
+    WOLFSSL_X509* certToRevoke = NULL;
+
+    /* Load certificate to get issuer name (CRL issuer = cert subject) */
+    ExpectTrue((fp = XFOPEN(certFile, "rb")) != XBADFILE);
+    if (fp != XBADFILE) {
+        ExpectNotNull(cert = PEM_read_X509(fp, NULL, NULL, NULL));
+        XFCLOSE(fp);
+        fp = XBADFILE;
+    }
+
+    /* Create a new empty CRL */
+    ExpectNotNull(crl = wolfSSL_X509_CRL_new());
+    ExpectIntEQ(wolfSSL_X509_CRL_version(crl), 2);
+
+    /* Set issuer name, must match certificate subject for verification */
+    ExpectNotNull(issuer = X509_get_subject_name(cert));
+    ExpectIntEQ(wolfSSL_X509_CRL_set_issuer_name(crl, issuer), WOLFSSL_SUCCESS);
+
+    /* Set thisUpdate to current time */
+    XMEMSET(&asnTime, 0, sizeof(asnTime));
+    ExpectNotNull(wolfSSL_ASN1_TIME_adj(&asnTime, XTIME(NULL), 0, 0));
+    ExpectIntEQ(wolfSSL_X509_CRL_set_lastUpdate(crl, &asnTime),
+        WOLFSSL_SUCCESS);
+
+    /* Set nextUpdate to 30 days from now */
+    ExpectNotNull(wolfSSL_ASN1_TIME_adj(&asnTime, XTIME(NULL), 30, 0));
+    ExpectIntEQ(wolfSSL_X509_CRL_set_nextUpdate(crl, &asnTime),
+        WOLFSSL_SUCCESS);
+
+    /* Add revoked certificates based on serial numbers */
+    for (i = 0; i < numSerials; i++) {
+        ExpectIntEQ(wolfSSL_X509_CRL_add_revoked(crl, &revoked[i]),
+            WOLFSSL_SUCCESS);
+    }
+
+    /* Add a revoked certificate entry to CRL by parsing a different
+     * certificate buffer */
+    ExpectTrue((fp = XFOPEN(certToRevokePath, "rb")) != XBADFILE);
+    if (fp != XBADFILE) {
+        ExpectNotNull(certToRevoke = PEM_read_X509(fp, NULL, NULL, NULL));
+        XFCLOSE(fp);
+        fp = XBADFILE;
+    }
+    {
+        const byte* certDer = NULL;
+        int certDerSz = 0;
+
+        ExpectNotNull(certDer =
+            wolfSSL_X509_get_der(certToRevoke, &certDerSz));
+        ExpectIntEQ(wolfSSL_X509_CRL_add_revoked_cert(crl, certDer, certDerSz),
+            WOLFSSL_SUCCESS);
+    }
+
+    /* Save cert serial for verification after round-trip */
+    certSerialSz = (int)sizeof(certSerial);
+    ExpectIntEQ(wolfSSL_X509_get_serial_number(certToRevoke, certSerial,
+        &certSerialSz), WOLFSSL_SUCCESS);
+
+    wolfSSL_X509_free(certToRevoke);
+    certToRevoke = NULL;
+
+    /* Count revoked certificates - should be 'numSerials' + 1 */
+    revokedCount = 0;
+    if (EXPECT_SUCCESS() && crl != NULL && crl->crlList != NULL) {
+        RevokedCert* rev = crl->crlList->certs;
+        while (rev != NULL) {
+            revokedCount++;
+            rev = rev->next;
+        }
+    }
+    ExpectIntEQ(revokedCount, numSerials + 1);
+
+    /* Load private key for signing */
+    ExpectTrue((fp = XFOPEN(keyFile, "rb")) != XBADFILE);
+    if (fp != XBADFILE) {
+        ExpectNotNull(pkey = PEM_read_PrivateKey(fp, NULL, NULL, NULL));
+        XFCLOSE(fp);
+        fp = XBADFILE;
+    }
+
+    /* Sign the CRL */
+    ExpectIntEQ(wolfSSL_X509_CRL_sign(crl, pkey, wolfSSL_EVP_sha256()),
+        WOLFSSL_SUCCESS);
+
+    /* Encode CRL to DER */
+    ExpectIntEQ(wolfSSL_write_X509_CRL(crl, derFile, WOLFSSL_FILETYPE_ASN1),
+        WOLFSSL_SUCCESS);
+
+    /* Encode CRL to PEM */
+    ExpectIntEQ(wolfSSL_write_X509_CRL(crl, pemFile, WOLFSSL_FILETYPE_PEM),
+        WOLFSSL_SUCCESS);
+
+    /* ===== Validate encoded DER CRL by decoding and checking contents ===== */
+    ExpectTrue((fp = XFOPEN(derFile, "rb")) != XBADFILE);
+    if (fp != XBADFILE) {
+        ExpectNotNull(decodedCrl = d2i_X509_CRL_fp(fp, NULL));
+        XFCLOSE(fp);
+        fp = XBADFILE;
+    }
+
+    /* Verify CRL version is v2 */
+    ExpectIntEQ(wolfSSL_X509_CRL_version(decodedCrl), 2);
+
+    /* Verify issuer name matches */
+    ExpectNotNull(decodedIssuer = wolfSSL_X509_CRL_get_issuer_name(decodedCrl));
+    ExpectIntEQ(X509_NAME_cmp(issuer, decodedIssuer), 0);
+
+    /* Verify signature type is SHA256 with RSA or ECDSA */
+    ExpectIntNE(wolfSSL_X509_CRL_get_signature_type(decodedCrl), 0);
+
+    /* Verify lastUpdate and nextUpdate are set */
+    ExpectNotNull(wolfSSL_X509_CRL_get_lastUpdate(decodedCrl));
+    ExpectNotNull(wolfSSL_X509_CRL_get_nextUpdate(decodedCrl));
+
+    /* Count revoked certificates and verify serial values.
+     * CRL parsing prepends entries, so decoded list is in reverse order. */
+    revokedCount = 0;
+    if (EXPECT_SUCCESS() && decodedCrl != NULL && decodedCrl->crlList != NULL) {
+        RevokedCert* rev = decodedCrl->crlList->certs;
+        while (rev != NULL) {
+            if (revokedCount == 0) {
+                /* Last added (cert serial) appears first in decoded list */
+                ExpectIntEQ(rev->serialSz, certSerialSz);
+                ExpectIntEQ(XMEMCMP(rev->serialNumber, certSerial,
+                    rev->serialSz), 0);
+            }
+            else {
+                /* Remaining serials in reverse: index numSerials-revokedCount */
+                int idx = numSerials - revokedCount;
+                ExpectIntEQ(rev->serialSz,
+                    (int)sizeof(serialsToRevokeBytes[0]));
+                ExpectIntEQ(XMEMCMP(rev->serialNumber,
+                    serialsToRevokeBytes[idx], rev->serialSz), 0);
+            }
+            revokedCount++;
+            rev = rev->next;
+        }
+    }
+    ExpectIntEQ(revokedCount, numSerials + 1);
+
+    wolfSSL_X509_CRL_free(decodedCrl);
+    decodedCrl = NULL;
+
+    /* ===== Validate encoded PEM CRL by decoding and checking contents ===== */
+    ExpectTrue((fp = XFOPEN(pemFile, "rb")) != XBADFILE);
+    if (fp != XBADFILE) {
+        ExpectNotNull(decodedCrl = (X509_CRL*)PEM_read_X509_CRL(fp, NULL,
+            NULL, NULL));
+        XFCLOSE(fp);
+        fp = XBADFILE;
+    }
+
+    /* Verify CRL version is v2 */
+    ExpectIntEQ(wolfSSL_X509_CRL_version(decodedCrl), 2);
+
+    /* Verify issuer name matches */
+    ExpectNotNull(decodedIssuer = wolfSSL_X509_CRL_get_issuer_name(decodedCrl));
+    ExpectIntEQ(X509_NAME_cmp(issuer, decodedIssuer), 0);
+
+    /* Count revoked certificates from PEM and verify serial values.
+     * CRL parsing prepends entries, so decoded list is in reverse order. */
+    revokedCount = 0;
+    if (EXPECT_SUCCESS() && decodedCrl != NULL && decodedCrl->crlList != NULL) {
+        RevokedCert* rev = decodedCrl->crlList->certs;
+        while (rev != NULL) {
+            if (revokedCount == 0) {
+                ExpectIntEQ(rev->serialSz, certSerialSz);
+                ExpectIntEQ(XMEMCMP(rev->serialNumber, certSerial,
+                    rev->serialSz), 0);
+            }
+            else {
+                int idx = numSerials - revokedCount;
+                ExpectIntEQ(rev->serialSz,
+                    (int)sizeof(serialsToRevokeBytes[0]));
+                ExpectIntEQ(XMEMCMP(rev->serialNumber,
+                    serialsToRevokeBytes[idx], rev->serialSz), 0);
+            }
+            revokedCount++;
+            rev = rev->next;
+        }
+    }
+    ExpectIntEQ(revokedCount, numSerials + 1);
+
+    wolfSSL_X509_CRL_free(decodedCrl);
+
+    wolfSSL_EVP_PKEY_free(pkey);
+    wolfSSL_X509_CRL_free(crl);
+    wolfSSL_X509_free(cert);
+
+    return EXPECT_RESULT();
+}
+#endif
+
+static int test_sk_X509_CRL_encode(void)
+{
+    EXPECT_DECLS;
+#if (defined(OPENSSL_ALL) || defined(OPENSSL_EXTRA)) && !defined(NO_CERTS) && \
+    defined(HAVE_CRL) && !defined(NO_FILESYSTEM) && \
+    !defined(NO_STDIO_FILESYSTEM) && defined(WOLFSSL_CERT_GEN)
+#ifndef NO_RSA
+    static const char* crlRsaPemFile = "./certs/crl/crlRsaOut.pem";
+    static const char* crlRsaDerFile = "./certs/crl/crlRsaOut.der";
+    static const char* testRsaKeyFile  = "./certs/ca-key.pem";
+    /* Use ca-cert.pem to match ca-key.pem for proper CRL verification */
+    static const char* testRsaCertFile = "./certs/ca-cert.pem";
+    static const char* revokeRsaCertFile = "./certs/server-cert.pem";
+#endif
+#ifdef HAVE_ECC
+    static const char* crlEccPemFile = "./certs/crl/crlEccOut.pem";
+    static const char* crlEccDerFile = "./certs/crl/crlEccOut.der";
+    static const char* testEccKeyFile  = "./certs/ca-ecc-key.pem";
+    /* Use ca-ecc-cert.pem to match ca-ecc-key.pem for proper CRL
+     * verification */
+    static const char* testEccCertFile = "./certs/ca-ecc-cert.pem";
+    static const char* revokeEccCertFile = "./certs/server-ecc.pem";
+#endif
+
+#ifndef NO_RSA
+    /* Generate RSA-signed CRL (PEM and DER) */
+    ExpectIntEQ(generate_crl_test(testRsaKeyFile, testRsaCertFile,
+        crlRsaDerFile, crlRsaPemFile, revokeRsaCertFile), TEST_SUCCESS);
+#endif
+
+#ifdef HAVE_ECC
+    /* Generate ECC-signed CRL (PEM and DER) */
+    ExpectIntEQ(generate_crl_test(testEccKeyFile, testEccCertFile,
+        crlEccDerFile, crlEccPemFile, revokeEccCertFile), TEST_SUCCESS);
+#endif
+#endif
+    return EXPECT_RESULT();
+}
+
+static int test_wolfSSL_X509_CRL_sign_large(void)
+{
+    EXPECT_DECLS;
+#if (defined(OPENSSL_ALL) || defined(OPENSSL_EXTRA)) && !defined(NO_CERTS) && \
+    defined(HAVE_CRL) && !defined(NO_FILESYSTEM) && \
+    !defined(NO_STDIO_FILESYSTEM) && defined(WOLFSSL_CERT_GEN)
+#ifndef NO_RSA
+    static const char* testRsaKeyFile  = "./certs/ca-key.pem";
+    static const char* testRsaCertFile = "./certs/ca-cert.pem";
+    X509_NAME* issuer = NULL;
+    WOLFSSL_X509* cert = NULL;
+    WOLFSSL_X509_CRL* crl = NULL;
+    WOLFSSL_EVP_PKEY* pkey = NULL;
+    WOLFSSL_ASN1_TIME asnTime;
+    WOLFSSL_X509_REVOKED revoked;
+    XFILE fp = XBADFILE;
+    int i;
+    byte serial[4];
+
+    ExpectTrue((fp = XFOPEN(testRsaCertFile, "rb")) != XBADFILE);
+    if (fp != XBADFILE) {
+        ExpectNotNull(cert = PEM_read_X509(fp, NULL, NULL, NULL));
+        XFCLOSE(fp);
+        fp = XBADFILE;
+    }
+
+    ExpectNotNull(crl = wolfSSL_X509_CRL_new());
+    ExpectNotNull(issuer = X509_get_subject_name(cert));
+    ExpectIntEQ(wolfSSL_X509_CRL_set_issuer_name(crl, issuer), WOLFSSL_SUCCESS);
+
+    XMEMSET(&asnTime, 0, sizeof(asnTime));
+    ExpectNotNull(wolfSSL_ASN1_TIME_adj(&asnTime, XTIME(NULL), 0, 0));
+    ExpectIntEQ(wolfSSL_X509_CRL_set_lastUpdate(crl, &asnTime),
+        WOLFSSL_SUCCESS);
+
+    ExpectNotNull(wolfSSL_ASN1_TIME_adj(&asnTime, XTIME(NULL), 30, 0));
+    ExpectIntEQ(wolfSSL_X509_CRL_set_nextUpdate(crl, &asnTime),
+        WOLFSSL_SUCCESS);
+
+    revoked.serialNumber = wolfSSL_ASN1_INTEGER_new();
+    revoked.serialNumber->data = serial;
+    revoked.serialNumber->length = (int)sizeof(serial);
+
+    for (i = 1; i <= 1024; i++) {
+        serial[0] = (byte)(i & 0xff);
+        serial[1] = (byte)((i >> 8) & 0xff);
+        serial[2] = (byte)((i >> 16) & 0xff);
+        serial[3] = (byte)((i >> 24) & 0xff);
+        ExpectIntEQ(wolfSSL_X509_CRL_add_revoked(crl, &revoked),
+            WOLFSSL_SUCCESS);
+    }
+
+    ExpectTrue((fp = XFOPEN(testRsaKeyFile, "rb")) != XBADFILE);
+    if (fp != XBADFILE) {
+        ExpectNotNull(pkey = PEM_read_PrivateKey(fp, NULL, NULL, NULL));
+        XFCLOSE(fp);
+        fp = XBADFILE;
+    }
+
+    ExpectIntEQ(wolfSSL_X509_CRL_sign(crl, pkey, wolfSSL_EVP_sha256()),
+        WOLFSSL_SUCCESS);
+
+    revoked.serialNumber->data = NULL;
+    wolfSSL_ASN1_INTEGER_free(revoked.serialNumber);
+    revoked.serialNumber = NULL;
+
+    wolfSSL_EVP_PKEY_free(pkey);
+    wolfSSL_X509_CRL_free(crl);
+    wolfSSL_X509_free(cert);
+#endif /* !NO_RSA */
 #endif
     return EXPECT_RESULT();
 }
@@ -31577,6 +32192,9 @@ TEST_CASE testCases[] = {
     TEST_DECL(test_MakeCertWithPathLen),
     TEST_DECL(test_MakeCertWith0Ser),
     TEST_DECL(test_MakeCertWithCaFalse),
+#ifdef WOLFSSL_CERT_SIGN_CB
+    TEST_DECL(test_wc_SignCert_cb),
+#endif
     TEST_DECL(test_wc_SetKeyUsage),
     TEST_DECL(test_wc_SetAuthKeyIdFromPublicKey_ex),
     TEST_DECL(test_wc_SetSubjectBuffer),
@@ -31707,7 +32325,9 @@ TEST_CASE testCases[] = {
     /* OpenSSL sk_X509 API test */
     TEST_DECL(test_sk_X509),
     /* OpenSSL sk_X509_CRL API test */
-    TEST_DECL(test_sk_X509_CRL),
+    TEST_DECL(test_sk_X509_CRL_decode),
+    TEST_DECL(test_sk_X509_CRL_encode),
+    TEST_DECL(test_wolfSSL_X509_CRL_sign_large),
 
     /* OpenSSL X509 REQ API test */
     TEST_DECL(test_wolfSSL_d2i_X509_REQ),
