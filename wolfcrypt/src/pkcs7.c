@@ -1,6 +1,6 @@
 /* pkcs7.c
  *
- * Copyright (C) 2006-2025 wolfSSL Inc.
+ * Copyright (C) 2006-2026 wolfSSL Inc.
  *
  * This file is part of wolfSSL.
  *
@@ -10494,7 +10494,7 @@ static int wc_PKCS7_DecryptKtri(wc_PKCS7* pkcs7, byte* in, word32 inSz,
                     DYNAMIC_TYPE_TMP_BUFFER);
         #ifndef WC_NO_RSA_OAEP
                 if (encOID == RSAESOAEPk) {
-                    if (!outKey) {
+                    if (outKey) {
                         XFREE(outKey, pkcs7->heap, DYNAMIC_TYPE_TMP_BUFFER);
                     }
                 }
@@ -10510,7 +10510,7 @@ static int wc_PKCS7_DecryptKtri(wc_PKCS7* pkcs7, byte* in, word32 inSz,
             WC_FREE_VAR_EX(privKey, pkcs7->heap, DYNAMIC_TYPE_TMP_BUFFER);
         #ifndef WC_NO_RSA_OAEP
             if (encOID == RSAESOAEPk) {
-                if (!outKey) {
+                if (outKey) {
                     XFREE(outKey, pkcs7->heap, DYNAMIC_TYPE_TMP_BUFFER);
                 }
             }
