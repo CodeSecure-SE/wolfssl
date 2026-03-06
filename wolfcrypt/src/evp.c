@@ -1264,7 +1264,7 @@ static int checkPad(WOLFSSL_EVP_CIPHER_CTX *ctx, unsigned char *buff)
     int i;
     int n;
     n = buff[ctx->block_size-1];
-    if (n > ctx->block_size) return -1;
+    if (n > ctx->block_size || n == 0) return -1;
     for (i = 0; i < n; i++) {
         if (buff[ctx->block_size-i-1] != n)
             return -1;
@@ -3152,8 +3152,8 @@ int wolfSSL_EVP_PKEY_decrypt(WOLFSSL_EVP_PKEY_CTX *ctx,
  */
 int wolfSSL_EVP_PKEY_decrypt_init(WOLFSSL_EVP_PKEY_CTX *ctx)
 {
-    if (ctx == NULL) return WOLFSSL_FAILURE;
     WOLFSSL_ENTER("wolfSSL_EVP_PKEY_decrypt_init");
+    if (ctx == NULL || ctx->pkey == NULL) return WOLFSSL_FAILURE;
     switch (ctx->pkey->type) {
     case WC_EVP_PKEY_RSA:
         ctx->op = WC_EVP_PKEY_OP_DECRYPT;
@@ -3256,8 +3256,8 @@ int wolfSSL_EVP_PKEY_encrypt(WOLFSSL_EVP_PKEY_CTX *ctx,
  */
 int wolfSSL_EVP_PKEY_encrypt_init(WOLFSSL_EVP_PKEY_CTX *ctx)
 {
-    if (ctx == NULL) return WOLFSSL_FAILURE;
     WOLFSSL_ENTER("wolfSSL_EVP_PKEY_encrypt_init");
+    if (ctx == NULL || ctx->pkey == NULL) return WOLFSSL_FAILURE;
 
     switch (ctx->pkey->type) {
     case WC_EVP_PKEY_RSA:

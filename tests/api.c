@@ -18879,7 +18879,7 @@ static int test_wolfSSL_d2i_and_i2d_PublicKey_ecc(void)
     const unsigned char* p;
     unsigned char *der = NULL;
     unsigned char *tmp = NULL;
-    int derLen;
+    int derLen = -1;
     unsigned char pub_buf[65];
     unsigned char pub_spki_buf[91];
     const int pub_len = 65;
@@ -18989,7 +18989,7 @@ static int test_wolfSSL_d2i_and_i2d_DSAparams(void)
     };
     int derInLen = sizeof(derIn);
     byte* derOut = NULL;
-    int derOutLen;
+    int derOutLen = -1;
     byte* p = derIn;
 
     /* Check that params can be successfully decoded. */
@@ -20956,6 +20956,9 @@ static int test_sk_X509_CRL_decode(void)
     WOLFSSL_ASN1_INTEGER* asnInt = NULL;
     const WOLFSSL_ASN1_INTEGER* sn = NULL;
 
+    XMEMSET(&revoked, 0, sizeof(revoked));
+    revoked.reason = CRL_REASON_NONE;
+
 #if (!defined(NO_FILESYSTEM) && !defined(NO_STDIO_FILESYSTEM)) || \
     !defined(NO_BIO)
     XMEMSET(&empty, 0, sizeof(X509_CRL));
@@ -21075,13 +21078,32 @@ static int test_sk_X509_CRL_decode(void)
         WOLFSSL_SUCCESS);
     ExpectIntEQ(len, 1);
 
-#ifndef NO_WOLFSSL_STUB
+    /* Test X509_CRL_get_REVOKED and stack iteration */
     ExpectIntEQ(wolfSSL_sk_X509_REVOKED_num(NULL), 0);
-    ExpectIntEQ(wolfSSL_sk_X509_REVOKED_num(&revoked), 0);
     ExpectNull(wolfSSL_X509_CRL_get_REVOKED(NULL));
-    ExpectNull(wolfSSL_X509_CRL_get_REVOKED(crl));
-    ExpectNull(wolfSSL_sk_X509_REVOKED_value(NULL, 0));
-    ExpectNull(wolfSSL_sk_X509_REVOKED_value(&revoked, 0));
+    {
+        WOLFSSL_STACK* revokedSk = NULL;
+        ExpectNotNull(revokedSk = wolfSSL_X509_CRL_get_REVOKED(crl));
+        if (revokedSk != NULL) {
+            int numRevoked = wolfSSL_sk_X509_REVOKED_num(revokedSk);
+            ExpectIntGT(numRevoked, 0);
+            /* Verify first revoked entry has a serial number */
+            {
+                WOLFSSL_X509_REVOKED* r = NULL;
+                ExpectNotNull(r = wolfSSL_sk_X509_REVOKED_value(revokedSk, 0));
+                if (r != NULL) {
+                    ExpectNotNull(r->serialNumber);
+                    /* Verify revocation date is populated */
+                    ExpectNotNull(
+                        wolfSSL_X509_REVOKED_get0_revocation_date(r));
+                    /* Verify sequence field (first entry should be 0) */
+                    ExpectIntEQ(r->sequence, 0);
+                }
+            }
+        }
+        ExpectNull(wolfSSL_sk_X509_REVOKED_value(NULL, 0));
+    }
+#ifndef NO_WOLFSSL_STUB
     ExpectIntEQ(wolfSSL_X509_CRL_verify(NULL, NULL), 0);
     ExpectIntEQ(X509_OBJECT_set1_X509_CRL(NULL, NULL), 0);
     ExpectIntEQ(X509_OBJECT_set1_X509(NULL, NULL), 0);
@@ -21097,10 +21119,9 @@ static int test_sk_X509_CRL_decode(void)
     ExpectNull(wolfSSL_X509_REVOKED_get0_serial_number(NULL));
     ExpectNotNull(sn = wolfSSL_X509_REVOKED_get0_serial_number(&revoked));
     ExpectPtrEq(sn, asnInt);
-#ifndef NO_WOLFSSL_STUB
     ExpectNull(wolfSSL_X509_REVOKED_get0_revocation_date(NULL));
+    /* revoked on stack has no revocationDate set, so should be NULL */
     ExpectNull(wolfSSL_X509_REVOKED_get0_revocation_date(&revoked));
-#endif
     wolfSSL_ASN1_INTEGER_free(asnInt);
 
     ExpectTrue((fp = XFOPEN("./certs/crl/crl.pem", "rb")) != XBADFILE);
@@ -21129,6 +21150,71 @@ static int test_sk_X509_CRL_decode(void)
 #endif
     return EXPECT_RESULT();
 }
+
+#if (defined(OPENSSL_ALL) || defined(OPENSSL_EXTRA)) && !defined(NO_CERTS) && \
+    defined(HAVE_CRL) && defined(WOLFSSL_CERT_GEN)
+/* Ensure oversized caller-provided revocationDate is rejected. */
+static int test_wolfSSL_X509_CRL_add_revoked_oversized_revocation_date(void)
+{
+    EXPECT_DECLS;
+    WOLFSSL_X509_CRL* crl = NULL;
+    WOLFSSL_ASN1_INTEGER* serial = NULL;
+    WOLFSSL_X509_REVOKED revoked;
+    WOLFSSL_ASN1_TIME revDate;
+    byte serialData[] = { 0x01 };
+
+    XMEMSET(&revoked, 0, sizeof(revoked));
+    XMEMSET(&revDate, 0, sizeof(revDate));
+
+    ExpectNotNull(crl = wolfSSL_X509_CRL_new());
+    ExpectNotNull(serial = wolfSSL_ASN1_INTEGER_new());
+    if (serial != NULL) {
+        serial->data = serialData;
+        serial->dataMax = (int)sizeof(serialData);
+        serial->length = (int)sizeof(serialData);
+        serial->isDynamic = 0;
+    }
+
+    revDate.length = MAX_DATE_SIZE + 1; /* intentionally too large */
+    revDate.type = ASN_GENERALIZED_TIME;
+
+    revoked.serialNumber = serial;
+    revoked.revocationDate = &revDate;
+    revoked.reason = CRL_REASON_NONE;
+
+    ExpectIntEQ(wolfSSL_X509_CRL_add_revoked(crl, &revoked), BAD_FUNC_ARG);
+
+    wolfSSL_ASN1_INTEGER_free(serial);
+    wolfSSL_X509_CRL_free(crl);
+
+    return EXPECT_RESULT();
+}
+#endif
+
+#if (defined(OPENSSL_ALL) || defined(OPENSSL_EXTRA)) && !defined(NO_CERTS) && \
+    defined(HAVE_CRL) && !defined(NO_FILESYSTEM) && \
+    !defined(NO_STDIO_FILESYSTEM)
+/* Ensure reason-code parsing handles optional critical BOOLEAN in entry ext. */
+static int test_wolfSSL_X509_CRL_reason_critical_boolean(void)
+{
+    EXPECT_DECLS;
+    int reasonCode = CRL_REASON_NONE;
+    /* One Extension SEQUENCE with:
+     * OID: 2.5.29.21 (CRL Reason Code)
+     * critical: TRUE
+     * extnValue: OCTET STRING wrapping ENUMERATED 2 (CA compromise) */
+    static const byte ext[] = {
+        0x30, 0x0d, 0x06, 0x03, 0x55, 0x1d, 0x15,
+        0x01, 0x01, 0xff, 0x04, 0x03, 0x0a, 0x01, 0x02
+    };
+
+    ExpectIntEQ(wc_ParseCRLReasonFromExtensions(ext, (word32)sizeof(ext),
+                                                 &reasonCode), 0);
+    ExpectIntEQ(reasonCode, CRL_REASON_CA_COMPROMISE);
+
+    return EXPECT_RESULT();
+}
+#endif
 
 #if (defined(OPENSSL_ALL) || defined(OPENSSL_EXTRA)) && !defined(NO_CERTS) && \
     defined(HAVE_CRL) && !defined(NO_FILESYSTEM) && \
@@ -21175,11 +21261,7 @@ static int generate_crl_test(const char* keyFile, const char* certFile,
           .length = sizeof(serialsToRevokeBytes[2]),
           .type = 0 }
     };
-    WOLFSSL_X509_REVOKED revoked[3] = {
-        { .serialNumber = &serialsToRevoke[0] },
-        { .serialNumber = &serialsToRevoke[1] },
-        { .serialNumber = &serialsToRevoke[2] }
-    };
+    WOLFSSL_X509_REVOKED revoked[3];
     WOLFSSL_X509* certToRevoke = NULL;
 
     /* Load certificate to get issuer name (CRL issuer = cert subject) */
@@ -21208,6 +21290,12 @@ static int generate_crl_test(const char* keyFile, const char* certFile,
     ExpectNotNull(wolfSSL_ASN1_TIME_adj(&asnTime, XTIME(NULL), 30, 0));
     ExpectIntEQ(wolfSSL_X509_CRL_set_nextUpdate(crl, &asnTime),
         WOLFSSL_SUCCESS);
+
+    XMEMSET(revoked, 0, sizeof(revoked));
+    for (i = 0; i < numSerials; i++) {
+        revoked[i].serialNumber = &serialsToRevoke[i];
+        revoked[i].reason = CRL_REASON_NONE;
+    }
 
     /* Add revoked certificates based on serial numbers */
     for (i = 0; i < numSerials; i++) {
@@ -21426,7 +21514,7 @@ static int test_wolfSSL_X509_CRL_sign_large(void)
     WOLFSSL_X509_CRL* crl = NULL;
     WOLFSSL_EVP_PKEY* pkey = NULL;
     WOLFSSL_ASN1_TIME asnTime;
-    WOLFSSL_X509_REVOKED revoked = {0};
+    WOLFSSL_X509_REVOKED revoked;
     XFILE fp = XBADFILE;
     int i;
     byte serial[4];
@@ -21451,7 +21539,10 @@ static int test_wolfSSL_X509_CRL_sign_large(void)
     ExpectIntEQ(wolfSSL_X509_CRL_set_nextUpdate(crl, &asnTime),
         WOLFSSL_SUCCESS);
 
-    ExpectNotNull(revoked.serialNumber = wolfSSL_ASN1_INTEGER_new());
+    XMEMSET(&revoked, 0, sizeof(revoked));
+    revoked.serialNumber = wolfSSL_ASN1_INTEGER_new();
+    ExpectNotNull(revoked.serialNumber);
+    revoked.reason = CRL_REASON_NONE;
     if (revoked.serialNumber != NULL) {
         revoked.serialNumber->data = serial;
         revoked.serialNumber->length = (int)sizeof(serial);
@@ -24180,6 +24271,12 @@ static word32 test_wolfSSL_dtls_stateless_HashWOLFSSL(const WOLFSSL* ssl)
     sslCopy.keys.dtls_peer_handshake_number = 0;
     XMEMSET(&sslCopy.alert_history, 0, sizeof(sslCopy.alert_history));
     sslCopy.hsHashes = NULL;
+#if !defined(WOLFSSL_NO_CLIENT_AUTH) && \
+    ((defined(WOLFSSL_SM2) && defined(WOLFSSL_SM3)) || \
+     (defined(HAVE_ED25519) && !defined(NO_ED25519_CLIENT_AUTH)) || \
+     (defined(HAVE_ED448) && !defined(NO_ED448_CLIENT_AUTH)))
+    sslCopy.options.cacheMessages = 0;
+#endif
 #ifdef WOLFSSL_ASYNC_IO
 #ifdef WOLFSSL_ASYNC_CRYPT
     sslCopy.asyncDev = NULL;
@@ -24317,8 +24414,119 @@ static int test_wolfSSL_dtls_stateless(void)
 
     return TEST_SUCCESS;
 }
+
+/* DTLS stateless API handling multiple CHs with different HRR groups */
+static int test_wolfSSL_dtls_stateless_hrr_group(void)
+{
+    EXPECT_DECLS;
+#if defined(WOLFSSL_SEND_HRR_COOKIE)
+    size_t i;
+    word32 initHash;
+    struct {
+        method_provider client_meth;
+        method_provider server_meth;
+    } params[] = {
+#if defined(WOLFSSL_TLS13) && defined(WOLFSSL_DTLS13)
+        { wolfDTLSv1_3_client_method, wolfDTLSv1_3_server_method },
+#endif
+#if !defined(WOLFSSL_NO_TLS12) && defined(WOLFSSL_DTLS)
+        { wolfDTLSv1_2_client_method, wolfDTLSv1_2_server_method },
+#endif
+    };
+    for (i = 0; i < XELEM_CNT(params) && !EXPECT_FAIL(); i++) {
+        WOLFSSL_CTX *ctx_s = NULL, *ctx_c = NULL;
+        WOLFSSL *ssl_s = NULL, *ssl_c = NULL, *ssl_c2 = NULL;
+        struct test_memio_ctx test_ctx;
+        int groups_1[] = {
+            WOLFSSL_ECC_SECP256R1,
+            WOLFSSL_ECC_SECP384R1,
+            WOLFSSL_ECC_SECP521R1
+        };
+        int groups_2[] = {
+            WOLFSSL_ECC_SECP384R1,
+            WOLFSSL_ECC_SECP521R1
+        };
+        char hrrBuf[1000];
+        int hrrSz = sizeof(hrrBuf);
+
+        XMEMSET(&test_ctx, 0, sizeof(test_ctx));
+
+        ExpectIntEQ(test_memio_setup(&test_ctx, &ctx_c, &ctx_s, &ssl_c, &ssl_s,
+                params[i].client_meth, params[i].server_meth), 0);
+
+        ExpectIntEQ(test_memio_setup(&test_ctx, &ctx_c, NULL, &ssl_c2, NULL,
+                params[i].client_meth, params[i].server_meth), 0);
+
+
+        wolfSSL_SetLoggingPrefix("server");
+        wolfSSL_dtls_set_using_nonblock(ssl_s, 1);
+
+        initHash = test_wolfSSL_dtls_stateless_HashWOLFSSL(ssl_s);
+
+        /* Set groups and disable key shares. This ensures that only the given
+         * groups are in the SupportedGroups extension and that an empty key
+         * share extension is sent in the initial ClientHello of each session.
+         * This triggers the server to send a HelloRetryRequest with the first
+         * group in the SupportedGroups extension selected. */
+        wolfSSL_SetLoggingPrefix("client1");
+        ExpectIntEQ(wolfSSL_set_groups(ssl_c, groups_1, 3), WOLFSSL_SUCCESS);
+        ExpectIntEQ(wolfSSL_NoKeyShares(ssl_c), WOLFSSL_SUCCESS);
+
+        wolfSSL_SetLoggingPrefix("client2");
+        ExpectIntEQ(wolfSSL_set_groups(ssl_c2, groups_2, 2), WOLFSSL_SUCCESS);
+        ExpectIntEQ(wolfSSL_NoKeyShares(ssl_c2), WOLFSSL_SUCCESS);
+
+        /* Start handshake, send first ClientHello */
+        wolfSSL_SetLoggingPrefix("client1");
+        ExpectIntEQ(wolfSSL_connect(ssl_c), -1);
+        ExpectIntEQ(wolfSSL_get_error(ssl_c, -1), WOLFSSL_ERROR_WANT_READ);
+
+        /* Read first ClientHello, send HRR with WOLFSSL_ECC_SECP256R1 */
+        wolfSSL_SetLoggingPrefix("server");
+        ExpectIntEQ(wolfDTLS_accept_stateless(ssl_s), 0);
+        ExpectIntEQ(test_memio_copy_message(&test_ctx, 1, hrrBuf, &hrrSz, 0), 0);
+        ExpectIntGT(hrrSz, 0);
+        ExpectIntEQ(initHash, test_wolfSSL_dtls_stateless_HashWOLFSSL(ssl_s));
+        test_memio_clear_buffer(&test_ctx, 1);
+
+        /* Send second ClientHello */
+        wolfSSL_SetLoggingPrefix("client2");
+        ExpectIntEQ(wolfSSL_connect(ssl_c2), -1);
+        ExpectIntEQ(wolfSSL_get_error(ssl_c2, -1), WOLFSSL_ERROR_WANT_READ);
+
+        /* Read second ClientHello, send HRR now with WOLFSSL_ECC_SECP384R1 */
+        wolfSSL_SetLoggingPrefix("server");
+        ExpectIntEQ(wolfDTLS_accept_stateless(ssl_s), 0);
+        ExpectIntEQ(initHash, test_wolfSSL_dtls_stateless_HashWOLFSSL(ssl_s));
+        test_memio_clear_buffer(&test_ctx, 1);
+
+        /* Complete first handshake with WOLFSSL_ECC_SECP256R1 */
+        wolfSSL_SetLoggingPrefix("client1");
+        ExpectIntEQ(test_memio_inject_message(&test_ctx, 1, hrrBuf, hrrSz), 0);
+        ExpectIntEQ(wolfSSL_connect(ssl_c), -1);
+        ExpectIntEQ(wolfSSL_get_error(ssl_c, -1), WOLFSSL_ERROR_WANT_READ);
+
+        wolfSSL_SetLoggingPrefix("server");
+        ExpectIntEQ(wolfDTLS_accept_stateless(ssl_s), WOLFSSL_SUCCESS);
+
+        ExpectIntEQ(test_memio_do_handshake(ssl_c, ssl_s, 10, NULL), 0);
+
+        wolfSSL_free(ssl_s);
+        wolfSSL_free(ssl_c);
+        wolfSSL_free(ssl_c2);
+        wolfSSL_CTX_free(ctx_s);
+        wolfSSL_CTX_free(ctx_c);
+    }
+#endif /* WOLFSSL_SEND_HRR_COOKIE */
+    return EXPECT_RESULT();
+}
 #else
 static int test_wolfSSL_dtls_stateless(void)
+{
+    return TEST_SKIPPED;
+}
+
+static int test_wolfSSL_dtls_stateless_hrr_group(void)
 {
     return TEST_SKIPPED;
 }
@@ -28081,6 +28289,122 @@ static int test_ticket_ret_create(void)
 {
     return TEST_SKIPPED;
 }
+#endif
+
+/* Build a valid TLS 1.2 ticket by completing an initial handshake, then tamper
+ * with enc_len so it is larger than the true encrypted payload. */
+#if defined(HAVE_SESSION_TICKET) && !defined(WOLFSSL_NO_TLS12) && \
+    !defined(NO_WOLFSSL_CLIENT) && !defined(NO_WOLFSSL_SERVER) && \
+    !defined(WOLFSSL_NO_DEF_TICKET_ENC_CB) && \
+    !defined(NO_RSA) && defined(HAVE_ECC) && \
+    defined(HAVE_MANUAL_MEMIO_TESTS_DEPENDENCIES)
+
+static int test_ticket_enc_corrupted_cb(WOLFSSL* ssl,
+    byte key_name[WOLFSSL_TICKET_NAME_SZ], byte iv[WOLFSSL_TICKET_IV_SZ],
+    byte mac[WOLFSSL_TICKET_MAC_SZ], int enc, byte* ticket, int inLen,
+    int* outLen, void* userCtx)
+{
+    (void)ssl;
+    (void)key_name;
+    (void)iv;
+    (void)mac;
+    (void)userCtx;
+    (void)outLen;
+
+    if (!enc) {
+        XMEMSET(ticket, 0, (size_t)inLen);
+        return WOLFSSL_TICKET_RET_REJECT; /* keep handshake progressing */
+    }
+    return WOLFSSL_TICKET_RET_CREATE;
+}
+
+static int test_ticket_enc_corrupted(void)
+{
+    EXPECT_DECLS;
+    struct test_memio_ctx test_ctx;
+    WOLFSSL_CTX* ctx_c = NULL;
+    WOLFSSL_CTX* ctx_s = NULL;
+    WOLFSSL*     ssl_c = NULL;
+    WOLFSSL*     ssl_s = NULL;
+    WOLFSSL_SESSION* sess = NULL;
+    ExternalTicket* et;
+    word16 encLen;
+    int actualEncLen;
+    int craftedBadLen = 0;
+
+    XMEMSET(&test_ctx, 0, sizeof(test_ctx));
+    ExpectIntEQ(test_memio_setup(&test_ctx, &ctx_c, &ctx_s, &ssl_c, &ssl_s,
+        wolfTLSv1_2_client_method, wolfTLSv1_2_server_method), 0);
+    wolfSSL_set_verify(ssl_s, WOLFSSL_VERIFY_NONE, 0);
+    wolfSSL_set_verify(ssl_c, WOLFSSL_VERIFY_NONE, 0);
+    ExpectIntEQ(wolfSSL_CTX_UseSessionTicket(ctx_c), WOLFSSL_SUCCESS);
+    ExpectIntEQ(test_memio_do_handshake(ssl_c, ssl_s, 10, NULL), 0);
+    ExpectNotNull(sess = wolfSSL_get1_session(ssl_c));
+    if (sess != NULL) {
+        ExpectIntGT(sess->ticketLen, WOLFSSL_TICKET_FIXED_SZ);
+
+        /* Force enc_len to exceed actual encrypted ticket payload while still
+         * staying <= WOLFSSL_TICKET_ENC_SZ, so callback is reached. */
+        et = (ExternalTicket*)sess->ticket;
+        ato16(et->enc_len, &encLen);
+        actualEncLen = (int)(sess->ticketLen - WOLFSSL_TICKET_FIXED_SZ);
+        if (actualEncLen + 100 <= (int)WOLFSSL_TICKET_ENC_SZ) {
+            encLen = (word16)(actualEncLen + 100);
+            c16toa(encLen, et->enc_len);
+            craftedBadLen = 1;
+        }
+        else if (actualEncLen + 1 <= (int)WOLFSSL_TICKET_ENC_SZ) {
+            encLen = (word16)(actualEncLen + 1);
+            c16toa(encLen, et->enc_len);
+            craftedBadLen = 1;
+        }
+    }
+
+    wolfSSL_free(ssl_c);
+    ssl_c = NULL;
+    wolfSSL_free(ssl_s);
+    ssl_s = NULL;
+    test_memio_clear_buffer(&test_ctx, 1);
+    test_memio_clear_buffer(&test_ctx, 0);
+
+    ExpectNotNull(ssl_s = wolfSSL_new(ctx_s));
+    wolfSSL_SetIOWriteCtx(ssl_s, &test_ctx);
+    wolfSSL_SetIOReadCtx(ssl_s, &test_ctx);
+    ExpectNotNull(ssl_c = wolfSSL_new(ctx_c));
+    wolfSSL_SetIOWriteCtx(ssl_c, &test_ctx);
+    wolfSSL_SetIOReadCtx(ssl_c, &test_ctx);
+    wolfSSL_set_verify(ssl_s, WOLFSSL_VERIFY_NONE, 0);
+    wolfSSL_set_verify(ssl_c, WOLFSSL_VERIFY_NONE, 0);
+    if (sess != NULL) {
+        if (!craftedBadLen) {
+            wolfSSL_SESSION_free(sess);
+            wolfSSL_free(ssl_c);
+            wolfSSL_free(ssl_s);
+            wolfSSL_CTX_free(ctx_c);
+            wolfSSL_CTX_free(ctx_s);
+            return TEST_SKIPPED;
+        }
+        ExpectIntEQ(wolfSSL_set_session(ssl_c, sess), WOLFSSL_SUCCESS);
+        ExpectIntEQ(wolfSSL_CTX_set_TicketEncCb(ctx_s,
+            test_ticket_enc_corrupted_cb), WOLFSSL_SUCCESS);
+        ExpectTrue((wolfSSL_connect(ssl_c) ==
+            WC_NO_ERR_TRACE(WOLFSSL_FATAL_ERROR)) &&
+            (ssl_c->error == WC_NO_ERR_TRACE(WANT_READ)));
+        ExpectTrue((wolfSSL_accept(ssl_s) ==
+            WC_NO_ERR_TRACE(WOLFSSL_FATAL_ERROR)) &&
+            (ssl_s->error == WC_NO_ERR_TRACE(WANT_READ)));
+    }
+
+    wolfSSL_SESSION_free(sess);
+    wolfSSL_free(ssl_c);
+    wolfSSL_free(ssl_s);
+    wolfSSL_CTX_free(ctx_c);
+    wolfSSL_CTX_free(ctx_s);
+
+    return EXPECT_RESULT();
+}
+#else
+static int test_ticket_enc_corrupted(void) { return TEST_SKIPPED; }
 #endif
 
 #if defined(WOLFSSL_TLS13) && !defined(NO_PSK) && \
@@ -32804,6 +33128,15 @@ TEST_CASE testCases[] = {
     TEST_DECL(test_sk_X509),
     /* OpenSSL sk_X509_CRL API test */
     TEST_DECL(test_sk_X509_CRL_decode),
+#if (defined(OPENSSL_ALL) || defined(OPENSSL_EXTRA)) && !defined(NO_CERTS) && \
+    defined(HAVE_CRL) && defined(WOLFSSL_CERT_GEN)
+    TEST_DECL(test_wolfSSL_X509_CRL_add_revoked_oversized_revocation_date),
+#endif
+#if (defined(OPENSSL_ALL) || defined(OPENSSL_EXTRA)) && !defined(NO_CERTS) && \
+    defined(HAVE_CRL) && !defined(NO_FILESYSTEM) && \
+    !defined(NO_STDIO_FILESYSTEM)
+    TEST_DECL(test_wolfSSL_X509_CRL_reason_critical_boolean),
+#endif
     TEST_DECL(test_sk_X509_CRL_encode),
     TEST_DECL(test_wolfSSL_X509_CRL_sign_large),
 
@@ -33186,6 +33519,7 @@ TEST_CASE testCases[] = {
     TEST_DECL(test_wolfSSL_dtls_bad_record),
     /* Uses Assert in handshake callback. */
     TEST_DECL(test_wolfSSL_dtls_stateless),
+    TEST_DECL(test_wolfSSL_dtls_stateless_hrr_group),
     TEST_DECL(test_generate_cookie),
 
 #ifndef NO_BIO
@@ -33238,6 +33572,7 @@ TEST_CASE testCases[] = {
     TEST_DECL(test_ticket_nonce_malloc),
 #endif
     TEST_DECL(test_ticket_ret_create),
+    TEST_DECL(test_ticket_enc_corrupted),
     TEST_DECL(test_wrong_cs_downgrade),
     TEST_DECL(test_extra_alerts_wrong_cs),
     TEST_DECL(test_extra_alerts_skip_hs),
@@ -33291,6 +33626,8 @@ TEST_CASE testCases[] = {
     TEST_DECL(test_ocsp_response_parsing),
     TEST_DECL(test_ocsp_certid_enc_dec),
     TEST_DECL(test_ocsp_tls_cert_cb),
+    TEST_DECL(test_ocsp_cert_unknown_crl_fallback),
+    TEST_DECL(test_ocsp_cert_unknown_crl_fallback_nonleaf),
     TEST_TLS_DECLS,
     TEST_DECL(test_wc_DhSetNamedKey),
     /* This test needs to stay at the end to clean up any caches allocated. */

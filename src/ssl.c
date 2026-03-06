@@ -3502,6 +3502,11 @@ int wolfSSL_CTX_set_TicketHint(WOLFSSL_CTX* ctx, int hint)
     if (ctx == NULL)
         return BAD_FUNC_ARG;
 
+    /* RFC8446 Section 4.6.1: Servers MUST NOT use any value greater than
+     * 604800 seconds (7 days). */
+    if (hint < 0 || hint > 604800)
+        return BAD_FUNC_ARG;
+
     ctx->ticketHint = hint;
 
     return WOLFSSL_SUCCESS;
@@ -16813,7 +16818,7 @@ const WOLF_EC_NIST_NAME kNistCurves[] = {
     {CURVE_NAME("P-521"),   WC_NID_secp521r1, WOLFSSL_ECC_SECP521R1},
     {CURVE_NAME("K-160"),   WC_NID_secp160k1, WOLFSSL_ECC_SECP160K1},
     {CURVE_NAME("K-192"),   WC_NID_secp192k1, WOLFSSL_ECC_SECP192K1},
-    {CURVE_NAME("K-224"),   WC_NID_secp224k1, WOLFSSL_ECC_SECP224R1},
+    {CURVE_NAME("K-224"),   WC_NID_secp224k1, WOLFSSL_ECC_SECP224K1},
     {CURVE_NAME("K-256"),   WC_NID_secp256k1, WOLFSSL_ECC_SECP256K1},
     {CURVE_NAME("B-256"),   WC_NID_brainpoolP256r1,
      WOLFSSL_ECC_BRAINPOOLP256R1},

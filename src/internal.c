@@ -3101,7 +3101,7 @@ void InitCiphers(WOLFSSL* ssl)
     XMEMSET(&ssl->dtlsRecordNumberEncrypt, 0,
         sizeof(ssl->dtlsRecordNumberEncrypt));
     XMEMSET(&ssl->dtlsRecordNumberDecrypt, 0,
-         sizeof(ssl->dtlsRecordNumberEncrypt));
+         sizeof(ssl->dtlsRecordNumberDecrypt));
 #endif /* WOLFSSL_DTLS13 */
 
 }
@@ -15954,7 +15954,7 @@ int ProcessPeerCerts(WOLFSSL* ssl, byte* input, word32* inOutIdx,
                     if (ret == WC_NO_ERR_TRACE(WC_PENDING_E))
                         goto exit_ppc;
                 #endif
-                    if (ret == 0) {
+                    if (ret == 0 || ret == WC_NO_ERR_TRACE(OCSP_CERT_UNKNOWN)) {
                         ret = ProcessPeerCertCheckKey(ssl, args);
                     }
                     else if (ret == WC_NO_ERR_TRACE(ASN_PARSE_E) ||
@@ -16052,7 +16052,7 @@ int ProcessPeerCerts(WOLFSSL* ssl, byte* input, word32* inOutIdx,
                     }
                 #endif /* HAVE_OCSP */
 
-                    if (ret == 0) {
+                    if (ret == 0 || ret == WC_NO_ERR_TRACE(OCSP_CERT_UNKNOWN)) {
                 #ifdef HAVE_CRL
                         if (SSL_CM(ssl)->crlEnabled &&
                                 SSL_CM(ssl)->crlCheckAll) {
@@ -16593,7 +16593,8 @@ int ProcessPeerCerts(WOLFSSL* ssl, byte* input, word32* inOutIdx,
                 #endif /* HAVE_OCSP */
 
                 #ifdef HAVE_CRL
-                    if (ret == 0 && doLookup && SSL_CM(ssl)->crlEnabled) {
+                    if ((ret == 0 || ret == WC_NO_ERR_TRACE(OCSP_CERT_UNKNOWN))
+                            && doLookup && SSL_CM(ssl)->crlEnabled) {
                         WOLFSSL_MSG("Doing Leaf CRL check");
                         ret = CheckCertCRL(SSL_CM(ssl)->crl, args->dCert);
                     #ifdef WOLFSSL_NONBLOCK_OCSP
@@ -16621,7 +16622,8 @@ int ProcessPeerCerts(WOLFSSL* ssl, byte* input, word32* inOutIdx,
                         #endif
                         }
                     }
-                    if (ret == 0 && doLookup && SSL_CM(ssl)->crlEnabled &&
+                    if ((ret == 0 || ret == WC_NO_ERR_TRACE(OCSP_CERT_UNKNOWN))
+                            && doLookup && SSL_CM(ssl)->crlEnabled &&
                             SSL_CM(ssl)->crlCheckAll && args->totalCerts == 1) {
                         /* Check the entire cert chain */
                         if (args->dCert->ca != NULL) {
@@ -17611,7 +17613,8 @@ int DoFinished(WOLFSSL* ssl, const byte* input, word32* inOutIdx, word32 size,
     #endif
 
     if (sniff == NO_SNIFF) {
-        if (XMEMCMP(input + *inOutIdx, &ssl->hsHashes->verifyHashes,size) != 0){
+        if (ConstantCompare(input + *inOutIdx,
+                   (const byte*)&ssl->hsHashes->verifyHashes, (int)size) != 0) {
             WOLFSSL_MSG("Verify finished error on hashes");
             WOLFSSL_ERROR_VERBOSE(VERIFY_FINISHED_ERROR);
             return VERIFY_FINISHED_ERROR;
@@ -22036,6 +22039,12 @@ static int DoAlert(WOLFSSL* ssl, byte* input, word32* inOutIdx, int* type)
         if (level == alert_fatal) {
             ssl->options.isClosed = 1;  /* Don't send close_notify */
         }
+        /* RFC 8446 Section 6.2: In TLS 1.3, all error alerts are implicitly
+         * fatal regardless of the AlertLevel byte. */
+        if (IsAtLeastTLSv1_3(ssl->version) &&
+                code != close_notify && code != user_canceled) {
+            ssl->options.isClosed = 1;
+        }
     }
 
     if (++ssl->options.alertCount >= WOLFSSL_ALERT_COUNT_MAX) {
@@ -22395,6 +22404,11 @@ static int removeMsgInnerPadding(WOLFSSL* ssl)
 
     /* Get the real content type from the end of the data. */
     ssl->curRL.type = ssl->buffers.inputBuffer.buffer[i];
+    if (ssl->curRL.type == 0) {
+        SendAlert(ssl, alert_fatal, unexpected_message);
+        WOLFSSL_ERROR(PARSE_ERROR);
+        return PARSE_ERROR;
+    }
     /* consider both contentType byte and MAC as padding */
     ssl->keys.padSz = ssl->buffers.inputBuffer.idx
         + ssl->curSize - i;
@@ -23509,6 +23523,15 @@ default:
 
                     if (type == decrypt_error)
                         return FATAL_ERROR;
+
+                    /* RFC 8446 Section 6.2: In TLS 1.3, all error alerts MUST
+                     * be treated as fatal regardless of the AlertLevel byte.
+                     * Only close_notify (handled above) and user_canceled
+                     * are exempt. */
+                    if (IsAtLeastTLSv1_3(ssl->version) &&
+                            type != user_canceled && type != invalid_alert) {
+                        return FATAL_ERROR;
+                    }
 
                     /* Reset error if we got an alert level in ret */
                     if (ret > 0)
@@ -39181,6 +39204,10 @@ static int AddPSKtoPreMasterSecret(WOLFSSL* ssl)
             WOLFSSL_ERROR_VERBOSE(BAD_TICKET_MSG_SZ);
             return WOLFSSL_TICKET_RET_REJECT;
         }
+        if ((word32)inLen + WOLFSSL_TICKET_FIXED_SZ > len) {
+            WOLFSSL_ERROR_VERBOSE(BAD_TICKET_MSG_SZ);
+            return WOLFSSL_TICKET_RET_REJECT;
+        }
         outLen = (int)inLen;   /* may be reduced by user padding */
 
         if (ssl->ctx->ticketEncCb == NULL
@@ -41802,7 +41829,10 @@ int wolfSSL_AsyncPop(WOLFSSL* ssl, byte* state)
              * the completion is not detected in the poll like Intel QAT or
              * Nitrox */
             ret = wolfEventQueue_Remove(&ssl->ctx->event_queue, event);
-
+            /* Clear async device so stale pending state from
+             * wolfSSL_AsyncInit does not confuse subsequent operations */
+            XMEMSET(&asyncDev->event, 0, sizeof(WOLF_EVENT));
+            ssl->asyncDev = NULL;
         }
     #endif
     }
