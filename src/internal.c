@@ -22880,8 +22880,10 @@ default:
 #ifdef WOLFSSL_TLS13
                 if (IsAtLeastTLSv1_3(ssl->version)) {
                     tooLong  = ssl->curSize > MAX_TLS13_ENC_SZ;
-                    tooLong |= ssl->curSize - ssl->specs.aead_mac_size >
+                    if (ssl->specs.aead_mac_size < ssl->curSize) {
+                        tooLong |= ssl->curSize - ssl->specs.aead_mac_size >
                                                              MAX_TLS13_PLAIN_SZ;
+                    }
                 }
 #endif
 #ifdef WOLFSSL_EXTRA_ALERTS
@@ -27549,6 +27551,9 @@ const char* wolfSSL_ERR_reason_error_string(unsigned long e)
 
     case WOLFSSL_EVP_R_PRIVATE_KEY_DECODE_ERROR:
         return "Private key decode error (EVP)";
+
+    case SESSION_TICKET_NONCE_OVERFLOW:
+        return "Session ticket nonce overflow";
     }
 
     return "unknown error number";
@@ -38062,6 +38067,15 @@ static int AddPSKtoPreMasterSecret(WOLFSSL* ssl)
                 if (comp == ZLIB_COMPRESSION) {
                     matchZlib = 1;
                 }
+            }
+
+            if (!matchNo) {
+                WOLFSSL_MSG("Compression list missing null");
+#ifdef WOLFSSL_EXTRA_ALERTS
+                SendAlert(ssl, alert_fatal, illegal_parameter);
+#endif
+                ret = COMPRESSION_ERROR;
+                goto out;
             }
 
             if (ssl->options.usingCompression == 0 && matchNo) {

@@ -4949,7 +4949,7 @@ static int EchCheckAcceptance(WOLFSSL* ssl, byte* label, word16 labelSz,
     }
     if (ret == 0) {
         /* last 8 bytes should match our expand output */
-        ret = XMEMCMP(acceptConfirmation, input + acceptOffset,
+        ret = ConstantCompare(acceptConfirmation, input + acceptOffset,
             ECH_ACCEPT_CONFIRMATION_SZ);
         /* ech accepted */
         if (ret == 0) {
@@ -12175,6 +12175,13 @@ static int SendTls13NewSessionTicket(WOLFSSL* ssl)
         if (ssl->error != WC_NO_ERR_TRACE(WC_PENDING_E))
     #endif
     {
+        if (ssl->session->ticketNonce.data[0] == 255) {
+            /* RFC8446 Section 4.6.1: Each ticket must have a unique nonce
+             * value. As the nonce is only a single byte, we have to prevent
+             * the overflow and abort. */
+            return SESSION_TICKET_NONCE_OVERFLOW;
+        }
+        else
             ssl->session->ticketNonce.data[0]++;
     }
 
@@ -14198,6 +14205,13 @@ int wolfSSL_request_certificate(WOLFSSL* ssl)
         return NOT_READY_ERROR;
     if (!ssl->options.postHandshakeAuth)
         return POST_HAND_AUTH_ERROR;
+    if (ssl->certReqCtx != NULL) {
+        if (ssl->certReqCtx->len != 1)
+            return BAD_STATE_E;
+        /* We support sending up to 255 certificate requests */
+        if (ssl->certReqCtx->ctx == 255)
+            return BAD_STATE_E;
+    }
 
     certReqCtx = (CertReqCtx*)XMALLOC(sizeof(CertReqCtx), ssl->heap,
                                                        DYNAMIC_TYPE_TMP_BUFFER);
