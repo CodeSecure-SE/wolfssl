@@ -5693,7 +5693,6 @@ static int wc_PKCS7_HandleOctetStrings(wc_PKCS7* pkcs7, byte* in, word32 inSz,
                         WOLFSSL_MSG("failed to grow content buffer.");
                             if (tempBuf != NULL) {
                         XFREE(tempBuf, pkcs7->heap, DYNAMIC_TYPE_PKCS7);
-                        tempBuf = NULL;
                             }
                         ret = MEMORY_E;
                         break;
@@ -5707,7 +5706,6 @@ static int wc_PKCS7_HandleOctetStrings(wc_PKCS7* pkcs7, byte* in, word32 inSz,
                                                        pkcs7->stream->expected);
                         if (tempBuf != NULL) {
                             XFREE(tempBuf, pkcs7->heap, DYNAMIC_TYPE_PKCS7);
-                            tempBuf = NULL;
                         }
                     }
                 }
@@ -13221,6 +13219,12 @@ int wc_PKCS7_DecodeEnvelopedData(wc_PKCS7* pkcs7, byte* in,
             /* use cached content */
             encryptedContent = pkcs7->cachedEncryptedContent;
             encryptedContentSz = (int)pkcs7->cachedEncryptedContentSz;
+
+            if (encryptedContentSz <= 0) {
+                ret = BUFFER_E;
+                break;
+            }
+
             padLen = encryptedContent[encryptedContentSz-1];
 
             /* copy plaintext to output */

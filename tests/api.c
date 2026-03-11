@@ -207,6 +207,7 @@
 #include <tests/api/test_ed448.h>
 #include <tests/api/test_mlkem.h>
 #include <tests/api/test_mldsa.h>
+#include <tests/api/test_slhdsa.h>
 #include <tests/api/test_signature.h>
 #include <tests/api/test_dtls.h>
 #include <tests/api/test_ocsp.h>
@@ -30340,8 +30341,7 @@ static int test_TLSX_CA_NAMES_bad_extension(void)
 
         ExpectIntEQ(wolfSSL_connect(ssl_c), -1);
 #ifndef WOLFSSL_DISABLE_EARLY_SANITY_CHECKS
-        ExpectIntEQ(wolfSSL_get_error(ssl_c, -1),
-                                        WC_NO_ERR_TRACE(UNSUPPORTED_EXTENSION));
+        ExpectIntEQ(wolfSSL_get_error(ssl_c, -1), WC_NO_ERR_TRACE(EXT_MISSING));
 #else
         ExpectIntEQ(wolfSSL_get_error(ssl_c, -1), WC_NO_ERR_TRACE(BUFFER_ERROR));
 #endif
@@ -32969,6 +32969,8 @@ TEST_CASE testCases[] = {
     TEST_MLKEM_DECLS,
     /* Dilithium */
     TEST_MLDSA_DECLS,
+    /* SLH-DSA */
+    TEST_SLHDSA_DECLS,
     /* Signature API */
     TEST_SIGNATURE_DECLS,
 

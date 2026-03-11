@@ -9641,7 +9641,7 @@ int wc_GetKeyOID(byte* key, word32 keySz, const byte** curveOID, word32* oidSz,
                     WOLFSSL_MSG("Not Dilithium Level 5 DER key");
                 }
             }
-            else {
+            if (*algoID == 0) {
                 WOLFSSL_MSG("GetKeyOID dilithium initialization failed");
             }
             wc_dilithium_free(dilithium);
@@ -33565,7 +33565,7 @@ static int EncodeCertReq(Cert* cert, DerCert* der, RsaKey* rsaKey,
 
     if (rsaKey == NULL && eccKey == NULL && ed25519Key == NULL &&
         dsaKey == NULL && ed448Key == NULL && falconKey == NULL &&
-        falconKey == NULL) {
+        dilithiumKey == NULL && sphincsKey == NULL) {
         return PUBLIC_KEY_E;
     }
 
@@ -42685,14 +42685,18 @@ int wc_SignCRL_ex(const byte* tbsBuf, int tbsSz, int sType,
         return BAD_FUNC_ARG;
     if (rsaKey == NULL && eccKey == NULL)
         return BAD_FUNC_ARG;
+    if (rsaKey != NULL && eccKey != NULL)
+        return BAD_FUNC_ARG;
 
     XMEMSET(certSignCtx, 0, sizeof(*certSignCtx));
 
+#ifndef NO_RSA
     if (rsaKey != NULL) {
         heap = rsaKey->heap;
     }
+#endif
 #ifdef HAVE_ECC
-    else if (eccKey != NULL) {
+    if (eccKey != NULL) {
         heap = eccKey->heap;
     }
 #endif
