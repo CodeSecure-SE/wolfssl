@@ -9582,8 +9582,8 @@ int wc_GetKeyOID(byte* key, word32 keySz, const byte** curveOID, word32* oidSz,
             return MEMORY_E;
 
         if (wc_falcon_init(falcon) == 0) {
-            tmpIdx = 0;
-            if (wc_falcon_set_level(falcon, 1) == 0) {
+            if ((*algoID == 0) && (wc_falcon_set_level(falcon, 1) == 0)) {
+                tmpIdx = 0;
                 if (wc_Falcon_PrivateKeyDecode(key, &tmpIdx, falcon, keySz)
                     == 0) {
                     *algoID = FALCON_LEVEL1k;
@@ -9592,7 +9592,8 @@ int wc_GetKeyOID(byte* key, word32 keySz, const byte** curveOID, word32* oidSz,
                     WOLFSSL_MSG("Not Falcon Level 1 DER key");
                 }
             }
-            else if (wc_falcon_set_level(falcon, 5) == 0) {
+            if ((*algoID == 0) && (wc_falcon_set_level(falcon, 5) == 0)) {
+                tmpIdx = 0;
                 if (wc_Falcon_PrivateKeyDecode(key, &tmpIdx, falcon, keySz)
                     == 0) {
                     *algoID = FALCON_LEVEL5k;
@@ -9601,7 +9602,7 @@ int wc_GetKeyOID(byte* key, word32 keySz, const byte** curveOID, word32* oidSz,
                     WOLFSSL_MSG("Not Falcon Level 5 DER key");
                 }
             }
-            else {
+            if (*algoID == 0) {
                 WOLFSSL_MSG("GetKeyOID falcon initialization failed");
             }
             wc_falcon_free(falcon);
@@ -9669,9 +9670,10 @@ int wc_GetKeyOID(byte* key, word32 keySz, const byte** curveOID, word32* oidSz,
             return MEMORY_E;
 
         if (wc_sphincs_init(sphincs) == 0) {
-            tmpIdx = 0;
-            if (wc_sphincs_set_level_and_optim(sphincs, 1, FAST_VARIANT)
-                == 0) {
+            if ((*algoID == 0) &&
+                (wc_sphincs_set_level_and_optim(sphincs, 1, FAST_VARIANT)
+                 == 0)) {
+                tmpIdx = 0;
                 if (wc_Sphincs_PrivateKeyDecode(key, &tmpIdx, sphincs,
                     keySz) == 0) {
                     *algoID = SPHINCS_FAST_LEVEL1k;
@@ -9680,8 +9682,10 @@ int wc_GetKeyOID(byte* key, word32 keySz, const byte** curveOID, word32* oidSz,
                     WOLFSSL_MSG("Not Sphincs-fast Level 1 DER key");
                 }
             }
-            else if (wc_sphincs_set_level_and_optim(sphincs, 3, FAST_VARIANT)
-                == 0) {
+            if ((*algoID == 0) &&
+                (wc_sphincs_set_level_and_optim(sphincs, 3, FAST_VARIANT)
+                 == 0)) {
+                tmpIdx = 0;
                 if (wc_Sphincs_PrivateKeyDecode(key, &tmpIdx, sphincs,
                     keySz) == 0) {
                     *algoID = SPHINCS_FAST_LEVEL3k;
@@ -9690,8 +9694,10 @@ int wc_GetKeyOID(byte* key, word32 keySz, const byte** curveOID, word32* oidSz,
                     WOLFSSL_MSG("Not Sphincs-fast Level 3 DER key");
                 }
             }
-            else if (wc_sphincs_set_level_and_optim(sphincs, 5, FAST_VARIANT)
-                == 0) {
+            if ((*algoID == 0) &&
+                (wc_sphincs_set_level_and_optim(sphincs, 5, FAST_VARIANT)
+                 == 0)) {
+                tmpIdx = 0;
                 if (wc_Sphincs_PrivateKeyDecode(key, &tmpIdx, sphincs,
                     keySz) == 0) {
                     *algoID = SPHINCS_FAST_LEVEL5k;
@@ -9700,8 +9706,10 @@ int wc_GetKeyOID(byte* key, word32 keySz, const byte** curveOID, word32* oidSz,
                     WOLFSSL_MSG("Not Sphincs-fast Level 5 DER key");
                 }
             }
-            else if (wc_sphincs_set_level_and_optim(sphincs, 1, SMALL_VARIANT)
-                == 0) {
+            if ((*algoID == 0) &&
+                (wc_sphincs_set_level_and_optim(sphincs, 1, SMALL_VARIANT)
+                 == 0)) {
+                tmpIdx = 0;
                 if (wc_Sphincs_PrivateKeyDecode(key, &tmpIdx, sphincs,
                     keySz) == 0) {
                     *algoID = SPHINCS_SMALL_LEVEL1k;
@@ -9710,8 +9718,10 @@ int wc_GetKeyOID(byte* key, word32 keySz, const byte** curveOID, word32* oidSz,
                     WOLFSSL_MSG("Not Sphincs-small Level 1 DER key");
                 }
             }
-            else if (wc_sphincs_set_level_and_optim(sphincs, 3, SMALL_VARIANT)
-                == 0) {
+            if ((*algoID == 0) &&
+                (wc_sphincs_set_level_and_optim(sphincs, 3, SMALL_VARIANT)
+                 == 0)) {
+                tmpIdx = 0;
                 if (wc_Sphincs_PrivateKeyDecode(key, &tmpIdx, sphincs,
                     keySz) == 0) {
                     *algoID = SPHINCS_SMALL_LEVEL3k;
@@ -9720,8 +9730,10 @@ int wc_GetKeyOID(byte* key, word32 keySz, const byte** curveOID, word32* oidSz,
                     WOLFSSL_MSG("Not Sphincs-small Level 3 DER key");
                 }
             }
-            else if (wc_sphincs_set_level_and_optim(sphincs, 5, SMALL_VARIANT)
-                == 0) {
+            if ((*algoID == 0) &&
+                (wc_sphincs_set_level_and_optim(sphincs, 5, SMALL_VARIANT)
+                 == 0)) {
+                tmpIdx = 0;
                 if (wc_Sphincs_PrivateKeyDecode(key, &tmpIdx, sphincs,
                     keySz) == 0) {
                     *algoID = SPHINCS_SMALL_LEVEL5k;
@@ -9730,7 +9742,7 @@ int wc_GetKeyOID(byte* key, word32 keySz, const byte** curveOID, word32* oidSz,
                     WOLFSSL_MSG("Not Sphincs-small Level 5 DER key");
                 }
             }
-            else {
+            if (*algoID == 0) {
                 WOLFSSL_MSG("GetKeyOID sphincs initialization failed");
             }
             wc_sphincs_free(sphincs);
@@ -12374,14 +12386,16 @@ int wc_DsaPublicKeyDecode(const byte* input, word32* inOutIdx, DsaKey* key,
     /* dsaPubKeyASN is longer than dsaPublicKeyASN. */
     DECL_ASNGETDATA(dataASN, dsaPubKeyASN_Length);
     int ret = 0;
+    void* heap = NULL;
 
     /* Validated parameters. */
     if ((input == NULL) || (inOutIdx == NULL) || (key == NULL)) {
         ret = BAD_FUNC_ARG;
     }
+    heap = (key != NULL) ? key->heap : NULL;
 
     if (ret == 0) {
-        ALLOC_ASNGETDATA(dataASN, dsaPubKeyASN_Length, ret, key->heap);
+        ALLOC_ASNGETDATA(dataASN, dsaPubKeyASN_Length, ret, heap);
     }
 
     if (ret == 0) {
@@ -12420,7 +12434,7 @@ int wc_DsaPublicKeyDecode(const byte* input, word32* inOutIdx, DsaKey* key,
         key->type = DSA_PUBLIC;
     }
 
-    FREE_ASNGETDATA(dataASN, key->heap);
+    FREE_ASNGETDATA(dataASN, heap);
     return ret;
 #endif
 }
@@ -18027,10 +18041,13 @@ static word32 SetAlgoIDImpl(int algoOID, byte* output, int type, int curveSz,
     word32 algoSz = 0;
 
     CALLOC_ASNSETDATA(dataASN, algoIdASN_Length, ret, NULL);
+
+#ifdef WOLFSSL_SMALL_STACK
     if(ret < 0) {
         /* Catch MEMORY_E */
         return 0;
     }
+#endif
 
     algoName = OidFromId((word32)algoOID, (word32)type, &algoSz);
     if (algoName == NULL) {
@@ -37536,6 +37553,7 @@ int wc_EccPublicKeyDecode(const byte* input, word32* inOutIdx,
     /* eccKeyASN is longer than eccPublicKeyASN. */
     DECL_ASNGETDATA(dataASN, eccKeyASN_Length);
     int ret = 0;
+    void* heap = NULL;
     int curve_id = ECC_CURVE_DEF;
     int oidIdx = ECCPUBLICKEYASN_IDX_ALGOID_CURVEID;
 #ifdef WOLFSSL_CUSTOM_CURVES
@@ -37546,9 +37564,10 @@ int wc_EccPublicKeyDecode(const byte* input, word32* inOutIdx,
     if ((input == NULL) || (inOutIdx == NULL) || (key == NULL) || (inSz == 0)) {
         ret = BAD_FUNC_ARG;
     }
+    heap = (key != NULL) ? key->heap : NULL;
 
     if (ret == 0) {
-        ALLOC_ASNGETDATA(dataASN, eccKeyASN_Length, ret, key->heap);
+        ALLOC_ASNGETDATA(dataASN, eccKeyASN_Length, ret, heap);
     }
 
     if (ret == 0) {
@@ -37622,7 +37641,7 @@ int wc_EccPublicKeyDecode(const byte* input, word32* inOutIdx,
         }
     }
 
-    FREE_ASNGETDATA(dataASN, key->heap);
+    FREE_ASNGETDATA(dataASN, heap);
     return ret;
 #endif /* WOLFSSL_ASN_TEMPLATE */
 }
@@ -42012,6 +42031,9 @@ void FreeDecodedCRL(DecodedCRL* dcrl)
 
     while(tmp) {
         RevokedCert* next = tmp->next;
+#ifdef OPENSSL_EXTRA
+        XFREE(tmp->extensions, dcrl->heap, DYNAMIC_TYPE_REVOKED);
+#endif
         XFREE(tmp, dcrl->heap, DYNAMIC_TYPE_REVOKED);
         tmp = next;
     }

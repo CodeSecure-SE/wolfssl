@@ -13818,7 +13818,8 @@ static THREAD_RETURN WOLFSSL_THREAD server_task_ech(void* args)
     if (callbacks->ctx_ready)
         callbacks->ctx_ready(ctx);
 
-    AssertNotNull(ssl = wolfSSL_new(ctx));
+    ssl = wolfSSL_new(ctx);
+    AssertNotNull(ssl);
 
     /* set the sni for the server */
     AssertIntEQ(WOLFSSL_SUCCESS,
@@ -19265,6 +19266,39 @@ static int test_wolfSSL_get_ciphers_compat(void)
     ExpectNotNull(supportedCiphers = SSL_get_ciphers(ssl));
     /* Further usage of SSL_get_ciphers/wolfSSL_get_ciphers_compat is
      * tested in test_wolfSSL_sk_CIPHER_description according to Qt usage */
+
+    SSL_free(ssl);
+    SSL_CTX_free(ctx);
+#endif
+    return EXPECT_RESULT();
+}
+
+/* Test that wolfSSL_get_ciphers_compat returns NULL (not an empty stack)
+ * when no ciphers are available for a given protocol configuration.
+ * wolfSSL_get_ciphers_compat() is mapped to SSL_get_ciphers(), which has
+ * an expected return of NULL when no ciphers are available. */
+static int test_wolfSSL_get_ciphers_compat_empty(void)
+{
+    EXPECT_DECLS;
+#if !defined(NO_TLS) && !defined(NO_WOLFSSL_CLIENT)
+    const SSL_METHOD *method = NULL;
+    SSL_CTX *ctx = NULL;
+    WOLFSSL *ssl = NULL;
+    STACK_OF(SSL_CIPHER) *ciphers = NULL;
+
+    ExpectNotNull(method = SSLv23_client_method());
+    ExpectNotNull(ctx = SSL_CTX_new(method));
+    ExpectNotNull(ssl = SSL_new(ctx));
+
+    /* Disable all protocol versions via options mask so that
+     * sslCipherMinMaxCheck filters out every cipher suite */
+    wolfSSL_set_options(ssl, SSL_OP_NO_SSLv3 | SSL_OP_NO_TLSv1 |
+        SSL_OP_NO_TLSv1_1 | SSL_OP_NO_TLSv1_2 | SSL_OP_NO_TLSv1_3);
+
+    ciphers = wolfSSL_get_ciphers_compat(ssl);
+
+    /* Must be NULL, not a non-NULL empty stack */
+    ExpectNull(ciphers);
 
     SSL_free(ssl);
     SSL_CTX_free(ctx);
@@ -33583,7 +33617,10 @@ static int test_lms_write_key(const byte* priv, word32 privSz, void* context)
     FILE* f = fopen((const char*)context, "wb");
     if (f == NULL)
         return -1;
-    fwrite(priv, 1, privSz, f);
+    if (fwrite(priv, 1, privSz, f) != privSz) {
+        fclose(f);
+        return -1;
+    }
     fclose(f);
     return WC_LMS_RC_SAVED_TO_NV_MEMORY;
 }
@@ -34136,6 +34173,7 @@ TEST_CASE testCases[] = {
 #ifdef OPENSSL_ALL
     TEST_DECL(test_wolfSSL_sk_CIPHER_description),
     TEST_DECL(test_wolfSSL_get_ciphers_compat),
+    TEST_DECL(test_wolfSSL_get_ciphers_compat_empty),
 
     TEST_DECL(test_wolfSSL_CTX_ctrl),
 #endif /* OPENSSL_ALL */
