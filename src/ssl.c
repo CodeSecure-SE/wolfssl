@@ -153,26 +153,121 @@
 #endif /* !WOLFCRYPT_ONLY || OPENSSL_EXTRA */
 
 /*
+ * ssl.c Build Options:
+ *
+ * See also: tls.c for TLS extension/protocol options, tls13.c for TLS 1.3,
+ *           internal.c for handshake internals, wc_port.c for platform/memory.
+ *
+ * OpenSSL Compatibility:
+ * OPENSSL_EXTRA:              Enable OpenSSL compatibility API        default: off
+ * OPENSSL_ALL:                Enable all OpenSSL compat APIs          default: off
+ * OPENSSL_EXTRA_X509_SMALL:   Minimal OpenSSL X509 compat APIs       default: off
+ * OPENSSL_EXTRA_NO_ASN1:      OpenSSL extra without ASN1 objects      default: off
  * OPENSSL_COMPATIBLE_DEFAULTS:
- *     Enable default behaviour that is compatible with OpenSSL. For example
- *     SSL_CTX by default doesn't verify the loaded certs. Enabling this
- *     should make porting to new projects easier.
- * WOLFSSL_CHECK_ALERT_ON_ERR:
- *     Check for alerts during the handshake in the event of an error.
- * NO_SESSION_CACHE_REF:
- *     wolfSSL_get_session on a client will return a reference to the internal
- *     ClientCache by default for backwards compatibility. This define will
- *     make wolfSSL_get_session return a reference to ssl->session. The returned
- *     pointer will be freed with the related WOLFSSL object.
- * SESSION_CACHE_DYNAMIC_MEM:
- *     Dynamically allocate sessions for the session cache from the heap, as
- *     opposed to the default which allocates from the stack.  Allocates
- *     memory only when a session is added to the cache, frees memory after the
- *     session is no longer being used.  Recommended for memory-constrained
- *     systems.
- * WOLFSSL_SYS_CA_CERTS
- *     Enables ability to load system CA certs from the OS via
- *     wolfSSL_CTX_load_system_CA_certs.
+ *                  Default behavior compatible with OpenSSL           default: off
+ * NO_WOLFSSL_STUB:            Disable stubs for unimplemented funcs   default: off
+ * WOLFSSL_DEBUG_OPENSSL:      Debug logging for OpenSSL compat layer  default: off
+ * WOLFSSL_HAVE_ERROR_QUEUE:   OpenSSL-compatible error queue          default: off
+ * WOLFSSL_ERROR_CODE_OPENSSL: Use OpenSSL-compatible error codes      default: off
+ * WOLFSSL_CIPHER_INTERNALNAME:
+ *                  Use wolfSSL internal cipher suite names             default: off
+ * NO_CIPHER_SUITE_ALIASES:    Disable cipher suite name aliases       default: off
+ * WOLFSSL_SET_CIPHER_BYTES:   Set cipher suites by raw byte values    default: off
+ * WOLFSSL_OLD_SET_CURVES_LIST:
+ *                  Old-style curve list parsing for compat             default: off
+ * WOLFSSL_NO_OPENSSL_RAND_CB: Disable OpenSSL RAND callback compat   default: off
+ * NO_ERROR_STRINGS:           Disable human-readable error strings    default: off
+ * WOLFSSL_PUBLIC_ASN:         Make ASN parsing functions public        default: off
+ *
+ * Extra Data / BIO:
+ * HAVE_EX_DATA:               Enable ex_data on SSL/CTX/X509 objects  default: off
+ * HAVE_EX_DATA_CLEANUP_HOOKS: Cleanup callbacks for ex_data           default: off
+ * HAVE_EX_DATA_CRYPTO:        ex_data support for wolfCrypt objects   default: off
+ * MAX_EX_DATA:                Max ex_data entries per object           default: 5
+ * NO_BIO:                     Disable BIO abstraction layer           default: off
+ *
+ * Session & Cache:
+ * NO_SESSION_CACHE:           Disable server session cache            default: off
+ * NO_SESSION_CACHE_REF:       wolfSSL_get_session returns ssl->session
+ *                             reference instead of ClientCache ref    default: off
+ * SESSION_CACHE_DYNAMIC_MEM:  Dynamically allocate session cache      default: off
+ * NO_CLIENT_CACHE:            Disable client-side session cache       default: off
+ * SESSION_CERTS:              Store full cert chain in session         default: off
+ * WOLFSSL_SESSION_ID_CTX:     Session ID context for cache sharing    default: off
+ *
+ * I/O & Transport:
+ * USE_WOLFSSL_IO:             Use built-in I/O callbacks              default: on
+ * WOLFSSL_USER_IO:            Application provides custom I/O         default: off
+ * WOLFSSL_NO_SOCK:            Build without socket support            default: off
+ * NO_WRITEV:                  Disable writev() scatter/gather I/O     default: off
+ * WOLFSSL_DTLS_MTU:           Enable DTLS MTU management APIs         default: off
+ * WOLFSSL_DTLS_DROP_STATS:    Track DTLS packet drop statistics       default: off
+ * WOLFSSL_MULTICAST:          Enable DTLS multicast support           default: off
+ *
+ * Callbacks & Features:
+ * WOLFSSL_CHECK_ALERT_ON_ERR: Check alerts on handshake error         default: off
+ * ATOMIC_USER:                User-defined record layer callbacks      default: off
+ * HAVE_WRITE_DUP:             Separate threads for SSL read/write     default: off
+ * WOLFSSL_CALLBACKS:          Handshake monitoring callbacks           default: off
+ * NO_HANDSHAKE_DONE_CB:       Disable handshake completion callback   default: off
+ * WOLFSSL_SHUTDOWNONCE:       Send close_notify only once             default: off
+ * WOLFSSL_COPY_CERT:          Copy certificate buffer (own copy)      default: off
+ * WOLFSSL_COPY_KEY:           Copy private key buffer (own copy)      default: off
+ * WOLF_PRIVATE_KEY_ID:        Reference private keys by ID            default: off
+ * WOLFSSL_REFCNT_ERROR_RETURN:
+ *                  Return errors on ref counting failures             default: off
+ * WOLFSSL_ALLOW_MAX_FRAGMENT_ADJUST:
+ *                  Allow runtime max fragment size adjustment          default: off
+ * WOLFSSL_ALLOW_NO_SUITES:    Allow SSL objects with no cipher suites default: off
+ *
+ * Certificates & Keys:
+ * KEEP_PEER_CERT:             Keep peer cert after handshake          default: off
+ * KEEP_OUR_CERT:              Keep our cert after handshake           default: off
+ * WOLFSSL_STATIC_RSA:         Enable static RSA key exchange          default: off
+ * WOLFSSL_HAVE_CERT_SERVICE:  Certificate service callbacks           default: off
+ * WOLFSSL_SYS_CA_CERTS:       Load system CA certs from OS            default: off
+ *
+ * Application Compatibility:
+ * HAVE_CURL:                  APIs for libcurl compatibility          default: off
+ * HAVE_LIGHTY:                APIs for lighttpd compatibility         default: off
+ * HAVE_MEMCACHED:             APIs for memcached compatibility        default: off
+ * WOLFSSL_APACHE_HTTPD:       APIs for Apache httpd compatibility     default: off
+ * WOLFSSL_NGINX:              APIs for nginx compatibility            default: off
+ * WOLFSSL_HAPROXY:            APIs for HAProxy compatibility          default: off
+ * WOLFSSL_ASIO:               APIs for Boost.Asio compatibility       default: off
+ * WOLFSSL_PYTHON:             APIs for Python module compatibility    default: off
+ * WOLFSSL_QT:                 APIs for Qt framework compatibility     default: off
+ * WOLFSSL_JNI:                APIs for Java JNI/JSSE compatibility    default: off
+ *
+ * Protocol Features:
+ * WOLFSSL_HAVE_WOLFSCEP:      Enable wolfSCEP protocol support        default: off
+ * WOLFCRYPT_HAVE_SRP:         Enable SRP protocol support             default: off
+ * HAVE_LIBZ:                  Enable zlib TLS compression             default: off
+ * WOLFSSL_EXTRA:              Extra SSL session info APIs              default: off
+ * WOLFSSL_WPAS_SMALL:         Minimal wpa_supplicant/hostapd APIs     default: off
+ * HAVE_FUZZER:                Fuzzing callback support                 default: off
+ *
+ * Memory & Threading:
+ * WOLFSSL_STATIC_MEMORY_LEAN: Lean static memory allocation           default: off
+ * WOLFSSL_THREADED_CRYPT:     Multi-threaded crypto operations         default: off
+ * WOLFSSL_CLEANUP_THREADSAFE_BY_ATOMIC_OPS:
+ *                  Thread-safe cleanup via atomics                     default: off
+ * WOLFSSL_ATOMIC_INITIALIZER: Static init for atomic variables        default: off
+ * WOLFSSL_DEBUG_MEMORY:       Log malloc/free with file/line info     default: off
+ * WOLFSSL_NO_REALLOC:         Disable realloc, use malloc+copy+free   default: off
+ * WOLFSSL_HEAP_TEST:          Heap-related testing utilities           default: off
+ *
+ * Debugging & Build:
+ * SHOW_SIZES:                 Display struct sizes at init             default: off
+ * WOLFSSL_DEBUG_TRACE_ERROR_CODES:
+ *                  Trace error code origins for debugging              default: off
+ * HAVE_ATEXIT:                Register wolfSSL_Cleanup via atexit     default: off
+ * WOLFSSL_SYS_CRYPTO_POLICY:  Honor system crypto policy settings     default: off
+ *
+ * Hardware TLS:
+ * WOLFSSL_RENESAS_TSIP_TLS:   Renesas TSIP hardware crypto for TLS   default: off
+ * WOLFSSL_RENESAS_FSPSM_TLS:  Renesas FSP Security Module for TLS    default: off
+ * WOLFSSL_EGD_NBLOCK:         Non-blocking EGD entropy support        default: off
  */
 
 #define WOLFSSL_SSL_MISC_INCLUDED
@@ -2967,18 +3062,24 @@ static int isValidCurveGroup(word16 name)
 
 #ifdef WOLFSSL_HAVE_MLKEM
 #ifndef WOLFSSL_NO_ML_KEM
+    #ifndef WOLFSSL_TLS_NO_MLKEM_STANDALONE
         case WOLFSSL_ML_KEM_512:
         case WOLFSSL_ML_KEM_768:
         case WOLFSSL_ML_KEM_1024:
+    #endif /* !WOLFSSL_TLS_NO_MLKEM_STANDALONE */
     #if defined(WOLFSSL_WC_MLKEM) || defined(HAVE_LIBOQS)
+        #ifdef WOLFSSL_PQC_HYBRIDS
+        case WOLFSSL_SECP384R1MLKEM1024:
+        case WOLFSSL_X25519MLKEM768:
+        case WOLFSSL_SECP256R1MLKEM768:
+        #endif /* WOLFSSL_PQC_HYBRIDS */
+        #ifdef WOLFSSL_EXTRA_PQC_HYBRIDS
         case WOLFSSL_SECP256R1MLKEM512:
         case WOLFSSL_SECP384R1MLKEM768:
         case WOLFSSL_SECP521R1MLKEM1024:
-        case WOLFSSL_SECP384R1MLKEM1024:
         case WOLFSSL_X25519MLKEM512:
         case WOLFSSL_X448MLKEM768:
-        case WOLFSSL_X25519MLKEM768:
-        case WOLFSSL_SECP256R1MLKEM768:
+        #endif /* WOLFSSL_EXTRA_PQC_HYBRIDS */
     #endif
 #endif /* !WOLFSSL_NO_ML_KEM */
 #ifdef WOLFSSL_MLKEM_KYBER
@@ -8526,12 +8627,12 @@ int wolfSSL_set_compression(WOLFSSL* ssl)
         if (ssl == NULL)
             return 0;
 
-#if defined(WOLFSSL_DTLS13) && !defined(WOLFSSL_NO_CLIENT)
+#if defined(WOLFSSL_DTLS13) && !defined(NO_WOLFSSL_CLIENT)
         if (ssl->options.side == WOLFSSL_CLIENT_END && ssl->options.dtls
                 && IsAtLeastTLSv1_3(ssl->version)) {
             return ssl->options.serverState == SERVER_FINISHED_ACKED;
         }
-#endif /* WOLFSSL_DTLS13 && !WOLFSSL_NO_CLIENT */
+#endif /* WOLFSSL_DTLS13 && !NO_WOLFSSL_CLIENT */
 
         /* Can't use ssl->options.connectState and ssl->options.acceptState
          * because they differ in meaning for TLS <=1.2 and 1.3 */
@@ -10610,49 +10711,59 @@ const char* wolfSSL_get_curve_name(WOLFSSL* ssl)
     #ifndef WOLFSSL_NO_ML_KEM_512
         case WOLFSSL_ML_KEM_512:
             return "ML_KEM_512";
-        case WOLFSSL_SECP256R1MLKEM512:
-            return "SecP256r1MLKEM512";
-#ifdef WOLFSSL_ML_KEM_USE_OLD_IDS
+        #ifdef WOLFSSL_EXTRA_PQC_HYBRIDS
+        #ifdef WOLFSSL_ML_KEM_USE_OLD_IDS
         case WOLFSSL_P256_ML_KEM_512_OLD:
             return "P256_ML_KEM_512_OLD";
-#endif
+        #endif /* WOLFSSL_ML_KEM_USE_OLD_IDS */
+        case WOLFSSL_SECP256R1MLKEM512:
+            return "SecP256r1MLKEM512";
         #ifdef HAVE_CURVE25519
         case WOLFSSL_X25519MLKEM512:
             return "X25519MLKEM512";
-        #endif
-    #endif
+        #endif /* HAVE_CURVE25519 */
+        #endif /* WOLFSSL_EXTRA_PQC_HYBRIDS */
+    #endif /* WOLFSSL_NO_ML_KEM_512 */
     #ifndef WOLFSSL_NO_ML_KEM_768
         case WOLFSSL_ML_KEM_768:
             return "ML_KEM_768";
-        case WOLFSSL_SECP384R1MLKEM768:
-            return "SecP384r1MLKEM768";
-#ifdef WOLFSSL_ML_KEM_USE_OLD_IDS
-        case WOLFSSL_P384_ML_KEM_768_OLD:
-            return "P384_ML_KEM_768_OLD";
-#endif
+        #ifdef WOLFSSL_PQC_HYBRIDS
         case WOLFSSL_SECP256R1MLKEM768:
             return "SecP256r1MLKEM768";
         #ifdef HAVE_CURVE25519
         case WOLFSSL_X25519MLKEM768:
             return "X25519MLKEM768";
         #endif
+        #endif /* WOLFSSL_PQC_HYBRIDS */
+        #ifdef WOLFSSL_EXTRA_PQC_HYBRIDS
+        #ifdef WOLFSSL_ML_KEM_USE_OLD_IDS
+        case WOLFSSL_P384_ML_KEM_768_OLD:
+            return "P384_ML_KEM_768_OLD";
+        #endif /* WOLFSSL_ML_KEM_USE_OLD_IDS */
+        case WOLFSSL_SECP384R1MLKEM768:
+            return "SecP384r1MLKEM768";
         #ifdef HAVE_CURVE448
         case WOLFSSL_X448MLKEM768:
             return "X448MLKEM768";
-        #endif
-    #endif
+        #endif /* HAVE_CURVE448 */
+        #endif /* WOLFSSL_EXTRA_PQC_HYBRIDS */
+    #endif /* WOLFSSL_NO_ML_KEM_768 */
     #ifndef WOLFSSL_NO_ML_KEM_1024
         case WOLFSSL_ML_KEM_1024:
             return "ML_KEM_1024";
-        case WOLFSSL_SECP521R1MLKEM1024:
-            return "SecP521r1MLKEM1024";
-#ifdef WOLFSSL_ML_KEM_USE_OLD_IDS
-        case WOLFSSL_P521_ML_KEM_1024_OLD:
-            return "P521_ML_KEM_1024_OLD";
-#endif
+        #ifdef WOLFSSL_PQC_HYBRIDS
         case WOLFSSL_SECP384R1MLKEM1024:
             return "SecP384r1MLKEM1024";
-    #endif
+        #endif /* WOLFSSL_PQC_HYBRIDS */
+        #ifdef WOLFSSL_EXTRA_PQC_HYBRIDS
+        #ifdef WOLFSSL_ML_KEM_USE_OLD_IDS
+        case WOLFSSL_P521_ML_KEM_1024_OLD:
+            return "P521_ML_KEM_1024_OLD";
+        #endif /* WOLFSSL_ML_KEM_USE_OLD_IDS */
+        case WOLFSSL_SECP521R1MLKEM1024:
+            return "SecP521r1MLKEM1024";
+        #endif /* WOLFSSL_EXTRA_PQC_HYBRIDS */
+    #endif /* WOLFSSL_NO_ML_KEM_1024 */
 #elif defined(HAVE_LIBOQS)
         case WOLFSSL_ML_KEM_512:
             return "ML_KEM_512";
@@ -16847,22 +16958,26 @@ const WOLF_EC_NIST_NAME kNistCurves[] = {
     {CURVE_NAME("ML_KEM_768"), WOLFSSL_ML_KEM_768, WOLFSSL_ML_KEM_768},
     {CURVE_NAME("ML_KEM_1024"), WOLFSSL_ML_KEM_1024, WOLFSSL_ML_KEM_1024},
 #if (defined(WOLFSSL_WC_MLKEM) || defined(HAVE_LIBOQS)) && defined(HAVE_ECC)
+    #ifdef WOLFSSL_PQC_HYBRIDS
+    {CURVE_NAME("SecP256r1MLKEM768"), WOLFSSL_SECP256R1MLKEM768,
+     WOLFSSL_SECP256R1MLKEM768},
+    {CURVE_NAME("SecP384r1MLKEM1024"), WOLFSSL_SECP384R1MLKEM1024,
+     WOLFSSL_SECP384R1MLKEM1024},
+    {CURVE_NAME("X25519MLKEM768"), WOLFSSL_X25519MLKEM768,
+     WOLFSSL_X25519MLKEM768},
+    #endif /* WOLFSSL_PQC_HYBRIDS */
+    #ifdef WOLFSSL_EXTRA_PQC_HYBRIDS
     {CURVE_NAME("SecP256r1MLKEM512"), WOLFSSL_SECP256R1MLKEM512,
      WOLFSSL_SECP256R1MLKEM512},
     {CURVE_NAME("SecP384r1MLKEM768"), WOLFSSL_SECP384R1MLKEM768,
      WOLFSSL_SECP384R1MLKEM768},
-    {CURVE_NAME("SecP256r1MLKEM768"), WOLFSSL_SECP256R1MLKEM768,
-     WOLFSSL_SECP256R1MLKEM768},
     {CURVE_NAME("SecP521r1MLKEM1024"), WOLFSSL_SECP521R1MLKEM1024,
      WOLFSSL_SECP521R1MLKEM1024},
-    {CURVE_NAME("SecP384r1MLKEM1024"), WOLFSSL_SECP384R1MLKEM1024,
-     WOLFSSL_SECP384R1MLKEM1024},
     {CURVE_NAME("X25519MLKEM512"), WOLFSSL_X25519MLKEM512,
      WOLFSSL_X25519MLKEM512},
     {CURVE_NAME("X448MLKEM768"), WOLFSSL_X448MLKEM768,
      WOLFSSL_X448MLKEM768},
-    {CURVE_NAME("X25519MLKEM768"), WOLFSSL_X25519MLKEM768,
-     WOLFSSL_X25519MLKEM768},
+    #endif /* WOLFSSL_EXTRA_PQC_HYBRIDS */
 #endif
 #endif /* !WOLFSSL_NO_ML_KEM */
 #ifdef WOLFSSL_MLKEM_KYBER
