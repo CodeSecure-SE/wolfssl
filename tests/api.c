@@ -159,6 +159,12 @@
     #include "wolfssl/internal.h"
 #endif
 
+#if defined(WOLFSSL_SNIFFER) && defined(WOLFSSL_SNIFFER_CHAIN_INPUT)
+    #include <wolfssl/sniffer.h>
+    #include <wolfssl/sniffer_error.h>
+    #include <sys/uio.h>
+#endif
+
 /* include misc.c here regardless of NO_INLINE, because misc.c implementations
  * have default (hidden) visibility, and in the absence of visibility, it's
  * benign to mask out the library implementation.
@@ -13586,7 +13592,8 @@ static int test_wolfSSL_get_client_ciphers_on_result(WOLFSSL* ssl) {
         ExpectIntEQ(sk_SSL_CIPHER_num(ciphers), 1);
         current = sk_SSL_CIPHER_value(ciphers, 0);
         ExpectNotNull(current);
-    #if !defined(WOLFSSL_CIPHER_INTERNALNAME) && !defined(NO_ERROR_STRINGS)
+    #if !defined(WOLFSSL_CIPHER_INTERNALNAME) && !defined(NO_ERROR_STRINGS) && \
+        !defined(WOLFSSL_QT)
         ExpectStrEQ("TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256",
             SSL_CIPHER_get_name(current));
     #else
@@ -15998,6 +16005,8 @@ static int test_wolfSSL_check_domain_basic_client_ssl(WOLFSSL* ssl)
 
     return EXPECT_RESULT();
 }
+/* Verify wolfSSL_check_domain_name() controls DNS-name matching during
+ * handshake with expected fail/pass outcomes. */
 static int test_wolfSSL_check_domain_basic(void)
 {
     EXPECT_DECLS;
@@ -16029,6 +16038,102 @@ static int test_wolfSSL_check_domain_basic(void)
     return EXPECT_RESULT();
 }
 #endif /* HAVE_SSL_MEMIO_TESTS_DEPENDENCIES */
+
+#if defined(OPENSSL_EXTRA) && defined(HAVE_SSL_MEMIO_TESTS_DEPENDENCIES) && \
+    (defined(WOLFSSL_IP_ALT_NAME) || defined(OPENSSL_ALL)) && \
+    !defined(OPENSSL_COMPATIBLE_DEFAULTS) && !defined(NO_SHA256)
+static const char* ipaddr = NULL;
+static int test_wolfSSL_check_ip_param_client_ssl(WOLFSSL* ssl)
+{
+    EXPECT_DECLS;
+    X509_VERIFY_PARAM* param = NULL;
+
+    ExpectNotNull(param = SSL_get0_param(ssl));
+    ExpectIntEQ(X509_VERIFY_PARAM_set1_ip_asc(param, ipaddr), WOLFSSL_SUCCESS);
+
+    return EXPECT_RESULT();
+}
+
+/* Verify the OpenSSL-compat verify-param path:
+ * SSL_get0_param() + X509_VERIFY_PARAM_set1_ip_asc() controls IP SAN matching
+ * during handshake. */
+static int test_wolfSSL_check_ip_param_basic(void)
+{
+    EXPECT_DECLS;
+    test_ssl_cbf func_cb_client;
+    test_ssl_cbf func_cb_server;
+
+    XMEMSET(&func_cb_client, 0, sizeof(func_cb_client));
+    XMEMSET(&func_cb_server, 0, sizeof(func_cb_server));
+
+    func_cb_client.ssl_ready = &test_wolfSSL_check_ip_param_client_ssl;
+
+    ipaddr = "127.0.0.2";
+    /* Expect to fail: cert SAN IP is 127.0.0.1 */
+    ExpectIntEQ(test_wolfSSL_client_server_nofail_memio(&func_cb_client,
+        &func_cb_server, NULL), -1001);
+
+    ipaddr = "127.0.0.1";
+    /* Expect to succeed */
+    ExpectIntEQ(test_wolfSSL_client_server_nofail_memio(&func_cb_client,
+        &func_cb_server, NULL), TEST_SUCCESS);
+
+    return EXPECT_RESULT();
+}
+#else
+static int test_wolfSSL_check_ip_param_basic(void)
+{
+    EXPECT_DECLS;
+    return EXPECT_RESULT();
+}
+#endif
+
+#if defined(HAVE_SSL_MEMIO_TESTS_DEPENDENCIES) && \
+    !defined(OPENSSL_COMPATIBLE_DEFAULTS) && !defined(NO_SHA256) && \
+    defined(WOLFSSL_IP_ALT_NAME)
+static const char* ipaddr_api = NULL;
+static int test_wolfSSL_check_ip_address_basic_client_ssl(WOLFSSL* ssl)
+{
+    EXPECT_DECLS;
+
+    ExpectIntEQ(wolfSSL_check_ip_address(ssl, ipaddr_api), WOLFSSL_SUCCESS);
+
+    return EXPECT_RESULT();
+}
+
+/* Verify wolfSSL convenience API path:
+ * wolfSSL_check_ip_address() enables IP SAN matching during handshake,
+ * including the non-OPENSSL_EXTRA storage/verification flow. */
+static int test_wolfSSL_check_ip_address_basic(void)
+{
+    EXPECT_DECLS;
+    test_ssl_cbf func_cb_client;
+    test_ssl_cbf func_cb_server;
+
+    XMEMSET(&func_cb_client, 0, sizeof(func_cb_client));
+    XMEMSET(&func_cb_server, 0, sizeof(func_cb_server));
+
+    func_cb_client.ssl_ready = &test_wolfSSL_check_ip_address_basic_client_ssl;
+
+    ipaddr_api = "127.0.0.2";
+    /* Expect to fail: cert SAN IP is 127.0.0.1 */
+    ExpectIntEQ(test_wolfSSL_client_server_nofail_memio(&func_cb_client,
+        &func_cb_server, NULL), -1001);
+
+    ipaddr_api = "127.0.0.1";
+    /* Expect to succeed */
+    ExpectIntEQ(test_wolfSSL_client_server_nofail_memio(&func_cb_client,
+        &func_cb_server, NULL), TEST_SUCCESS);
+
+    return EXPECT_RESULT();
+}
+#else
+static int test_wolfSSL_check_ip_address_basic(void)
+{
+    EXPECT_DECLS;
+    return EXPECT_RESULT();
+}
+#endif
 
 static int test_wolfSSL_BUF(void)
 {
@@ -26526,7 +26631,7 @@ static int test_wolfSSL_crypto_policy_ciphers(void)
 
         /* We return a different cipher string depending on build settings. */
         #if !defined(WOLFSSL_CIPHER_INTERNALNAME) && \
-        !defined(NO_ERROR_STRINGS)
+        !defined(NO_ERROR_STRINGS) && !defined(WOLFSSL_QT)
         found = crypto_policy_cipher_found(ssl, "AES_128", 0);
         ExpectIntEQ(found, !is_future);
 
@@ -33813,6 +33918,46 @@ int test_wc_LmsKey_reload_cache(void)
     return EXPECT_RESULT();
 }
 
+#if defined(WOLFSSL_SNIFFER) && defined(WOLFSSL_SNIFFER_CHAIN_INPUT)
+static int test_sniffer_chain_input_overflow(void)
+{
+    EXPECT_DECLS;
+    struct iovec chain[3];
+    byte* data = NULL;
+    char error[WOLFSSL_MAX_ERROR_SZ];
+    int ret;
+    byte dummy[1] = {0};
+
+    /* Test 1: iov_len values that sum to more than INT_MAX.
+     * Before the fix, these size_t values would be truncated when accumulated
+     * into an int, causing an undersized allocation followed by an oversized
+     * copy (heap buffer overflow). After the fix, the function should detect
+     * the overflow and return an error without allocating or copying. */
+    chain[0].iov_base = dummy;
+    chain[0].iov_len  = (size_t)0x80000000UL; /* 2GB */
+    chain[1].iov_base = dummy;
+    chain[1].iov_len  = (size_t)0x80000000UL; /* 2GB */
+    chain[2].iov_base = dummy;
+    chain[2].iov_len  = (size_t)0x80000000UL; /* 2GB */
+
+    XMEMSET(error, 0, sizeof(error));
+    ret = ssl_DecodePacketWithChain(chain, 3, &data, error);
+    ExpectIntEQ(ret, WOLFSSL_SNIFFER_ERROR);
+
+    /* Test 2: total exactly at INT_MAX boundary should also be rejected since
+     * it would require a ~2GB allocation that is unreasonable for a packet. */
+    chain[0].iov_len = (size_t)0x7FFFFFFFUL; /* INT_MAX */
+    chain[1].iov_len = (size_t)1;
+    chain[2].iov_len = (size_t)0;
+
+    XMEMSET(error, 0, sizeof(error));
+    ret = ssl_DecodePacketWithChain(chain, 2, &data, error);
+    ExpectIntEQ(ret, WOLFSSL_SNIFFER_ERROR);
+
+    return EXPECT_RESULT();
+}
+#endif /* WOLFSSL_SNIFFER && WOLFSSL_SNIFFER_CHAIN_INPUT */
+
 TEST_CASE testCases[] = {
     TEST_DECL(test_fileAccess),
 
@@ -34155,6 +34300,8 @@ TEST_CASE testCases[] = {
 
     TEST_DECL(test_wolfSSL_check_domain),
     TEST_DECL(test_wolfSSL_check_domain_basic),
+    TEST_DECL(test_wolfSSL_check_ip_param_basic),
+    TEST_DECL(test_wolfSSL_check_ip_address_basic),
     TEST_DECL(test_wolfSSL_cert_cb),
     TEST_DECL(test_wolfSSL_cert_cb_dyn_ciphers),
     TEST_DECL(test_wolfSSL_ciphersuite_auth),
@@ -34619,6 +34766,11 @@ TEST_CASE testCases[] = {
     TEST_DECL(test_ocsp_responder),
     TEST_TLS_DECLS,
     TEST_DECL(test_wc_DhSetNamedKey),
+
+#if defined(WOLFSSL_SNIFFER) && defined(WOLFSSL_SNIFFER_CHAIN_INPUT)
+    TEST_DECL(test_sniffer_chain_input_overflow),
+#endif
+
     /* This test needs to stay at the end to clean up any caches allocated. */
     TEST_DECL(test_wolfSSL_Cleanup)
 };
