@@ -234,7 +234,7 @@ static int Tls13HKDFExpandKeyLabel(WOLFSSL* ssl, byte* okm, word32 okmLen,
 {
     int ret;
 #if defined(HAVE_PK_CALLBACKS)
-    ret = NOT_COMPILED_IN;
+    ret = WC_NO_ERR_TRACE(NOT_COMPILED_IN);
     if (ssl->ctx && ssl->ctx->HKDFExpandLabelCb) {
         ret = ssl->ctx->HKDFExpandLabelCb(okm, okmLen, prk, prkLen,
                                          protocol, protocolLen,
@@ -2662,7 +2662,7 @@ static int EncryptTls13(WOLFSSL* ssl, byte* output, const byte* input,
                     nonceSz = AESGCM_NONCE_SZ;
 
                 #if defined(HAVE_PK_CALLBACKS)
-                    ret = NOT_COMPILED_IN;
+                    ret = WC_NO_ERR_TRACE(NOT_COMPILED_IN);
                     if (ssl->ctx && ssl->ctx->PerformTlsRecordProcessingCb) {
                         ret = ssl->ctx->PerformTlsRecordProcessingCb(ssl, 1,
                                   output, input, dataSz,
@@ -2704,7 +2704,7 @@ static int EncryptTls13(WOLFSSL* ssl, byte* output, const byte* input,
 
                     nonceSz = AESCCM_NONCE_SZ;
                 #if defined(HAVE_PK_CALLBACKS)
-                    ret = NOT_COMPILED_IN;
+                    ret = WC_NO_ERR_TRACE(NOT_COMPILED_IN);
                     if (ssl->ctx && ssl->ctx->PerformTlsRecordProcessingCb) {
                         ret = ssl->ctx->PerformTlsRecordProcessingCb(ssl, 1,
                                   output, input, dataSz,
@@ -3063,7 +3063,7 @@ int DecryptTls13(WOLFSSL* ssl, byte* output, const byte* input, word16 sz,
                     nonceSz = AESGCM_NONCE_SZ;
 
                 #if defined(HAVE_PK_CALLBACKS)
-                    ret = NOT_COMPILED_IN;
+                    ret = WC_NO_ERR_TRACE(NOT_COMPILED_IN);
                     if (ssl->ctx && ssl->ctx->PerformTlsRecordProcessingCb) {
                         ret = ssl->ctx->PerformTlsRecordProcessingCb(ssl, 0,
                                   output, input, dataSz,
@@ -3102,7 +3102,7 @@ int DecryptTls13(WOLFSSL* ssl, byte* output, const byte* input, word16 sz,
 
                     nonceSz = AESCCM_NONCE_SZ;
                 #if defined(HAVE_PK_CALLBACKS)
-                    ret = NOT_COMPILED_IN;
+                    ret = WC_NO_ERR_TRACE(NOT_COMPILED_IN);
                     if (ssl->ctx && ssl->ctx->PerformTlsRecordProcessingCb) {
                         ret = ssl->ctx->PerformTlsRecordProcessingCb(ssl, 0,
                                   output, input, dataSz,
@@ -6892,7 +6892,7 @@ int DoTls13ClientHello(WOLFSSL* ssl, const byte* input, word32* inOutIdx,
 #endif
     {
         /* Reset state */
-        ret = VERSION_ERROR;
+        ret = WC_NO_ERR_TRACE(VERSION_ERROR);
         ssl->options.asyncState = TLS_ASYNC_BEGIN;
         XMEMSET(args, 0, sizeof(Dch13Args));
     #ifdef WOLFSSL_ASYNC_CRYPT
@@ -11819,6 +11819,18 @@ static int DoTls13KeyUpdate(WOLFSSL* ssl, const byte* input, word32* inOutIdx,
         }
 #endif /* WOLFSSL_DTLS13 */
 
+#if defined(HAVE_WRITE_DUP) && defined(WOLFSSL_TLS13)
+        /* Read side cannot write; delegate the response to the write side. */
+        if (ssl->dupWrite != NULL && ssl->dupSide == READ_DUP_SIDE) {
+            if (wc_LockMutex(&ssl->dupWrite->dupMutex) != 0)
+                return BAD_MUTEX_E;
+            ssl->dupWrite->keyUpdateRespond = 1;
+            wc_UnLockMutex(&ssl->dupWrite->dupMutex);
+            ssl->keys.keyUpdateRespond = 0;
+            return 0;
+        }
+#endif /* HAVE_WRITE_DUP && WOLFSSL_TLS13 */
+
 #ifndef WOLFSSL_RW_THREADED
         return SendTls13KeyUpdate(ssl);
 #else
@@ -13286,25 +13298,61 @@ int DoTls13HandShakeMsgType(WOLFSSL* ssl, byte* input, word32* inOutIdx,
         #ifdef WOLFSSL_POST_HANDSHAKE_AUTH
             if (type == certificate_request &&
                                 ssl->options.handShakeState == HANDSHAKE_DONE) {
-                /* reset handshake states */
-                ssl->options.clientState = CLIENT_HELLO_COMPLETE;
-                ssl->options.connectState  = FIRST_REPLY_DONE;
-                ssl->options.handShakeState = CLIENT_HELLO_COMPLETE;
-                ssl->options.processReply = 0; /* doProcessInit */
+#if defined(HAVE_WRITE_DUP)
+                /* Read side cannot write; delegate the cert response to the
+                 * write side by saving auth state in the shared WriteDup. */
+                if (ssl->dupSide == READ_DUP_SIDE) {
+                    if (ssl->dupWrite == NULL)
+                        return BAD_STATE_E;
+                    if (wc_LockMutex(&ssl->dupWrite->dupMutex) != 0)
+                        return BAD_MUTEX_E;
+                    /* Copy the current transcript so the write side can
+                     * compute the correct Finished MAC. */
+                    ret = InitHandshakeHashesAndCopy(ssl, ssl->hsHashes,
+                                      &ssl->dupWrite->postHandshakeHashState);
+                    if (ret == 0) {
+                        /* Copy the cert request context. */
+                        CertReqCtx** tail = &ssl->certReqCtx;
+                        while (*tail != NULL)
+                            tail = &(*tail)->next;
+                        *tail = ssl->dupWrite->postHandshakeCertReqCtx;
+                        ssl->dupWrite->postHandshakeCertReqCtx = ssl->certReqCtx;
+                        ssl->certReqCtx = NULL;
+                        ssl->dupWrite->postHandshakeSendVerify =
+                            ssl->options.sendVerify;
+                        ssl->dupWrite->postHandshakeSigAlgo =
+                            ssl->options.sigAlgo;
+                        ssl->dupWrite->postHandshakeHashAlgo =
+                            ssl->options.hashAlgo;
+                        ssl->dupWrite->postHandshakeAuthPending = 1;
+                    }
+                    wc_UnLockMutex(&ssl->dupWrite->dupMutex);
+                    /* Leave ssl->options unchanged: read side must not reset
+                     * its states or call wolfSSL_connect_TLSv13. */
+                }
+                else
+#endif /* HAVE_WRITE_DUP */
+                {
+                    /* reset handshake states */
+                    ssl->options.clientState = CLIENT_HELLO_COMPLETE;
+                    ssl->options.connectState  = FIRST_REPLY_DONE;
+                    ssl->options.handShakeState = CLIENT_HELLO_COMPLETE;
+                    ssl->options.processReply = 0; /* doProcessInit */
 
-                /*
-                   DTLSv1.3 note: We can't reset serverState to
-                   SERVER_FINISHED_COMPLETE with the goal that this connect
-                   blocks until the cert/cert_verify/finished flight gets ACKed
-                   by the server. The problem is that we will invoke
-                   ProcessReplyEx() in that case, but we came here from
-                   ProcessReplyEx() and it is not re-entrant safe (the input
-                   buffer would still have the certificate_request message). */
+                    /*
+                       DTLSv1.3 note: We can't reset serverState to
+                       SERVER_FINISHED_COMPLETE with the goal that this connect
+                       blocks until the cert/cert_verify/finished flight gets ACKed
+                       by the server. The problem is that we will invoke
+                       ProcessReplyEx() in that case, but we came here from
+                       ProcessReplyEx() and it is not re-entrant safe (the input
+                       buffer would still have the certificate_request message). */
 
-                if (wolfSSL_connect_TLSv13(ssl) != WOLFSSL_SUCCESS) {
-                    ret = ssl->error;
-                    if (ret != WC_NO_ERR_TRACE(WC_PENDING_E))
-                        ret = POST_HAND_AUTH_ERROR;
+                    if (wolfSSL_connect_TLSv13(ssl) != WOLFSSL_SUCCESS) {
+                        ret = ssl->error;
+                        if (ret != WC_NO_ERR_TRACE(WC_PENDING_E))
+                            ret = POST_HAND_AUTH_ERROR;
+                    }
                 }
             }
         #endif
