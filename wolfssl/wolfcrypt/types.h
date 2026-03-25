@@ -255,6 +255,23 @@ typedef const char wcchar[];
         #endif
 #endif
 
+#if defined(HAVE___UINT128_T) && !defined(NO_INT128)
+    #ifndef WOLFSSL_UINT128_T_DEFINED
+        #ifdef __SIZEOF_INT128__
+            typedef __uint128_t uint128_t;
+            typedef __int128_t   int128_t;
+            typedef __uint128_t   word128;
+            typedef __int128_t   sword128;
+        #else
+            typedef unsigned long uint128_t __attribute__ ((mode(TI)));
+            typedef long           int128_t __attribute__ ((mode(TI)));
+            typedef uint128_t       word128;
+            typedef int128_t       sword128;
+        #endif
+        #define WOLFSSL_UINT128_T_DEFINED
+    #endif
+#endif
+
 #if (defined(_MSC_VER) && (_MSC_VER == 1200)) ||  /* MSVC6 */ \
     (defined(_MSC_VER) && !defined(WOLFSSL_NOT_WINDOWS_API)) || \
         defined(__BCPLUSPLUS__) || \
@@ -808,9 +825,6 @@ enum {
 #include <wolfssl/wolfcrypt/memory.h>
 
 /* declare/free variable handling for async and smallstack */
-#ifndef WC_ALLOC_DO_ON_FAILURE
-    #define WC_ALLOC_DO_ON_FAILURE() WC_DO_NOTHING
-#endif
 
 #define WC_DECLARE_HEAP_ARRAY(VAR_NAME, VAR_TYPE, VAR_ITEMS, VAR_SIZE, HEAP) \
     VAR_TYPE* VAR_NAME[VAR_ITEMS] = { NULL, };                               \
@@ -1442,19 +1456,13 @@ enum wc_HashType {
     WC_HASH_TYPE_SHA3_512 = 13,
     WC_HASH_TYPE_BLAKE2B = 14,
     WC_HASH_TYPE_BLAKE2S = 19,
-#ifdef WOLFSSL_SHAKE128
+    WC_HASH_TYPE_SHA512_224 = 22,
+    WC_HASH_TYPE_SHA512_256 = 23,
     WC_HASH_TYPE_SHAKE128 = 20,
-#endif
-#ifdef WOLFSSL_SHAKE256
     WC_HASH_TYPE_SHAKE256 = 21,
-#endif
-#if defined(WOLFSSL_SHAKE256)
-    WC_HASH_TYPE_MAX = WC_HASH_TYPE_SHAKE256,
-#elif defined(WOLFSSL_SHAKE128)
-    WC_HASH_TYPE_MAX = WC_HASH_TYPE_SHAKE128,
-#else
-    WC_HASH_TYPE_MAX = WC_HASH_TYPE_BLAKE2S,
-#endif
+    WC_HASH_TYPE_SM3     = 24,
+    WC_HASH_TYPE_MAX = WC_HASH_TYPE_SM3
+
     #ifndef WOLFSSL_NOSHA512_224
         #define WOLFSSL_NOSHA512_224
     #endif
@@ -1478,34 +1486,12 @@ enum wc_HashType {
     WC_HASH_TYPE_SHA3_512 = 13,
     WC_HASH_TYPE_BLAKE2B = 14,
     WC_HASH_TYPE_BLAKE2S = 15,
-    #define _WC_HASH_TYPE_MAX WC_HASH_TYPE_BLAKE2S
-    #ifndef WOLFSSL_NOSHA512_224
-        WC_HASH_TYPE_SHA512_224 = 16,
-        #undef _WC_HASH_TYPE_MAX
-        #define _WC_HASH_TYPE_MAX WC_HASH_TYPE_SHA512_224
-    #endif
-    #ifndef WOLFSSL_NOSHA512_256
-        WC_HASH_TYPE_SHA512_256 = 17,
-        #undef _WC_HASH_TYPE_MAX
-        #define _WC_HASH_TYPE_MAX WC_HASH_TYPE_SHA512_256
-    #endif
-    #ifdef WOLFSSL_SHAKE128
-        WC_HASH_TYPE_SHAKE128 = 18,
-        #undef _WC_HASH_TYPE_MAX
-        #define _WC_HASH_TYPE_MAX WC_HASH_TYPE_SHAKE128
-    #endif
-    #ifdef WOLFSSL_SHAKE256
-        WC_HASH_TYPE_SHAKE256 = 19,
-        #undef _WC_HASH_TYPE_MAX
-        #define _WC_HASH_TYPE_MAX WC_HASH_TYPE_SHAKE256
-    #endif
-    #ifdef WOLFSSL_SM3
-        WC_HASH_TYPE_SM3     = 20,
-        #undef _WC_HASH_TYPE_MAX
-        #define _WC_HASH_TYPE_MAX WC_HASH_TYPE_SM3
-    #endif
-    WC_HASH_TYPE_MAX = _WC_HASH_TYPE_MAX
-    #undef _WC_HASH_TYPE_MAX
+    WC_HASH_TYPE_SHA512_224 = 16,
+    WC_HASH_TYPE_SHA512_256 = 17,
+    WC_HASH_TYPE_SHAKE128 = 18,
+    WC_HASH_TYPE_SHAKE256 = 19,
+    WC_HASH_TYPE_SM3     = 20,
+    WC_HASH_TYPE_MAX = WC_HASH_TYPE_SM3
 
 #endif /* HAVE_SELFTEST */
 };
