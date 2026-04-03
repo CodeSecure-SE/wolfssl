@@ -2989,6 +2989,7 @@ static int test_wolfSSL_CheckOCSPResponse(void)
 
     pt = data;
     ExpectNotNull(res = wolfSSL_d2i_OCSP_RESPONSE(NULL, &pt, dataSz));
+    ExpectPtrEq(pt, data + dataSz);
     ExpectNotNull(issuer = wolfSSL_X509_load_certificate_file(caFile,
         SSL_FILETYPE_PEM));
     ExpectNotNull(st = wolfSSL_X509_STORE_new());
@@ -3013,6 +3014,7 @@ static int test_wolfSSL_CheckOCSPResponse(void)
 
     pt = data;
     ExpectNotNull(res = wolfSSL_d2i_OCSP_RESPONSE(NULL, &pt, dataSz));
+    ExpectPtrEq(pt, data + dataSz);
     wolfSSL_OCSP_RESPONSE_free(res);
     res = NULL;
 
@@ -3124,6 +3126,7 @@ static int test_wolfSSL_CheckOCSPResponse(void)
 
         pt = data;
         ExpectNotNull(res = wolfSSL_d2i_OCSP_RESPONSE(NULL, &pt, dataSz));
+        ExpectPtrEq(pt, data + dataSz);
 
         /* try to verify the response */
         ExpectNotNull(issuer = wolfSSL_X509_load_certificate_file(caFile,
@@ -4559,12 +4562,12 @@ static WC_INLINE int test_ssl_memio_write_cb(WOLFSSL *ssl, char *data, int sz,
          * "Import from Hex Dump..." option ion and selecting the TCP
          * encapsulation option. */
         char dump_file_name[64];
-        WOLFSSL_BIO *dump_file;
+        XFILE dump_file;
         sprintf(dump_file_name, "%s/%s.dump", tmpDirName, currentTestName);
-        dump_file = wolfSSL_BIO_new_file(dump_file_name, "a");
-        if (dump_file != NULL) {
-            (void)wolfSSL_BIO_write(dump_file, data, sz);
-            wolfSSL_BIO_free(dump_file);
+        dump_file = XFOPEN(dump_file_name, "ab");
+        if (dump_file != XBADFILE) {
+            (void)XFWRITE(data, 1, (size_t)sz, dump_file);
+            XFCLOSE(dump_file);
         }
     }
 #endif
@@ -28829,7 +28832,8 @@ static int test_wolfSSL_DtlsUpdateWindow(void)
 static int DFB_TEST(WOLFSSL* ssl, word32 seq, word32 len, word32 f_offset,
         word32 f_len, word32 f_count, byte ready, word32 bytesReceived)
 {
-    DtlsMsg* cur;
+    EXPECT_DECLS;
+    DtlsMsg* cur = NULL;
     static byte msg[100];
     static byte msgInit = 0;
 
@@ -28841,40 +28845,34 @@ static int DFB_TEST(WOLFSSL* ssl, word32 seq, word32 len, word32 f_offset,
     }
 
     /* Sanitize test parameters */
-    if (len > sizeof(msg))
-        return -1;
-    if (f_offset + f_len > sizeof(msg))
-        return -1;
+    ExpectIntLE(len, sizeof(msg));
+    ExpectIntLE(f_offset + f_len, sizeof(msg));
 
-    DtlsMsgStore(ssl, 0, seq, msg + f_offset, len, certificate, f_offset, f_len, NULL);
+    if (EXPECT_SUCCESS())
+        DtlsMsgStore(ssl, 0, seq, msg + f_offset, len, certificate, f_offset, f_len, NULL);
 
-    if (ssl->dtls_rx_msg_list == NULL)
-        return -100;
+    ExpectNotNull(ssl->dtls_rx_msg_list);
 
-    if ((cur = DtlsMsgFind(ssl->dtls_rx_msg_list, 0, seq)) == NULL)
-        return -200;
-    if (cur->fragBucketListCount != f_count)
-        return -300;
-    if (cur->ready != ready)
-        return -400;
-    if (cur->bytesReceived != bytesReceived)
-        return -500;
+    ExpectNotNull(cur = DtlsMsgFind(ssl->dtls_rx_msg_list, 0, seq));
+    ExpectIntEQ(cur->fragBucketListCount, f_count);
+    ExpectIntEQ(cur->ready, ready);
+    ExpectIntEQ(cur->bytesReceived, bytesReceived);
     if (ready) {
-        if (cur->fragBucketList != NULL)
-            return -600;
-        if (XMEMCMP(cur->fullMsg, msg, cur->sz) != 0)
-            return -700;
+        ExpectNull(cur->fragBucketList);
+        ExpectBufEQ(cur->fullMsg, msg, cur->sz);
     }
     else {
         DtlsFragBucket* fb;
-        if (cur->fragBucketList == NULL)
-            return -800;
-        for (fb = cur->fragBucketList; fb != NULL; fb = fb->m.m.next) {
-            if (XMEMCMP(fb->buf, msg + fb->m.m.offset, fb->m.m.sz) != 0)
-                return -900;
-        }
+        ExpectNotNull(cur->fragBucketList);
+        for (fb = cur != NULL ? cur->fragBucketList : NULL;
+                EXPECT_SUCCESS() && fb != NULL; fb = fb->m.m.next)
+            ExpectBufEQ(fb->buf, msg + fb->m.m.offset, fb->m.m.sz);
     }
-    return 0;
+    if (EXPECT_FAIL()) {
+        printf("Test parameters: seq %u len %u f_offset %u f_len %u f_count %u ready %u bytesReceived %u\n",
+                                 seq, len, f_offset, f_len, f_count, ready, bytesReceived);
+    }
+    return EXPECT_RESULT();
 }
 
 static int test_wolfSSL_DTLS_fragment_buckets(void)
@@ -28884,68 +28882,114 @@ static int test_wolfSSL_DTLS_fragment_buckets(void)
 
     XMEMSET(ssl, 0, sizeof(*ssl));
 
-    ExpectIntEQ(DFB_TEST(ssl, 0, 100, 0, 100, 0, 1, 100), 0); /*  0-100 */
+    EXPECT_TEST(DFB_TEST(ssl, 0, 100, 0, 100, 0, 1, 100)); /*  0-100 */
 
-    ExpectIntEQ(DFB_TEST(ssl, 1, 100,  0, 20, 1, 0,  20), 0); /*  0-20  */
-    ExpectIntEQ(DFB_TEST(ssl, 1, 100, 20, 20, 1, 0,  40), 0); /* 20-40  */
-    ExpectIntEQ(DFB_TEST(ssl, 1, 100, 40, 20, 1, 0,  60), 0); /* 40-60  */
-    ExpectIntEQ(DFB_TEST(ssl, 1, 100, 60, 20, 1, 0,  80), 0); /* 60-80  */
-    ExpectIntEQ(DFB_TEST(ssl, 1, 100, 80, 20, 0, 1, 100), 0); /* 80-100 */
+    EXPECT_TEST(DFB_TEST(ssl, 1, 100,  0, 20, 1, 0,  20)); /*  0-20  */
+    EXPECT_TEST(DFB_TEST(ssl, 1, 100, 20, 20, 1, 0,  40)); /* 20-40  */
+    EXPECT_TEST(DFB_TEST(ssl, 1, 100, 40, 20, 1, 0,  60)); /* 40-60  */
+    EXPECT_TEST(DFB_TEST(ssl, 1, 100, 60, 20, 1, 0,  80)); /* 60-80  */
+    EXPECT_TEST(DFB_TEST(ssl, 1, 100, 80, 20, 0, 1, 100)); /* 80-100 */
 
     /* Test all permutations of 3 regions */
     /* 1 2 3 */
-    ExpectIntEQ(DFB_TEST(ssl, 2, 100,  0, 30, 1, 0,  30), 0); /*  0-30  */
-    ExpectIntEQ(DFB_TEST(ssl, 2, 100, 30, 30, 1, 0,  60), 0); /* 30-60  */
-    ExpectIntEQ(DFB_TEST(ssl, 2, 100, 60, 40, 0, 1, 100), 0); /* 60-100 */
+    EXPECT_TEST(DFB_TEST(ssl, 2, 100,  0, 30, 1, 0,  30)); /*  0-30  */
+    EXPECT_TEST(DFB_TEST(ssl, 2, 100, 30, 30, 1, 0,  60)); /* 30-60  */
+    EXPECT_TEST(DFB_TEST(ssl, 2, 100, 60, 40, 0, 1, 100)); /* 60-100 */
     /* 1 3 2 */
-    ExpectIntEQ(DFB_TEST(ssl, 3, 100,  0, 30, 1, 0,  30), 0); /*  0-30  */
-    ExpectIntEQ(DFB_TEST(ssl, 3, 100, 60, 40, 2, 0,  70), 0); /* 60-100 */
-    ExpectIntEQ(DFB_TEST(ssl, 3, 100, 30, 30, 0, 1, 100), 0); /* 30-60  */
+    EXPECT_TEST(DFB_TEST(ssl, 3, 100,  0, 30, 1, 0,  30)); /*  0-30  */
+    EXPECT_TEST(DFB_TEST(ssl, 3, 100, 60, 40, 2, 0,  70)); /* 60-100 */
+    EXPECT_TEST(DFB_TEST(ssl, 3, 100, 30, 30, 0, 1, 100)); /* 30-60  */
     /* 2 1 3 */
-    ExpectIntEQ(DFB_TEST(ssl, 4, 100, 30, 30, 1, 0,  30), 0); /* 30-60  */
-    ExpectIntEQ(DFB_TEST(ssl, 4, 100,  0, 30, 1, 0,  60), 0); /*  0-30  */
-    ExpectIntEQ(DFB_TEST(ssl, 4, 100, 60, 40, 0, 1, 100), 0); /* 60-100 */
+    EXPECT_TEST(DFB_TEST(ssl, 4, 100, 30, 30, 1, 0,  30)); /* 30-60  */
+    EXPECT_TEST(DFB_TEST(ssl, 4, 100,  0, 30, 1, 0,  60)); /*  0-30  */
+    EXPECT_TEST(DFB_TEST(ssl, 4, 100, 60, 40, 0, 1, 100)); /* 60-100 */
     /* 2 3 1 */
-    ExpectIntEQ(DFB_TEST(ssl, 5, 100, 30, 30, 1, 0,  30), 0); /* 30-60  */
-    ExpectIntEQ(DFB_TEST(ssl, 5, 100, 60, 40, 1, 0,  70), 0); /* 60-100 */
-    ExpectIntEQ(DFB_TEST(ssl, 5, 100,  0, 30, 0, 1, 100), 0); /*  0-30  */
+    EXPECT_TEST(DFB_TEST(ssl, 5, 100, 30, 30, 1, 0,  30)); /* 30-60  */
+    EXPECT_TEST(DFB_TEST(ssl, 5, 100, 60, 40, 1, 0,  70)); /* 60-100 */
+    EXPECT_TEST(DFB_TEST(ssl, 5, 100,  0, 30, 0, 1, 100)); /*  0-30  */
     /* 3 1 2 */
-    ExpectIntEQ(DFB_TEST(ssl, 6, 100, 60, 40, 1, 0,  40), 0); /* 60-100 */
-    ExpectIntEQ(DFB_TEST(ssl, 6, 100,  0, 30, 2, 0,  70), 0); /*  0-30  */
-    ExpectIntEQ(DFB_TEST(ssl, 6, 100, 30, 30, 0, 1, 100), 0); /* 30-60  */
+    EXPECT_TEST(DFB_TEST(ssl, 6, 100, 60, 40, 1, 0,  40)); /* 60-100 */
+    EXPECT_TEST(DFB_TEST(ssl, 6, 100,  0, 30, 2, 0,  70)); /*  0-30  */
+    EXPECT_TEST(DFB_TEST(ssl, 6, 100, 30, 30, 0, 1, 100)); /* 30-60  */
     /* 3 2 1 */
-    ExpectIntEQ(DFB_TEST(ssl, 7, 100, 60, 40, 1, 0,  40), 0); /* 60-100 */
-    ExpectIntEQ(DFB_TEST(ssl, 7, 100, 30, 30, 1, 0,  70), 0); /* 30-60  */
-    ExpectIntEQ(DFB_TEST(ssl, 7, 100,  0, 30, 0, 1, 100), 0); /*  0-30  */
+    EXPECT_TEST(DFB_TEST(ssl, 7, 100, 60, 40, 1, 0,  40)); /* 60-100 */
+    EXPECT_TEST(DFB_TEST(ssl, 7, 100, 30, 30, 1, 0,  70)); /* 30-60  */
+    EXPECT_TEST(DFB_TEST(ssl, 7, 100,  0, 30, 0, 1, 100)); /*  0-30  */
 
     /* Test overlapping regions */
-    ExpectIntEQ(DFB_TEST(ssl, 8, 100,  0, 30, 1, 0,  30), 0); /*  0-30  */
-    ExpectIntEQ(DFB_TEST(ssl, 8, 100, 20, 10, 1, 0,  30), 0); /* 20-30  */
-    ExpectIntEQ(DFB_TEST(ssl, 8, 100, 70, 10, 2, 0,  40), 0); /* 70-80  */
-    ExpectIntEQ(DFB_TEST(ssl, 8, 100, 20, 30, 2, 0,  60), 0); /* 20-50  */
-    ExpectIntEQ(DFB_TEST(ssl, 8, 100, 40, 60, 0, 1, 100), 0); /* 40-100 */
+    EXPECT_TEST(DFB_TEST(ssl, 8, 100,  0, 30, 1, 0,  30)); /*  0-30  */
+    EXPECT_TEST(DFB_TEST(ssl, 8, 100, 20, 10, 1, 0,  30)); /* 20-30  */
+    EXPECT_TEST(DFB_TEST(ssl, 8, 100, 70, 10, 2, 0,  40)); /* 70-80  */
+    EXPECT_TEST(DFB_TEST(ssl, 8, 100, 20, 30, 2, 0,  60)); /* 20-50  */
+    EXPECT_TEST(DFB_TEST(ssl, 8, 100, 40, 60, 0, 1, 100)); /* 40-100 */
 
     /* Test overlapping multiple regions */
-    ExpectIntEQ(DFB_TEST(ssl, 9, 100,  0, 20, 1, 0,  20), 0); /*  0-20  */
-    ExpectIntEQ(DFB_TEST(ssl, 9, 100, 30,  5, 2, 0,  25), 0); /* 30-35  */
-    ExpectIntEQ(DFB_TEST(ssl, 9, 100, 40,  5, 3, 0,  30), 0); /* 40-45  */
-    ExpectIntEQ(DFB_TEST(ssl, 9, 100, 50,  5, 4, 0,  35), 0); /* 50-55  */
-    ExpectIntEQ(DFB_TEST(ssl, 9, 100, 60,  5, 5, 0,  40), 0); /* 60-65  */
-    ExpectIntEQ(DFB_TEST(ssl, 9, 100, 70,  5, 6, 0,  45), 0); /* 70-75  */
-    ExpectIntEQ(DFB_TEST(ssl, 9, 100, 30, 25, 4, 0,  55), 0); /* 30-55  */
-    ExpectIntEQ(DFB_TEST(ssl, 9, 100, 55, 15, 2, 0,  65), 0); /* 55-70  */
-    ExpectIntEQ(DFB_TEST(ssl, 9, 100, 75, 25, 2, 0,  90), 0); /* 75-100 */
-    ExpectIntEQ(DFB_TEST(ssl, 9, 100, 10, 25, 0, 1, 100), 0); /* 10-35 */
+    EXPECT_TEST(DFB_TEST(ssl, 9, 100,  0, 20, 1, 0,  20)); /*  0-20  */
+    EXPECT_TEST(DFB_TEST(ssl, 9, 100, 30,  5, 2, 0,  25)); /* 30-35  */
+    EXPECT_TEST(DFB_TEST(ssl, 9, 100, 40,  5, 3, 0,  30)); /* 40-45  */
+    EXPECT_TEST(DFB_TEST(ssl, 9, 100, 50,  5, 4, 0,  35)); /* 50-55  */
+    EXPECT_TEST(DFB_TEST(ssl, 9, 100, 60,  5, 5, 0,  40)); /* 60-65  */
+    EXPECT_TEST(DFB_TEST(ssl, 9, 100, 70,  5, 6, 0,  45)); /* 70-75  */
+    EXPECT_TEST(DFB_TEST(ssl, 9, 100, 30, 25, 4, 0,  55)); /* 30-55  */
+    EXPECT_TEST(DFB_TEST(ssl, 9, 100, 55, 15, 2, 0,  65)); /* 55-70  */
+    EXPECT_TEST(DFB_TEST(ssl, 9, 100, 75, 25, 2, 0,  90)); /* 75-100 */
+    EXPECT_TEST(DFB_TEST(ssl, 9, 100, 10, 25, 0, 1, 100)); /* 10-35 */
 
-    ExpectIntEQ(DFB_TEST(ssl, 10, 100,  0, 20, 1, 0,  20), 0); /*  0-20  */
-    ExpectIntEQ(DFB_TEST(ssl, 10, 100, 30, 20, 2, 0,  40), 0); /* 30-50  */
-    ExpectIntEQ(DFB_TEST(ssl, 10, 100,  0, 40, 1, 0,  50), 0); /*  0-40  */
-    ExpectIntEQ(DFB_TEST(ssl, 10, 100, 50, 50, 0, 1, 100), 0); /* 10-35 */
+    EXPECT_TEST(DFB_TEST(ssl,10, 100,  0, 20, 1, 0,  20)); /*  0-20  */
+    EXPECT_TEST(DFB_TEST(ssl,10, 100, 30, 20, 2, 0,  40)); /* 30-50  */
+    EXPECT_TEST(DFB_TEST(ssl,10, 100,  0, 40, 1, 0,  50)); /*  0-40  */
+    EXPECT_TEST(DFB_TEST(ssl,10, 100, 50, 50, 0, 1, 100)); /* 50-100 */
+
+    /* Test region between other regions */
+    EXPECT_TEST(DFB_TEST(ssl,11, 100,  0, 20, 1, 0,  20)); /*  0-20  */
+    EXPECT_TEST(DFB_TEST(ssl,11, 100, 80, 20, 2, 0,  40)); /* 80-100 */
+    EXPECT_TEST(DFB_TEST(ssl,11, 100, 40, 20, 3, 0,  60)); /* 40-60  */
+    EXPECT_TEST(DFB_TEST(ssl,11, 100, 20, 20, 2, 0,  80)); /* 20-40  */
+    EXPECT_TEST(DFB_TEST(ssl,11, 100, 60, 20, 0, 1, 100)); /* 60-80  */
+
+    /* Test gap before first bucket (prev==NULL in gap-before branch) */
+    EXPECT_TEST(DFB_TEST(ssl,12, 100, 50, 20, 1, 0,  20)); /* 50-70  */
+    EXPECT_TEST(DFB_TEST(ssl,12, 100,  0, 20, 2, 0,  40)); /*  0-20  gap before first */
+    EXPECT_TEST(DFB_TEST(ssl,12, 100, 20, 30, 1, 0,  70)); /* 20-50  bridges gap */
+    EXPECT_TEST(DFB_TEST(ssl,12, 100, 70, 30, 0, 1, 100)); /* 70-100 */
+
+    /* Test fragment after message is already complete (ready early return) */
+    EXPECT_TEST(DFB_TEST(ssl,13, 100,  0,100, 0, 1, 100)); /*  0-100 complete */
+    EXPECT_TEST(DFB_TEST(ssl,13, 100,  0, 50, 0, 1, 100)); /*  0-50  dup on ready */
+
+    /* Test combine where next bucket is larger than cur (chosenBucket=&next) */
+    EXPECT_TEST(DFB_TEST(ssl,14, 100,  0, 10, 1, 0,  10)); /*  0-10  */
+    EXPECT_TEST(DFB_TEST(ssl,14, 100, 30, 50, 2, 0,  60)); /* 30-80  */
+    EXPECT_TEST(DFB_TEST(ssl,14, 100,  5, 30, 1, 0,  80)); /*  5-35  next>cur */
+    EXPECT_TEST(DFB_TEST(ssl,14, 100, 80, 20, 0, 1, 100)); /* 80-100 */
+
+    /* Test super fragment covering all existing buckets */
+    EXPECT_TEST(DFB_TEST(ssl,15, 100, 10, 10, 1, 0,  10)); /* 10-20  */
+    EXPECT_TEST(DFB_TEST(ssl,15, 100, 30, 10, 2, 0,  20)); /* 30-40  */
+    EXPECT_TEST(DFB_TEST(ssl,15, 100, 60, 10, 3, 0,  30)); /* 60-70  */
+    EXPECT_TEST(DFB_TEST(ssl,15, 100,  0,100, 0, 1, 100)); /*  0-100 super frag */
+
+    /* Test exact duplicate fragment */
+    EXPECT_TEST(DFB_TEST(ssl,16, 100, 20, 40, 1, 0,  40)); /* 20-60  */
+    EXPECT_TEST(DFB_TEST(ssl,16, 100, 20, 40, 1, 0,  40)); /* 20-60  exact dup */
+    EXPECT_TEST(DFB_TEST(ssl,16, 100,  0, 20, 1, 0,  60)); /*  0-20  */
+    EXPECT_TEST(DFB_TEST(ssl,16, 100, 60, 40, 0, 1, 100)); /* 60-100 */
+
+    /* Test combine bridging two buckets (combineNext, cur->data) */
+    EXPECT_TEST(DFB_TEST(ssl,17, 100,  0, 30, 1, 0,  30)); /*  0-30  */
+    EXPECT_TEST(DFB_TEST(ssl,17, 100, 60, 20, 2, 0,  50)); /* 60-80  */
+    EXPECT_TEST(DFB_TEST(ssl,17, 100, 20, 45, 1, 0,  80)); /* 20-65  bridge */
+    EXPECT_TEST(DFB_TEST(ssl,17, 100, 80, 20, 0, 1, 100)); /* 80-100 */
+
+    /* Test progressive left-extension with partial overlaps */
+    EXPECT_TEST(DFB_TEST(ssl,18, 100, 70, 30, 1, 0,  30)); /* 70-100 */
+    EXPECT_TEST(DFB_TEST(ssl,18, 100, 50, 30, 1, 0,  50)); /* 50-80  extend left */
+    EXPECT_TEST(DFB_TEST(ssl,18, 100, 30, 30, 1, 0,  70)); /* 30-60  extend left */
+    EXPECT_TEST(DFB_TEST(ssl,18, 100,  0, 40, 0, 1, 100)); /*  0-40  complete left */
 
     DtlsMsgListDelete(ssl->dtls_rx_msg_list, ssl->heap);
     ssl->dtls_rx_msg_list = NULL;
     ssl->dtls_rx_msg_list_sz = 0;
-
     return EXPECT_RESULT();
 }
 
@@ -30950,10 +30994,7 @@ static int test_short_session_id_ssl_ready(WOLFSSL* ssl)
     /* Setup the session to avoid errors */
     ssl->session->timeout = (word32)-1;
     ssl->session->side = WOLFSSL_CLIENT_END;
-#if defined(SESSION_CERTS) || (defined(WOLFSSL_TLS13) && \
-                               defined(HAVE_SESSION_TICKET))
     ssl->session->version = ssl->version;
-#endif
     /* Force a short session ID to be sent */
     ssl->session->sessionIDSz = 4;
 #ifndef NO_SESSION_CACHE_REF
@@ -33041,6 +33082,46 @@ static int test_dtls13_missing_finished_server(void)
     ExpectIntEQ(wolfSSL_read(ssl_s, test_buf, sizeof(test_buf)),
                 sizeof(test_str));
     ExpectBufEQ(test_buf, test_str, sizeof(test_str));
+
+    wolfSSL_free(ssl_c);
+    wolfSSL_free(ssl_s);
+    wolfSSL_CTX_free(ctx_c);
+    wolfSSL_CTX_free(ctx_s);
+#endif
+    return EXPECT_RESULT();
+}
+
+static int test_dtls13_finished_send_error_propagation(void)
+{
+    EXPECT_DECLS;
+#if defined(HAVE_MANUAL_MEMIO_TESTS_DEPENDENCIES) && defined(WOLFSSL_DTLS13)
+    WOLFSSL_CTX *ctx_c = NULL;
+    WOLFSSL_CTX *ctx_s = NULL;
+    WOLFSSL *ssl_c = NULL;
+    WOLFSSL *ssl_s = NULL;
+    struct test_memio_ctx test_ctx;
+
+    XMEMSET(&test_ctx, 0, sizeof(test_ctx));
+    ExpectIntEQ(test_memio_setup(&test_ctx, &ctx_c, &ctx_s, &ssl_c, &ssl_s,
+        wolfDTLSv1_3_client_method, wolfDTLSv1_3_server_method), 0);
+
+    /* CH1 */
+    ExpectIntEQ(wolfSSL_negotiate(ssl_c), -1);
+    ExpectIntEQ(wolfSSL_get_error(ssl_c, -1), WOLFSSL_ERROR_WANT_READ);
+    /* HRR */
+    ExpectIntEQ(wolfSSL_negotiate(ssl_s), -1);
+    ExpectIntEQ(wolfSSL_get_error(ssl_s, -1), WOLFSSL_ERROR_WANT_READ);
+    /* CH2 */
+    ExpectIntEQ(wolfSSL_negotiate(ssl_c), -1);
+    ExpectIntEQ(wolfSSL_get_error(ssl_c, -1), WOLFSSL_ERROR_WANT_READ);
+    /* Server first flight with finished */
+    ExpectIntEQ(wolfSSL_negotiate(ssl_s), -1);
+    ExpectIntEQ(wolfSSL_get_error(ssl_s, -1), WOLFSSL_ERROR_WANT_READ);
+    /* Client second flight with finished - block sends to force error */
+    test_ctx.s_len = TEST_MEMIO_BUF_SZ;
+    ExpectIntEQ(wolfSSL_negotiate(ssl_c), -1);
+    /* Verify the error is propagated, not silently swallowed as success */
+    ExpectIntNE(wolfSSL_get_error(ssl_c, -1), 0);
 
     wolfSSL_free(ssl_c);
     wolfSSL_free(ssl_s);
@@ -35393,6 +35474,7 @@ TEST_CASE testCases[] = {
     TEST_DECL(test_dtls12_missing_finished),
     TEST_DECL(test_dtls13_missing_finished_client),
     TEST_DECL(test_dtls13_missing_finished_server),
+    TEST_DECL(test_dtls13_finished_send_error_propagation),
     TEST_DTLS_DECLS,
     TEST_DECL(test_tls_multi_handshakes_one_record),
     TEST_DECL(test_write_dup),
@@ -35410,6 +35492,7 @@ TEST_CASE testCases[] = {
     TEST_DECL(test_ocsp_basic_verify),
     TEST_DECL(test_ocsp_response_parsing),
     TEST_DECL(test_ocsp_certid_enc_dec),
+    TEST_DECL(test_ocsp_certid_dup),
     TEST_DECL(test_ocsp_tls_cert_cb),
     TEST_DECL(test_ocsp_cert_unknown_crl_fallback),
     TEST_DECL(test_ocsp_cert_unknown_crl_fallback_nonleaf),

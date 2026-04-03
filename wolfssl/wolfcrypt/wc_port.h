@@ -76,7 +76,7 @@
 #endif /* !WARN_UNUSED_RESULT */
 
 #ifndef WC_MAYBE_UNUSED
-    #if (defined(__GNUC__) && (__GNUC__ >= 4)) || defined(__clang__) || \
+    #if (defined(__GNUC__) && (__GNUC__ >= 3)) || defined(__clang__) || \
             defined(__IAR_SYSTEMS_ICC__)
         #define WC_MAYBE_UNUSED __attribute__((unused))
     #else
@@ -682,7 +682,7 @@
             return 1;
         }
         else {
-            *(char * volatile *)expected_ptr = *(char **)c;
+            *(char * volatile *)expected_ptr = *(char * volatile *)c;
             return 0;
         }
     }
@@ -1806,6 +1806,18 @@ WOLFSSL_ABI WOLFSSL_API int wolfCrypt_Cleanup(void);
     #endif
 #else
     #define XFENCE() WC_DO_NOTHING
+#endif
+
+#ifdef WC_BARRIER
+    /* use user-supplied WC_BARRIER() definition. */
+#elif defined(__GNUC__) && !defined(WOLFSSL_NO_ASM)
+    #define WC_BARRIER() __asm__ __volatile__("" ::: "memory")
+#else
+    /* XFENCE() is a no-op on some targets.  The fallback construct uses C89
+     * intrinsics as an additional (but weak) portable barrier.
+     */
+    #define WC_BARRIER() do { volatile byte _xfence = 0; (void)_xfence; XFENCE(); \
+        } while(0)
 #endif
 
 

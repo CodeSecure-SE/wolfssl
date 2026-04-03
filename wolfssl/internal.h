@@ -2471,10 +2471,6 @@ struct WOLFSSL_OCSP {
 };
 #endif
 
-#ifndef MAX_DATE_SIZE
-#define MAX_DATE_SIZE 32
-#endif
-
 typedef struct CRL_Entry CRL_Entry;
 
 #if defined(WOLFSSL_SM2) && defined(WOLFSSL_SM3)
@@ -4692,10 +4688,7 @@ struct WOLFSSL_SESSION {
 #if defined(SESSION_CERTS) && defined(OPENSSL_EXTRA)
     WOLFSSL_X509*      peer;              /* peer cert */
 #endif
-#if defined(SESSION_CERTS) || (defined(WOLFSSL_TLS13) && \
-                               defined(HAVE_SESSION_TICKET))
     ProtocolVersion    version;           /* which version was used   */
-#endif
 #if defined(SESSION_CERTS) || !defined(NO_RESUME_SUITE_CHECK) || \
                         (defined(WOLFSSL_TLS13) && defined(HAVE_SESSION_TICKET))
     byte               cipherSuite0;      /* first byte, normally 0   */
@@ -5310,10 +5303,6 @@ typedef struct Arrays {
             #define ASN_NAME_MAX 256
         #endif
     #endif
-#endif
-
-#ifndef MAX_DATE_SZ
-#define MAX_DATE_SZ 32
 #endif
 
 typedef enum {
@@ -6327,7 +6316,7 @@ struct WOLFSSL {
 #endif /* HAVE_TLS_EXTENSIONS */
 #ifdef HAVE_OCSP
         void*       ocspIOCtx;
-        byte ocspProducedDate[MAX_DATE_SZ];
+        byte ocspProducedDate[MAX_DATE_SIZE];
         int ocspProducedDateFormat;
         buffer      ocspCsrResp[1 + MAX_CHAIN_DEPTH];
     #if defined(OPENSSL_ALL) || defined(WOLFSSL_NGINX) || defined(WOLFSSL_HAPROXY)
