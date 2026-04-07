@@ -140,6 +140,7 @@ struct PKCS7State {
     word32 nonceSz;  /* size of nonce stored */
     word32 aadSz;    /* size of additional AEAD data */
     word32 tagSz;    /* size of tag for AEAD */
+    word32 icvSz;    /* expected ICV/MAC size from AlgoID parameter */
     word32 contentSz;
     word32 currContIdx;   /* index of current content */
     word32 currContSz;    /* size of current content */
@@ -4564,6 +4565,12 @@ static int wc_PKCS7_EcdsaVerify(wc_PKCS7* pkcs7, byte* sig, int sigSz,
 
     if (pkcs7 == NULL || sig == NULL)
         return BAD_FUNC_ARG;
+
+    /* Check hash length */
+    if ((hashSz > WC_MAX_DIGEST_SIZE) ||
+        (hashSz < WC_MIN_DIGEST_SIZE)) {
+        return BAD_LENGTH_E;
+    }
 
 #ifdef WOLFSSL_SMALL_STACK
     digest = (byte*)XMALLOC(MAX_PKCS7_DIGEST_SZ, pkcs7->heap,
@@ -11507,6 +11514,11 @@ static int wc_PKCS7_DecryptOri(wc_PKCS7* pkcs7, byte* in, word32 inSz,
             if (GetASNObjectId(pkiMsg, idx, &oriOIDSz, pkiMsgSz) != 0)
                 return ASN_PARSE_E;
 
+            if (oriOIDSz <= 0 || (word32)oriOIDSz > MAX_OID_SZ) {
+                WOLFSSL_MSG("ORI oriType OID too large");
+                return ASN_PARSE_E;
+            }
+
             XMEMCPY(oriOID, pkiMsg + *idx, (word32)oriOIDSz);
             *idx += (word32)oriOIDSz;
 
@@ -14235,6 +14247,10 @@ int wc_PKCS7_DecodeAuthEnvelopedData(wc_PKCS7* pkcs7, byte* in,
             if (ret == 0 && GetMyVersion(pkiMsg, &idx, &macSz, pkiMsgSz) < 0) {
                 ret = ASN_PARSE_E;
             }
+            if (ret == 0 && (macSz <= 0 || macSz > WC_AES_BLOCK_SIZE)) {
+                WOLFSSL_MSG("AuthEnvelopedData invalid MAC length");
+                ret = ASN_PARSE_E;
+            }
 
             if (ret == 0) {
                 explicitOctet = 0;
@@ -14280,7 +14296,8 @@ int wc_PKCS7_DecodeAuthEnvelopedData(wc_PKCS7* pkcs7, byte* in,
                 break;
             }
 
-            /* store nonce for later */
+            /* store nonce and macSz for later */
+            pkcs7->stream->icvSz = (word32)macSz;
             if (nonceSz > 0) {
                 pkcs7->stream->nonceSz = (word32)nonceSz;
                 pkcs7->stream->nonce = (byte*)XMALLOC((word32)nonceSz,
@@ -14471,6 +14488,7 @@ authenv_atrbend:
                 encodedAttribSz = pkcs7->stream->aadSz;
                 encodedAttribs  = pkcs7->stream->aad;
             }
+            macSz = (int)pkcs7->stream->icvSz;
         #endif
 
 
@@ -14487,6 +14505,17 @@ authenv_atrbend:
                 ret = ASN_PARSE_E;
             }
             authTagSz = (word32)length;
+            if (ret == 0 && authTagSz != (word32)macSz) {
+                WOLFSSL_MSG("AuthEnvelopedData authTag size mismatch");
+                ret = ASN_PARSE_E;
+            }
+            if (ret == 0 &&
+                    (encOID == AES128GCMb || encOID == AES192GCMb ||
+                     encOID == AES256GCMb) &&
+                    authTagSz < WOLFSSL_MIN_AUTH_TAG_SZ) {
+                WOLFSSL_MSG("AuthEnvelopedData GCM authTag too small");
+                ret = ASN_PARSE_E;
+            }
 
         #ifndef NO_PKCS7_STREAM
             /* there might not be enough data for the auth tag too */
@@ -14606,6 +14635,10 @@ authenv_atrbend:
             }
 
             /* copy plaintext to output */
+            if ((word32)encryptedContentSz > outputSz) {
+                ret = BUFFER_E;
+                break;
+            }
             XMEMCPY(output, encryptedContent, (word32)encryptedContentSz);
 
             /* free memory, zero out keys */
@@ -15290,6 +15323,11 @@ int wc_PKCS7_DecodeEncryptedData(wc_PKCS7* pkcs7, byte* in, word32 inSz,
                 }
 
                 /* copy plaintext to output */
+                if ((word32)(encryptedContentSz - padLen) > outputSz) {
+                    XFREE(encryptedContent, pkcs7->heap, DYNAMIC_TYPE_PKCS7);
+                    ret = BUFFER_E;
+                    break;
+                }
                 XMEMCPY(output, encryptedContent,
                     (unsigned int)(encryptedContentSz - padLen));
 

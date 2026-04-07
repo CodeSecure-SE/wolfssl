@@ -157,6 +157,7 @@
 #include <wolfssl/error-ssl.h>
 #include <wolfssl/wolfcrypt/asn.h>
 #include <wolfssl/wolfcrypt/dh.h>
+#include <wolfssl/wolfcrypt/hash.h>
 #ifdef NO_INLINE
     #include <wolfssl/wolfcrypt/misc.h>
 #else
@@ -5719,6 +5720,12 @@ int EccVerify(WOLFSSL* ssl, const byte* in, word32 inSz, const byte* out,
         keySz = keyBufInfo->length;
     }
 #endif
+
+    /* Check hash length */
+    if ((outSz > WC_MAX_DIGEST_SIZE) ||
+        (outSz < WC_MIN_DIGEST_SIZE)) {
+        return BAD_LENGTH_E;
+    }
 
     (void)ssl;
     (void)keyBufInfo;
@@ -13614,6 +13621,32 @@ static int CopyBaseEntry(Base_entry** to, Base_entry* from, void* heap)
         *  OPENSSL_EXTRA_X509_SMALL) && !IGNORE_NAME_CONSTRAINTS */
 
 #if defined(KEEP_PEER_CERT) || defined(SESSION_CERTS) || \
+    defined(OPENSSL_EXTRA) || defined(OPENSSL_EXTRA_X509_SMALL) || \
+    defined(WOLFSSL_ACERT)
+/* Copy an ASN-encoded date (type + length + data) into a WOLFSSL_ASN1_TIME.
+ * srcDate: ASN date buffer where [0]=type, [1]=length, [2..]=date bytes.
+ * srcDateLen: total length of srcDate (0 means no date present). */
+static void CopyDateToASN1_TIME(const byte* srcDate, int srcDateLen,
+                                WOLFSSL_ASN1_TIME* dst)
+{
+    if (srcDateLen >= 2) {
+        /* Clamp the date length to the maximum allowed size.
+         * This needs to match the size of WOLFSSL_ASN1_TIME minus the
+         * the type and length fields. */
+        const int maxSz = CTC_DATE_SIZE - 2;
+        const int copySz = (int)min(srcDate[1], maxSz);
+        dst->type = srcDate[0];
+        dst->length = copySz;
+        XMEMCPY(dst->data, &srcDate[2], copySz);
+    }
+    else {
+        dst->length = 0;
+    }
+}
+#endif /* KEEP_PEER_CERT || SESSION_CERTS || OPENSSL_EXTRA ||
+        *  OPENSSL_EXTRA_X509_SMALL || WOLFSSL_ACERT */
+
+#if defined(KEEP_PEER_CERT) || defined(SESSION_CERTS) || \
     defined(OPENSSL_EXTRA) || defined(OPENSSL_EXTRA_X509_SMALL)
 void CopyDecodedName(WOLFSSL_X509_NAME* name, DecodedCert* dCert, int nameType)
 {
@@ -13758,27 +13791,6 @@ static int CopyREQAttributes(WOLFSSL_X509* x509, DecodedCert* dCert)
     return ret;
 }
 #endif /* WOLFSSL_CERT_REQ */
-
-/* Copy an ASN-encoded date (type + length + data) into a WOLFSSL_ASN1_TIME.
- * srcDate: ASN date buffer where [0]=type, [1]=length, [2..]=date bytes.
- * srcDateLen: total length of srcDate (0 means no date present). */
-static void CopyDateToASN1_TIME(const byte* srcDate, int srcDateLen,
-                                WOLFSSL_ASN1_TIME* dst)
-{
-    if (srcDateLen >= 2) {
-        /* Clamp the date length to the maximum allowed size.
-         * This needs to match the size of WOLFSSL_ASN1_TIME minus the
-         * the type and length fields. */
-        const int maxSz = CTC_DATE_SIZE - 2;
-        const int copySz = (int)min(srcDate[1], maxSz);
-        dst->type = srcDate[0];
-        dst->length = copySz;
-        XMEMCPY(dst->data, &srcDate[2], copySz);
-    }
-    else {
-        dst->length = 0;
-    }
-}
 
 /* Copy parts X509 needs from Decoded cert, 0 on success */
 int CopyDecodedToX509(WOLFSSL_X509* x509, DecodedCert* dCert)
@@ -20007,9 +20019,14 @@ int ChachaAEADDecrypt(WOLFSSL* ssl, byte* plain, const byte* input,
     byte tag[POLY1305_AUTH_SZ];
     byte poly[CHACHA20_256_KEY_SIZE]; /* generated key for mac */
     int ret    = 0;
-    int msgLen = (sz - ssl->specs.aead_mac_size);
+    int msgLen = 0;
     Keys* keys = &ssl->keys;
     byte* seq = NULL;
+
+    if (sz < ssl->specs.aead_mac_size) {
+        return BAD_FUNC_ARG;
+    }
+    msgLen = (sz - ssl->specs.aead_mac_size);
 
     #ifdef CHACHA_AEAD_TEST
        int i;
@@ -23005,9 +23022,7 @@ default:
             }
 
             if (IsEncryptionOn(ssl, 0)) {
-#if defined(WOLFSSL_TLS13) || defined(WOLFSSL_EXTRA_ALERTS)
                 int tooLong = 0;
-#endif
 
 #ifdef WOLFSSL_TLS13
                 if (IsAtLeastTLSv1_3(ssl->version)) {
@@ -23017,18 +23032,16 @@ default:
                                                              MAX_TLS13_PLAIN_SZ;
                     }
                 }
+                else
 #endif
-#ifdef WOLFSSL_EXTRA_ALERTS
-                if (!IsAtLeastTLSv1_3(ssl->version))
+                {
                     tooLong = ssl->curSize > MAX_TLS_CIPHER_SZ;
-#endif
-#if defined(WOLFSSL_TLS13) || defined(WOLFSSL_EXTRA_ALERTS)
+                }
                 if (tooLong) {
                     WOLFSSL_MSG("Encrypted data too long");
                     SendAlert(ssl, alert_fatal, record_overflow);
                     return BUFFER_ERROR;
                 }
-#endif
             }
             ssl->keys.padSz = 0;
 

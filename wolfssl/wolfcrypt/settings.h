@@ -459,6 +459,29 @@
     (WOLFSSL_FIPS_VERSION_CODE > WOLFSSL_MAKE_FIPS_VERSION3(major,minor,patch))
 #define FIPS_VERSION3_NE(major,minor,patch) \
     (WOLFSSL_FIPS_VERSION_CODE != WOLFSSL_MAKE_FIPS_VERSION3(major,minor,patch))
+
+#if defined(HAVE_FIPS) && !defined(WC_FIPS_186_5) && !defined(WC_FIPS_186_4)
+    #if FIPS_VERSION3_GE(7,0,0)
+        #ifndef WC_FIPS_186_5
+            #define WC_FIPS_186_5
+        #endif
+    #else
+        #ifndef WC_FIPS_186_4
+            #define WC_FIPS_186_4
+        #endif
+    #endif
+#endif
+#if defined(WC_FIPS_186_4) && defined(WC_FIPS_186_5)
+    #error Conflicting FIPS 186 settings.
+#endif
+#if (defined(WC_FIPS_186_4) || defined(WC_FIPS_186_5)) && \
+        !defined(WC_FIPS_186_4_PLUS)
+    #define WC_FIPS_186_4_PLUS
+#endif
+#if defined(WC_FIPS_186_5) && !defined(WC_FIPS_186_5_PLUS)
+    #define WC_FIPS_186_5_PLUS
+#endif
+
 /*------------------------------------------------------------*/
 
 
@@ -3149,13 +3172,15 @@ extern void uITRON4_free(void *p) ;
     #endif
 #endif /* HAVE_ECC */
 
-#if (defined(OPENSSL_EXTRA) || defined(OPENSSL_ALL)) && defined(HAVE_ECC) && \
-    !defined(WOLFSSL_ATECC508A) && !defined(WOLFSSL_ATECC608A) && \
-    !defined(WOLFSSL_CRYPTOCELL) && !defined(WOLFSSL_SE050) && \
-    !defined(WOLF_CRYPTO_CB_ONLY_ECC) && !defined(WOLFSSL_STM32_PKA)
-    #undef  USE_ECC_B_PARAM
-    #define USE_ECC_B_PARAM
+/* The FIPS-validated ecc.c gates wc_ecc_point_is_on_curve behind
+ * USE_ECC_B_PARAM. That guard was removed from the non-FIPS tree (the
+ * function is now unconditionally compiled in). Force-define the flag
+ * when building with any FIPS module so the certified file still
+ * provides the symbol. */
+ #if defined(HAVE_FIPS) && !defined(USE_ECC_B_PARAM)
+ #define USE_ECC_B_PARAM
 #endif
+
 
 /* Curve25519 Configs */
 #ifdef HAVE_CURVE25519
@@ -3429,6 +3454,8 @@ extern void uITRON4_free(void *p) ;
 /* Default AES minimum auth tag sz, allow user to override */
 #ifndef WOLFSSL_MIN_AUTH_TAG_SZ
     #define WOLFSSL_MIN_AUTH_TAG_SZ 12
+#elif WOLFSSL_MIN_AUTH_TAG_SZ < 1
+    #error WOLFSSL_MIN_AUTH_TAG_SZ must be at least 1
 #endif
 
 
