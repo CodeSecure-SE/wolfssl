@@ -98,7 +98,7 @@ static const struct s_ent {
 #ifdef WOLFSSL_SM3
     {WC_HASH_TYPE_SM3, WC_NID_sm3, WC_SN_sm3},
 #endif /* WOLFSSL_SHA512 */
-#ifdef HAVE_BLAKE2
+#ifdef HAVE_BLAKE2B
     {WC_HASH_TYPE_BLAKE2B, WC_NID_blake2b512, WC_SN_blake2b512},
 #endif
 #ifdef HAVE_BLAKE2S
@@ -318,6 +318,7 @@ int wolfSSL_EVP_PKEY_is_a(const WOLFSSL_EVP_PKEY *pkey, const char *name) {
 
 #define WOLFSSL_EVP_PKEY_PRINT_LINE_WIDTH_MAX  80
 #define WOLFSSL_EVP_PKEY_PRINT_DIGITS_PER_LINE 15
+#define WOLFSSL_EVP_EXPONENT_PRINT_MAX         24
 
 static unsigned int cipherType(const WOLFSSL_EVP_CIPHER *cipher);
 
@@ -4780,11 +4781,11 @@ static unsigned int wolfssl_mac_len(unsigned char macType)
             break;
     #endif /* WOLFSSL_SHA512 */
 
-    #ifdef HAVE_BLAKE2
+    #ifdef HAVE_BLAKE2B
         case BLAKE2B_ID:
             hashLen = BLAKE2B_OUTBYTES;
             break;
-    #endif /* HAVE_BLAKE2 */
+    #endif /* HAVE_BLAKE2B */
 
     #ifdef WOLFSSL_SHA3
         #ifndef WOLFSSL_NOSHA3_224
@@ -10339,7 +10340,7 @@ int wolfSSL_EVP_MD_type(const WOLFSSL_EVP_MD* type)
 
 #endif /* !NO_MD5 */
 
-#ifdef HAVE_BLAKE2
+#ifdef HAVE_BLAKE2B
     /* return EVP_MD
      * @param none
      * @return "blake2b512"
@@ -10927,7 +10928,7 @@ int wolfSSL_EVP_MD_type(const WOLFSSL_EVP_MD* type)
              }
         } else
     #endif
-    #ifdef HAVE_BLAKE2
+    #ifdef HAVE_BLAKE2B
         if (XSTRCMP(md, WC_SN_blake2b512) == 0) {
             if (wc_InitBlake2b(&ctx->hash.digest.blake2b,
                     WC_BLAKE2B_DIGEST_SIZE) != 0) {
@@ -11084,7 +11085,7 @@ int wolfSSL_EVP_MD_type(const WOLFSSL_EVP_MD* type)
                 ret = NOT_COMPILED_IN;
         #endif
                 break;
-        #ifdef HAVE_BLAKE2
+        #ifdef HAVE_BLAKE2B
             case WC_HASH_TYPE_BLAKE2B:
                 if (wc_Blake2bUpdate(&ctx->hash.digest.blake2b,
                         (const byte*)data, (word32)sz) == 0) {
@@ -11103,7 +11104,7 @@ int wolfSSL_EVP_MD_type(const WOLFSSL_EVP_MD* type)
             case WC_HASH_TYPE_NONE:
             case WC_HASH_TYPE_MD2:
             case WC_HASH_TYPE_MD5_SHA:
-        #ifndef HAVE_BLAKE2
+        #ifndef HAVE_BLAKE2B
             case WC_HASH_TYPE_BLAKE2B:
         #endif
         #ifndef HAVE_BLAKE2S
@@ -11241,7 +11242,7 @@ int wolfSSL_EVP_MD_type(const WOLFSSL_EVP_MD* type)
         #endif
                 break;
             case WC_HASH_TYPE_BLAKE2B:
-        #ifdef HAVE_BLAKE2
+        #ifdef HAVE_BLAKE2B
                 if (wc_Blake2bFinal(&ctx->hash.digest.blake2b, md,
                         WC_BLAKE2B_DIGEST_SIZE) == 0) {
                     if (s) *s = WC_BLAKE2B_DIGEST_SIZE;
@@ -11877,7 +11878,7 @@ static int PrintHexWithColon(WOLFSSL_BIO* out, const byte* input,
 static int PrintPubKeyRSA(WOLFSSL_BIO* out, const byte* pkey, int pkeySz,
     int indent, int bitlen, WOLFSSL_ASN1_PCTX* pctx)
 {
-    byte   buff[8] = { 0 };
+    byte   buff[WOLFSSL_EVP_EXPONENT_PRINT_MAX] = { 0 };
     int    res = WC_NO_ERR_TRACE(WOLFSSL_FAILURE);
     word32 inOutIdx = 0;
     word32 nSz;             /* size of modulus */
@@ -12021,7 +12022,7 @@ static int PrintPubKeyEC(WOLFSSL_BIO* out, const byte* pkey, int pkeySz,
 {
     byte*   pub = NULL;
     word32  pubSz = 0;
-    byte    buff[8] = { 0 };
+    byte    buff[WOLFSSL_EVP_EXPONENT_PRINT_MAX] = { 0 };
     int     res = WOLFSSL_SUCCESS;
     word32  inOutIdx = 0;
     int     curveId = 0;
@@ -12210,7 +12211,7 @@ static int PrintPubKeyDSA(WOLFSSL_BIO* out, const byte* pkey, int pkeySz,
     int indent, int bitlen, WOLFSSL_ASN1_PCTX* pctx)
 {
 
-    byte    buff[8] = { 0 };
+    byte    buff[WOLFSSL_EVP_EXPONENT_PRINT_MAX] = { 0 };
     int     length;
     int     res = WC_NO_ERR_TRACE(WOLFSSL_FAILURE);
     word32  inOutIdx = 0;
@@ -12417,7 +12418,7 @@ static int PrintPubKeyDH(WOLFSSL_BIO* out, const byte* pkey, int pkeySz,
     int indent, int bitlen, WOLFSSL_ASN1_PCTX* pctx)
 {
 
-    byte    buff[8] = { 0 };
+    byte    buff[WOLFSSL_EVP_EXPONENT_PRINT_MAX] = { 0 };
     int     res = WC_NO_ERR_TRACE(WOLFSSL_FAILURE);
     word32  length;
     word32  inOutIdx;
