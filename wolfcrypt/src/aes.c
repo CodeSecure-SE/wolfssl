@@ -12596,7 +12596,7 @@ int wc_AesGcmDecryptFinal(Aes* aes, const byte* authTag, word32 authTagSz)
 
     /* Check validity of parameters. */
     if ((aes == NULL) || (authTag == NULL) || (authTagSz > WC_AES_BLOCK_SIZE) ||
-            (authTagSz == 0)) {
+            (authTagSz < WOLFSSL_MIN_AUTH_TAG_SZ)) {
         ret = BAD_FUNC_ARG;
     }
 
@@ -13551,7 +13551,16 @@ int wc_AesCcmEncrypt_ex(Aes* aes, byte* out, const byte* in, word32 sz,
 #endif /* HAVE_AESCCM */
 
 #ifndef WC_NO_CONSTRUCTORS
-Aes* wc_AesNew(void* heap, int devId, int *result_code)
+
+#define AES_NEW_INIT_PLAIN  0
+#ifdef WOLF_PRIVATE_KEY_ID
+#define AES_NEW_INIT_ID     1
+#define AES_NEW_INIT_LABEL  2
+#endif
+
+static Aes* _AesNew_common(void* heap, int devId, int *result_code,
+                            int aesInitType, unsigned char* id,
+                            int idLen, const char* label)
 {
     int ret;
     Aes* aes = (Aes*)XMALLOC(sizeof(Aes), heap, DYNAMIC_TYPE_AES);
@@ -13559,18 +13568,72 @@ Aes* wc_AesNew(void* heap, int devId, int *result_code)
         ret = MEMORY_E;
     }
     else {
-        ret = wc_AesInit(aes, heap, devId);
+        switch (aesInitType) {
+#ifdef WOLF_PRIVATE_KEY_ID
+        case AES_NEW_INIT_ID:
+            if (id == NULL || idLen == 0 || label != NULL) {
+                ret = BAD_FUNC_ARG;
+            }
+            else {
+                ret = wc_AesInit_Id(aes, id, idLen, heap, devId);
+            }
+            break;
+        case AES_NEW_INIT_LABEL:
+            if (label == NULL || id != NULL || idLen != 0) {
+                ret = BAD_FUNC_ARG;
+            }
+            else {
+                ret = wc_AesInit_Label(aes, label, heap, devId);
+            }
+            break;
+#endif
+        default:
+            if (id != NULL || idLen != 0 || label != NULL) {
+                ret = BAD_FUNC_ARG;
+            }
+            else {
+                ret = wc_AesInit(aes, heap, devId);
+            }
+            break;
+        }
         if (ret != 0) {
             XFREE(aes, heap, DYNAMIC_TYPE_AES);
             aes = NULL;
         }
     }
+    (void)aesInitType;
+    (void)id;
+    (void)idLen;
+    (void)label;
 
-    if (result_code != NULL)
+    if (result_code != NULL) {
         *result_code = ret;
+    }
 
     return aes;
 }
+
+Aes* wc_AesNew(void* heap, int devId, int *result_code)
+{
+    return _AesNew_common(heap, devId, result_code,
+                          AES_NEW_INIT_PLAIN, NULL, 0, NULL);
+}
+
+#ifdef WOLF_PRIVATE_KEY_ID
+Aes* wc_AesNew_Id(unsigned char* id, int len, void* heap, int devId,
+                   int *result_code)
+{
+    return _AesNew_common(heap, devId, result_code,
+                          AES_NEW_INIT_ID, id, len, NULL);
+}
+
+Aes* wc_AesNew_Label(const char* label, void* heap, int devId,
+                      int *result_code)
+{
+    return _AesNew_common(heap, devId, result_code,
+                          AES_NEW_INIT_LABEL, NULL, 0, label);
+}
+#endif /* WOLF_PRIVATE_KEY_ID */
 
 int wc_AesDelete(Aes *aes, Aes** aes_p)
 {
@@ -16571,40 +16634,42 @@ static WARN_UNUSED_RESULT int AesSivCipher(
         }
     }
 
-    if (ret == 0 && dataSz > 0) {
-        sivTmp[12] &= 0x7f;
-        sivTmp[8] &= 0x7f;
-        ret = wc_AesSetKey(aes, key + keySz / 2, keySz / 2, sivTmp,
-                           AES_ENCRYPTION);
-        if (ret != 0) {
-            WOLFSSL_MSG("Failed to set key for AES-CTR.");
-        }
-        else {
-            ret = wc_AesCtrEncrypt(aes, out, data, dataSz);
+    if (ret == 0) {
+        if (dataSz > 0) {
+            sivTmp[12] &= 0x7f;
+            sivTmp[8] &= 0x7f;
+            ret = wc_AesSetKey(aes, key + keySz / 2, keySz / 2, sivTmp,
+                               AES_ENCRYPTION);
             if (ret != 0) {
-                WOLFSSL_MSG("AES-CTR encryption failed.");
+                WOLFSSL_MSG("Failed to set key for AES-CTR.");
+            }
+            else {
+                ret = wc_AesCtrEncrypt(aes, out, data, dataSz);
+                if (ret != 0) {
+                    WOLFSSL_MSG("AES-CTR encryption failed.");
+                }
             }
         }
-    }
 
-    if (ret == 0 && enc == 0) {
-        ret = S2V(key, keySz / 2, assoc, numAssoc, nonce, nonceSz, out, dataSz,
-                  sivTmp);
-        if (ret != 0) {
-            WOLFSSL_MSG("S2V failed.");
+        if (ret == 0 && enc == 0) {
+            ret = S2V(key, keySz / 2, assoc, numAssoc, nonce, nonceSz, out,
+                      dataSz, sivTmp);
+            if (ret != 0) {
+                WOLFSSL_MSG("S2V failed.");
+            }
+
+            if (ConstantCompare(siv, sivTmp, WC_AES_BLOCK_SIZE) != 0) {
+                WOLFSSL_MSG("Computed SIV doesn't match received SIV.");
+                ret = AES_SIV_AUTH_E;
+            }
         }
 
-        if (ConstantCompare(siv, sivTmp, WC_AES_BLOCK_SIZE) != 0) {
-            WOLFSSL_MSG("Computed SIV doesn't match received SIV.");
-            ret = AES_SIV_AUTH_E;
-        }
+    #ifdef WOLFSSL_SMALL_STACK
+        wc_AesDelete(aes, NULL);
+    #else
+        wc_AesFree(aes);
+    #endif
     }
-
-#ifdef WOLFSSL_SMALL_STACK
-    wc_AesDelete(aes, NULL);
-#else
-    wc_AesFree(aes);
-#endif
 
     ForceZero(sivTmp, sizeof(sivTmp));
 
@@ -17028,6 +17093,9 @@ int  wc_AesEaxDecryptUpdate(AesEax* eax, byte* out,
  */
 int  wc_AesEaxAuthDataUpdate(AesEax* eax, const byte* authIn, word32 authInSz)
 {
+    if (eax == NULL) {
+        return BAD_FUNC_ARG;
+    }
     return wc_CmacUpdate(&eax->aadCmac, authIn, authInSz);
 }
 
