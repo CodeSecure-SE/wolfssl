@@ -1696,6 +1696,68 @@ static int test_dual_alg_ecdsa_mldsa(void)
     return EXPECT_RESULT();
 }
 
+/* Test wolfSSL_use_AltPrivateKey_Id.
+ * Verify that a valid key ID can be set successfully. Guards against an
+ * inverted AllocDer return check (== 0 vs != 0) that would treat successful
+ * allocation as failure. */
+static int test_wolfSSL_use_AltPrivateKey_Id(void)
+{
+    EXPECT_DECLS;
+#if defined(WOLFSSL_DUAL_ALG_CERTS) && !defined(NO_TLS) && \
+    !defined(NO_WOLFSSL_CLIENT)
+    WOLFSSL_CTX* ctx = NULL;
+    WOLFSSL*     ssl = NULL;
+    const unsigned char id[] = { 0x01, 0x02, 0x03, 0x04 };
+
+    ExpectNotNull(ctx = wolfSSL_CTX_new(wolfSSLv23_client_method()));
+    ExpectNotNull(ssl = wolfSSL_new(ctx));
+
+    /* Negative tests. */
+    ExpectIntEQ(wolfSSL_use_AltPrivateKey_Id(NULL, id, sizeof(id),
+        INVALID_DEVID), 0);
+    ExpectIntEQ(wolfSSL_use_AltPrivateKey_Id(ssl, NULL, sizeof(id),
+        INVALID_DEVID), 0);
+
+    /* Positive test - valid ID should succeed. */
+    ExpectIntEQ(wolfSSL_use_AltPrivateKey_Id(ssl, id, sizeof(id),
+        INVALID_DEVID), 1);
+
+    wolfSSL_free(ssl);
+    wolfSSL_CTX_free(ctx);
+#endif /* WOLFSSL_DUAL_ALG_CERTS && !NO_TLS && !NO_WOLFSSL_CLIENT */
+    return EXPECT_RESULT();
+}
+
+/* Test wolfSSL_use_AltPrivateKey_Label.
+ * Verify that a valid key label can be set successfully. Guards against an
+ * inverted AllocDer return check (== 0 vs != 0) that would treat successful
+ * allocation as failure. */
+static int test_wolfSSL_use_AltPrivateKey_Label(void)
+{
+    EXPECT_DECLS;
+#if defined(WOLFSSL_DUAL_ALG_CERTS) && !defined(NO_TLS) && \
+    !defined(NO_WOLFSSL_CLIENT)
+    WOLFSSL_CTX* ctx = NULL;
+    WOLFSSL*     ssl = NULL;
+
+    ExpectNotNull(ctx = wolfSSL_CTX_new(wolfSSLv23_client_method()));
+    ExpectNotNull(ssl = wolfSSL_new(ctx));
+
+    /* Negative tests. */
+    ExpectIntEQ(wolfSSL_use_AltPrivateKey_Label(NULL, "label", INVALID_DEVID),
+        0);
+    ExpectIntEQ(wolfSSL_use_AltPrivateKey_Label(ssl, NULL, INVALID_DEVID), 0);
+
+    /* Positive test - valid label should succeed. */
+    ExpectIntEQ(wolfSSL_use_AltPrivateKey_Label(ssl, "test_label",
+        INVALID_DEVID), 1);
+
+    wolfSSL_free(ssl);
+    wolfSSL_CTX_free(ctx);
+#endif /* WOLFSSL_DUAL_ALG_CERTS && !NO_TLS && !NO_WOLFSSL_CLIENT */
+    return EXPECT_RESULT();
+}
+
 
 /*----------------------------------------------------------------------------*
  | Context
@@ -3505,6 +3567,11 @@ static int test_wolfSSL_CTX_add1_chain_cert(void)
         }
 
         ExpectIntEQ(SSL_CTX_add1_chain_cert(ctx, x509), 1);
+        /* add1 must increment ref count (was 1, now 2). Verifies the
+         * up_ref return value is assigned, not just compared. */
+        if (EXPECT_SUCCESS() && x509 != NULL) {
+            ExpectIntEQ(wolfSSL_RefCur(x509->ref), 2);
+        }
         X509_free(x509);
         x509 = NULL;
     }
@@ -3524,6 +3591,10 @@ static int test_wolfSSL_CTX_add1_chain_cert(void)
         }
 
         ExpectIntEQ(SSL_add1_chain_cert(ssl, x509), 1);
+        /* add1 must increment ref count (was 1, now 2) */
+        if (EXPECT_SUCCESS() && x509 != NULL) {
+            ExpectIntEQ(wolfSSL_RefCur(x509->ref), 2);
+        }
         X509_free(x509);
         x509 = NULL;
     }
@@ -13248,6 +13319,64 @@ static int test_wolfSSL_tmp_dh(void)
     return EXPECT_RESULT();
 }
 
+/* Tests SSL_CTX_set_tmp_dh with single-operand failure (p set, g missing)
+ * and wolfSSL_CTX_SetTmpDH_buffer with WOLFSSL_FILETYPE_ASN1 DER input. */
+static int test_wolfSSL_tmp_dh_regression(void)
+{
+    EXPECT_DECLS;
+#if defined(OPENSSL_EXTRA) && !defined(NO_DH) && !defined(NO_CERTS) && \
+    !defined(NO_FILESYSTEM) && !defined(NO_RSA) && !defined(NO_TLS) && \
+    !defined(NO_WOLFSSL_SERVER)
+    SSL_CTX* ctx = NULL;
+
+    ExpectNotNull(ctx = SSL_CTX_new(wolfSSLv23_server_method()));
+    ExpectTrue(SSL_CTX_use_certificate_file(ctx, svrCertFile,
+        WOLFSSL_FILETYPE_PEM));
+    ExpectTrue(SSL_CTX_use_PrivateKey_file(ctx, svrKeyFile,
+        WOLFSSL_FILETYPE_PEM));
+
+#if defined(OPENSSL_ALL) || \
+    (defined(OPENSSL_VERSION_NUMBER) && OPENSSL_VERSION_NUMBER >= 0x10100000L)
+    {
+        /* Test single-operand failure: DH with p but no g. */
+        DH* dh = NULL;
+        WOLFSSL_BIGNUM* p_bn = NULL;
+
+        ExpectNotNull(dh = wolfSSL_DH_new());
+        ExpectNotNull(p_bn = wolfSSL_BN_new());
+        ExpectIntEQ(wolfSSL_BN_set_word(p_bn, 0xFFFF), 1);
+        if (dh != NULL && p_bn != NULL) {
+            if (wolfSSL_DH_set0_pqg(dh, p_bn, NULL, NULL) == 1) {
+                p_bn = NULL; /* ownership transferred on success */
+            }
+        }
+        ExpectIntEQ((int)SSL_CTX_set_tmp_dh(ctx, dh), WOLFSSL_FATAL_ERROR);
+        DH_free(dh);
+        wolfSSL_BN_free(p_bn);
+    }
+#endif
+
+    /* Test ASN1/DER path through wolfSSL_CTX_SetTmpDH_buffer. */
+    {
+        byte derBuf[4096];
+        XFILE f = XBADFILE;
+        int derSz = 0;
+
+        ExpectTrue((f = XFOPEN("./certs/dh2048.der", "rb")) != XBADFILE);
+        if (f != XBADFILE) {
+            derSz = (int)XFREAD(derBuf, 1, sizeof(derBuf), f);
+            XFCLOSE(f);
+        }
+        ExpectIntGT(derSz, 0);
+        ExpectIntEQ(wolfSSL_CTX_SetTmpDH_buffer(ctx, derBuf, (long)derSz,
+            WOLFSSL_FILETYPE_ASN1), WOLFSSL_SUCCESS);
+    }
+
+    SSL_CTX_free(ctx);
+#endif
+    return EXPECT_RESULT();
+}
+
 static int test_wolfSSL_ctrl(void)
 {
     EXPECT_DECLS;
@@ -15878,6 +16007,33 @@ static int test_wolfSSL_set1_sigalgs_list(void)
                     WC_NO_ERR_TRACE(WOLFSSL_FAILURE));
         ExpectIntEQ(wolfSSL_set1_sigalgs_list(ssl, "RSA+SHA256+RSA"),
                     WC_NO_ERR_TRACE(WOLFSSL_FAILURE));
+
+        {
+            const char entry[] = "RSA+SHA256";
+            const int entryLen = (int)sizeof(entry) - 1;
+            const int entries = WOLFSSL_MAX_SIGALGO + 1;
+            int listSz = entries * (entryLen + 1);
+            char* longList = (char*)XMALLOC(listSz, NULL,
+                DYNAMIC_TYPE_TMP_BUFFER);
+            int i;
+            int pos = 0;
+
+            ExpectNotNull(longList);
+            if (longList != NULL) {
+                for (i = 0; i < entries; i++) {
+                    if (i != 0)
+                        longList[pos++] = ':';
+                    XMEMCPY(longList + pos, entry, entryLen);
+                    pos += entryLen;
+                }
+                longList[pos] = '\0';
+                ExpectIntEQ(wolfSSL_CTX_set1_sigalgs_list(ctx, longList),
+                    WC_NO_ERR_TRACE(WOLFSSL_FAILURE));
+                ExpectIntEQ(wolfSSL_set1_sigalgs_list(ssl, longList),
+                    WC_NO_ERR_TRACE(WOLFSSL_FAILURE));
+                XFREE(longList, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+            }
+        }
     #endif
 #endif
 #ifdef HAVE_ECC
@@ -35048,7 +35204,6 @@ static int test_pkcs7_padding(void)
     int outSz;
     int ctOff = -1;
     int ctLen = 0;
-    int i;
 
     XMEMSET(key, 0xAA, sizeof(key));
     XMEMSET(plaintext, 'X', sizeof(plaintext));
@@ -35071,32 +35226,10 @@ static int test_pkcs7_padding(void)
         (word32)encodedSz, output, sizeof(output)), (int)sizeof(plaintext));
     wc_PKCS7_Free(&pkcs7);
 
-    /* Find ciphertext block in encoded DER */
-    if (EXPECT_SUCCESS()) {
-        for (i = encodedSz - 10; i > 10; i--) {
-            if (encoded[i] == 0x04 || encoded[i] == 0x80) {
-                int len, lbytes;
-
-                if (encoded[i+1] < 0x80) {
-                    len = encoded[i+1]; lbytes = 1;
-                }
-                else if (encoded[i+1] == 0x81) {
-                    len = encoded[i+2]; lbytes = 2;
-                }
-                else {
-                    continue;
-                }
-                if (len > 0 && len % 16 == 0 &&
-                    i + 1 + lbytes + len <= encodedSz) {
-                    ctOff = i + 1 + lbytes;
-                    ctLen = len;
-                    break;
-                }
-            }
-        }
-    }
-    ExpectIntGT(ctOff, 0);
-    ExpectIntGE(ctLen, 32);
+    /* encryptedContent is the last element in the DER, so it ends at encodedSz;
+     * 27-byte plaintext -> 32-byte AES-256-CBC ciphertext. */
+    ctLen = 32;
+    ctOff = encodedSz - ctLen;
 
     /* Corrupt an interior padding byte via CBC bit-flip */
     if (EXPECT_SUCCESS()) {
@@ -35312,6 +35445,9 @@ TEST_CASE testCases[] = {
     TEST_DECL(test_dual_alg_crit_ext_support),
 
     TEST_DECL(test_dual_alg_ecdsa_mldsa),
+
+    TEST_DECL(test_wolfSSL_use_AltPrivateKey_Id),
+    TEST_DECL(test_wolfSSL_use_AltPrivateKey_Label),
 
     /*********************************
      * OpenSSL compatibility API tests
@@ -35584,6 +35720,7 @@ TEST_CASE testCases[] = {
     TEST_TLS13_DECLS,
 
     TEST_DECL(test_wolfSSL_tmp_dh),
+    TEST_DECL(test_wolfSSL_tmp_dh_regression),
     TEST_DECL(test_wolfSSL_ctrl),
 
     TEST_DECL(test_wolfSSL_get0_param),
