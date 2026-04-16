@@ -1424,7 +1424,9 @@ enum wc_AlgoType {
     WC_ALGO_TYPE_KDF = 9,
     WC_ALGO_TYPE_COPY = 10,
     WC_ALGO_TYPE_FREE = 11,
-    WC_ALGO_TYPE_MAX = WC_ALGO_TYPE_FREE
+    WC_ALGO_TYPE_SETKEY = 12,
+    WC_ALGO_TYPE_EXPORT_KEY = 13,
+    WC_ALGO_TYPE_MAX = WC_ALGO_TYPE_EXPORT_KEY
 };
 
 /* KDF types */
@@ -1566,6 +1568,10 @@ enum wc_PkType {
     WC_PK_TYPE_RSA_PKCS = 25,
     WC_PK_TYPE_RSA_PSS = 26,
     WC_PK_TYPE_RSA_OAEP = 27,
+    WC_PK_TYPE_EC_GET_SIZE = 28,
+    WC_PK_TYPE_EC_GET_SIG_SIZE = 29,
+    #undef _WC_PK_TYPE_MAX
+    #define _WC_PK_TYPE_MAX WC_PK_TYPE_EC_GET_SIG_SIZE
     WC_PK_TYPE_MAX = _WC_PK_TYPE_MAX
 };
 
@@ -2315,7 +2321,7 @@ enum Max_ASN {
     MAX_ENCODED_SIG_SZ  = 5120,
 #elif !defined(NO_RSA)
 #if defined(USE_FAST_MATH) && defined(FP_MAX_BITS)
-    MAX_ENCODED_SIG_SZ  = FP_MAX_BITS / 8,
+    MAX_ENCODED_SIG_SZ  = FP_MAX_BITS / 16,
 #elif (defined(WOLFSSL_SP_MATH_ALL) || defined(WOLFSSL_SP_MATH)) && \
     defined(SP_INT_BITS)
     MAX_ENCODED_SIG_SZ  = WC_BITS_TO_BYTES(SP_INT_BITS),

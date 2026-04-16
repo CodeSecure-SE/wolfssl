@@ -496,8 +496,8 @@ int wc_RNG_DRBG_Reseed(WC_RNG* rng, const byte* seed, word32 seedSz)
             /* using RDRAND not DRBG, so return success */
             return 0;
         }
-        return BAD_FUNC_ARG;
     #endif
+        return BAD_FUNC_ARG;
     }
 
     return Hash_DRBG_Reseed((DRBG_internal *)rng->drbg, seed, seedSz);
@@ -3920,7 +3920,7 @@ int wc_GenerateSeed(OS_Seed* os, byte* output, word32 sz)
 #endif
 
 #ifdef USE_TEST_GENSEED
-    #ifndef _MSC_VER
+    #if !defined(_MSC_VER) && !defined(__TASKING__)
         #warning "write a real random seed!!!!, just for testing now"
     #else
         #pragma message("Warning: write a real random seed!!!!, just for testing now")

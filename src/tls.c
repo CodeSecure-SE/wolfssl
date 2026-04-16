@@ -187,7 +187,7 @@ static int TLSX_PopulateSupportedGroups(WOLFSSL* ssl, TLSX** extensions);
         #error The build option WC_RSA_PSS is required for TLS 1.3 with RSA
     #endif
     #ifndef HAVE_TLS_EXTENSIONS
-        #ifndef _MSC_VER
+        #if !defined(_MSC_VER) && !defined(__TASKING__)
             #error "The build option HAVE_TLS_EXTENSIONS is required for TLS 1.3"
         #else
             #pragma message("Error: The build option HAVE_TLS_EXTENSIONS is required for TLS 1.3")
@@ -198,7 +198,7 @@ static int TLSX_PopulateSupportedGroups(WOLFSSL* ssl, TLSX** extensions);
 /* Warn if secrets logging is enabled */
 #if (defined(SHOW_SECRETS) || defined(WOLFSSL_SSLKEYLOGFILE)) && \
     !defined(WOLFSSL_KEYLOG_EXPORT_WARNED)
-    #ifndef _MSC_VER
+    #if !defined(_MSC_VER) && !defined(__TASKING__)
         #warning The SHOW_SECRETS and WOLFSSL_SSLKEYLOGFILE options should only be used for debugging and never in a production environment
     #else
         #pragma message("Warning: The SHOW_SECRETS and WOLFSSL_SSLKEYLOGFILE options should only be used for debugging and never in a production environment")
@@ -16106,6 +16106,9 @@ static int TLSX_EchChangeSNI(WOLFSSL* ssl, TLSX** pEchX,
                 hostNameSz = MAX_PUBLIC_NAME_SZ;
 
             XMEMCPY(serverName, hostName, hostNameSz);
+            /* Guarantee NUL termination after truncation so that
+             * TLSX_EchRestoreSNI's XSTRLEN cannot read past the buffer. */
+            serverName[hostNameSz - 1] = '\0';
         }
 
         /* only swap the SNI if one was found; extensions is non-NULL if an

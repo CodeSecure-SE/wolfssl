@@ -119,7 +119,7 @@
 #endif
 
 #ifndef HAVE_AEAD
-    #ifndef _MSC_VER
+    #if !defined(_MSC_VER) && !defined(__TASKING__)
         #error "The build option HAVE_AEAD is required for TLS 1.3"
     #else
         #pragma \
@@ -128,7 +128,7 @@
 #endif
 
 #ifndef HAVE_HKDF
-    #ifndef _MSC_VER
+    #if !defined(_MSC_VER) && !defined(__TASKING__)
         #error "The build option HAVE_HKDF is required for TLS 1.3"
     #else
         #pragma message("error: The build option HAVE_HKDF is required for TLS 1.3")
@@ -136,7 +136,7 @@
 #endif
 
 #ifndef HAVE_TLS_EXTENSIONS
-    #ifndef _MSC_VER
+    #if !defined(_MSC_VER) && !defined(__TASKING__)
         #error "The build option HAVE_TLS_EXTENSIONS is required for TLS 1.3"
     #else
         #pragma message("error: The build option HAVE_TLS_EXTENSIONS is required for TLS 1.3")
@@ -6287,6 +6287,18 @@ static int DoPreSharedKeys(WOLFSSL* ssl, const byte* input, word32 inputSz,
         /* This PSK works, no need to try any more. */
         current->chosen = 1;
         ext->resp = 1;
+#if defined(WOLFSSL_EARLY_DATA) && defined(HAVE_SESSION_TICKET) && \
+    !defined(NO_SESSION_CACHE)
+        /* RFC 8446 section 8: accept 0-RTT for a given handshake at most
+         * once. Evict the session from both the internal cache (under a
+         * write lock) and any external cache (via ctx->rem_sess_cb) so
+         * the same ClientHello cannot replay early data. Only when the
+         * client offered 0-RTT on a session that permits it. */
+        if (ssl->earlyData != no_early_data &&
+                ssl->session->maxEarlyDataSz != 0) {
+            (void)wolfSSL_SSL_CTX_remove_session(ssl->ctx, ssl->session);
+        }
+#endif
         break;
     }
 
