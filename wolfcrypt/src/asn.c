@@ -4466,6 +4466,12 @@ static int ParseCRL_Extensions(DecodedCRL* dcrl, const byte* buf, word32* inOutI
 #ifndef WOLFSSL_NOSHA3_512
     static const byte hashSha3_512hOid[] = {96, 134, 72, 1, 101, 3, 4, 2, 10};
 #endif /* WOLFSSL_NOSHA3_512 */
+#ifdef WOLFSSL_SHAKE128
+    static const byte hashShake128hOid[] = {96, 134, 72, 1, 101, 3, 4, 2, 11};
+#endif /* WOLFSSL_SHAKE128 */
+#ifdef WOLFSSL_SHAKE256
+    static const byte hashShake256hOid[] = {96, 134, 72, 1, 101, 3, 4, 2, 12};
+#endif /* WOLFSSL_SHAKE256 */
 #endif /* WOLFSSL_SHA3 */
 
 /* hmacType */
@@ -5339,6 +5345,18 @@ const byte* OidFromId(word32 id, word32 type, word32* oidSz)
                     *oidSz = sizeof(hashSha3_512hOid);
                     break;
             #endif /* WOLFSSL_NOSHA3_512 */
+            #ifdef WOLFSSL_SHAKE128
+                case SHAKE128h:
+                    oid = hashShake128hOid;
+                    *oidSz = sizeof(hashShake128hOid);
+                    break;
+            #endif /* WOLFSSL_SHAKE128 */
+            #ifdef WOLFSSL_SHAKE256
+                case SHAKE256h:
+                    oid = hashShake256hOid;
+                    *oidSz = sizeof(hashShake256hOid);
+                    break;
+            #endif /* WOLFSSL_SHAKE256 */
             #endif /* WOLFSSL_SHA3 */
                 default:
                     break;
@@ -22527,7 +22545,22 @@ int ParseCertRelative(DecodedCert* cert, int type, int verify, void* cm,
                  * max_path_length, but the issuer's constraint still
                  * applies. A self-issued cert from a CA with maxPathLen=0
                  * cannot act as an intermediate CA. */
-                if (cert->ca->maxPathLen == 0) {
+                if (cert->publicKey != NULL &&
+                        cert->ca->publicKey != NULL &&
+                        cert->pubKeySize > 0 &&
+                        cert->pubKeySize == cert->ca->pubKeySize &&
+                        XMEMCMP(cert->publicKey, cert->ca->publicKey,
+                                cert->pubKeySize) == 0) {
+                    /* Exclude the trust anchor itself from step (l). Per
+                     * RFC 5280 6.1, when the trust anchor is supplied as a
+                     * self-signed certificate it "is not included as part
+                     * of the prospective certification path" */
+
+                    /* Trust anchor: honor issuer's constraint */
+                    cert->maxPathLen = (word16)min(cert->ca->maxPathLen,
+                                           cert->maxPathLen);
+                }
+                else if (cert->ca->maxPathLen == 0) {
                     cert->maxPathLen = 0;
                     if (verify != NO_VERIFY) {
                         WOLFSSL_MSG("\tSelf-issued cert, maxPathLen is 0");
