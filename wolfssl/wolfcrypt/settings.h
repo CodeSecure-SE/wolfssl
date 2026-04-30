@@ -558,6 +558,11 @@
     #define HAVE_OID_DECODING
 #endif /* WOLFSSL_DUAL_ALG_CERTS */
 
+/* RFC 8737 id-pe-acmeIdentifier (TLS-ALPN-01) requires SHA-256. */
+#if defined(WOLFSSL_ACME_OID) && defined(NO_SHA256)
+    #undef WOLFSSL_ACME_OID
+#endif
+
 
 #if defined(_WIN32) && !defined(_M_X64) && \
     defined(HAVE_AESGCM) && defined(WOLFSSL_AESNI)
@@ -4041,6 +4046,14 @@ extern void uITRON4_free(void *p) ;
     #if WOLFSSL_GENERAL_ALIGNMENT < SIZEOF_LONG
         #undef WOLFSSL_GENERAL_ALIGNMENT
         #define WOLFSSL_GENERAL_ALIGNMENT SIZEOF_LONG
+    #endif
+
+    /* SLH-DSA signature generation is too computationally intensive to be
+     * appropriate in typical kernel deployments.
+     */
+    #if !defined(WOLFSSL_SLHDSA_VERIFY_ONLY) && \
+        !defined(WOLFSSL_SLHDSA_NO_VERIFY_ONLY)
+        #define WOLFSSL_SLHDSA_VERIFY_ONLY
     #endif
 #endif /* WOLFSSL_KERNEL_MODE */
 
