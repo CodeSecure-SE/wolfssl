@@ -3050,6 +3050,25 @@ AC_ARG_WITH([tropic01],
 )
 
 
+# STMicro STSAFE-A100 / STSAFE-A120
+# Example: "./configure --enable-stsafe=a120"
+ENABLED_STSAFE="no"
+AC_ARG_ENABLE([stsafe],
+    [AS_HELP_STRING([--enable-stsafe@<:@=a100|a120@:>@],
+        [Enable STMicro STSAFE secure-element support. Variant selects the SDK:
+         a100 (legacy STSAFE-A1xx SDK, default) or a120 (STSELib).])],
+    [ ENABLED_STSAFE=$enableval ],
+    [ ENABLED_STSAFE=no ])
+
+case "$ENABLED_STSAFE" in
+    no)        ;;
+    yes|a100)  AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_STSAFE -DWOLFSSL_STSAFEA100"
+               ENABLED_STSAFE="a100" ;;
+    a120)      AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_STSAFE -DWOLFSSL_STSAFEA120" ;;
+    *)         AC_MSG_ERROR([Invalid --enable-stsafe value '$ENABLED_STSAFE'; use a100 or a120]) ;;
+esac
+
+
 # NXP SE050
 # Example: "./configure --with-se050=/home/pi/simw_top"
 ENABLED_SE050="no"
@@ -5631,9 +5650,26 @@ AC_ARG_ENABLE([dtls13],
     )
 if test "x$ENABLED_DTLS13" = "xyes"
 then
-        if test "x$ENABLED_DTLS" != "xyes" || test "x$ENABLED_TLS13" != "xyes"
+        # DTLSv1.3 implies TLS 1.3 and DTLS; auto-enable, but don't
+        # override explicit --disable.
+        if test "x$enable_tls13" = "xno" || test "x$ENABLED_TLS13" = "xno"
         then
-                AC_MSG_ERROR([You need to enable both DTLS and TLSv1.3 to use DTLSv1.3])
+                AC_MSG_ERROR([--enable-dtls13 requires TLS 1.3, but TLS 1.3 is disabled])
+        fi
+        if test "x$ENABLED_TLS13" != "xyes"
+        then
+                AC_MSG_NOTICE([DTLSv1.3 is enabled, enabling TLS 1.3])
+                ENABLED_TLS13=yes
+        fi
+        if test "x$enable_dtls" = "xno"
+        then
+                AC_MSG_ERROR([--enable-dtls13 requires DTLS, but --disable-dtls was given])
+        fi
+        if test "x$ENABLED_DTLS" != "xyes"
+        then
+                AC_MSG_NOTICE([DTLSv1.3 is enabled, enabling DTLS])
+                AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_DTLS"
+                ENABLED_DTLS=yes
         fi
         if test "x$ENABLED_SEND_HRR_COOKIE" = "xundefined"
         then
@@ -8133,6 +8169,11 @@ if test "x$ENABLED_PSK" = "xno" && test "x$ENABLED_ECC" = "xno" && \
 then
     # disable TLS 1.3
     ENABLED_TLS13=no
+fi
+# DTLSv1.3 cannot survive a downgrade of TLS 1.3.
+if test "x$ENABLED_DTLS13" = "xyes" && test "x$ENABLED_TLS13" = "xno"
+then
+    AC_MSG_ERROR([--enable-dtls13 requires TLS 1.3, but TLS 1.3 was disabled by an earlier prerequisite check (no key-exchange or signature algorithms reachable). Enable at least one of ECC, RSA+DH, Curve25519+Ed25519, Curve448+Ed448, PSK, or ML-KEM.])
 fi
 if test "$ENABLED_TLS13" = "yes" && (test "x$ENABLED_ECC" = "xyes" || \
     test "$ENABLED_DH" != "no" || test "x$ENABLED_MLKEM" = "xyes")
@@ -12112,6 +12153,7 @@ AM_CONDITIONAL([BUILD_QNXCAAM],[test "x$ENABLED_CAAM_QNX" = "xyes"])
 AM_CONDITIONAL([BUILD_IOTSAFE],[test "x$ENABLED_IOTSAFE" = "xyes"])
 AM_CONDITIONAL([BUILD_IOTSAFE_HWRNG],[test "x$ENABLED_IOTSAFE_HWRNG" = "xyes"])
 AM_CONDITIONAL([BUILD_SE050],[test "x$ENABLED_SE050" = "xyes"])
+AM_CONDITIONAL([BUILD_STSAFE],[test "x$ENABLED_STSAFE" != "xno"])
 AM_CONDITIONAL([BUILD_TROPIC01],[test "x$ENABLED_TROPIC01" = "xyes"])
 AM_CONDITIONAL([BUILD_KDF],[test "x$ENABLED_KDF" = "xyes"])
 AM_CONDITIONAL([BUILD_HMAC],[test "x$ENABLED_HMAC" = "xyes"])
@@ -12681,6 +12723,7 @@ echo "   * i.MX CAAM:                  $ENABLED_CAAM"
 echo "   * IoT-Safe:                   $ENABLED_IOTSAFE"
 echo "   * IoT-Safe HWRNG:             $ENABLED_IOTSAFE_HWRNG"
 echo "   * NXP SE050:                  $ENABLED_SE050"
+echo "   * STMicro STSAFE:             $ENABLED_STSAFE"
 echo "   * TROPIC01:                   $ENABLED_TROPIC01"
 echo "   * Maxim Integrated MAXQ10XX:  $ENABLED_MAXQ10XX"
 echo "   * PSA:                        $ENABLED_PSA"

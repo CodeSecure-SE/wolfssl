@@ -4385,7 +4385,8 @@ static int DecodeAltNames(const byte* input, word32 sz, DecodedCert* cert);
 static int DecodeCrlDist(const byte* input, word32 sz, DecodedCert* cert);
 static int DecodeAuthInfo(const byte* input, word32 sz, DecodedCert* cert);
 #ifndef IGNORE_NAME_CONSTRAINTS
-static int DecodeSubtree(const byte* input, word32 sz, Base_entry** head, word32 limit, void* heap);
+static int DecodeSubtree(const byte* input, word32 sz, Base_entry** head,
+                         word32 limit, byte* hasUnsupported, void* heap);
 static int DecodeNameConstraints(const byte* input, word32 sz, DecodedCert* cert);
 #endif
 #if defined(WOLFSSL_SEP) || defined(WOLFSSL_CERT_EXT)
@@ -9814,8 +9815,8 @@ int wc_GetKeyOID(byte* key, word32 keySz, const byte** curveOID, word32* oidSz,
             return MEMORY_E;
 
         if (wc_falcon_init(falcon) == 0) {
-            tmpIdx = 0;
-            if (wc_falcon_set_level(falcon, 1) == 0) {
+            if ((*algoID == 0) && (wc_falcon_set_level(falcon, 1) == 0)) {
+                tmpIdx = 0;
                 if (wc_Falcon_PrivateKeyDecode(key, &tmpIdx, falcon, keySz)
                     == 0) {
                     *algoID = FALCON_LEVEL1k;
@@ -9824,7 +9825,8 @@ int wc_GetKeyOID(byte* key, word32 keySz, const byte** curveOID, word32* oidSz,
                     WOLFSSL_MSG("Not Falcon Level 1 DER key");
                 }
             }
-            else if (wc_falcon_set_level(falcon, 5) == 0) {
+            if ((*algoID == 0) && (wc_falcon_set_level(falcon, 5) == 0)) {
+                tmpIdx = 0;
                 if (wc_Falcon_PrivateKeyDecode(key, &tmpIdx, falcon, keySz)
                     == 0) {
                     *algoID = FALCON_LEVEL5k;
@@ -9833,8 +9835,8 @@ int wc_GetKeyOID(byte* key, word32 keySz, const byte** curveOID, word32* oidSz,
                     WOLFSSL_MSG("Not Falcon Level 5 DER key");
                 }
             }
-            else {
-                WOLFSSL_MSG("GetKeyOID falcon initialization failed");
+            if (*algoID == 0) {
+                WOLFSSL_MSG("GetKeyOID could not match Falcon DER key");
             }
             wc_falcon_free(falcon);
         }
@@ -12433,6 +12435,8 @@ void FreeDecodedCert(DecodedCert* cert)
         FreeAltNames(cert->altEmailNames, cert->heap);
     if (cert->altDirNames)
         FreeAltNames(cert->altDirNames, cert->heap);
+    if (cert->altOtherNamesRaw)
+        FreeAltNames(cert->altOtherNamesRaw, cert->heap);
     if (cert->permittedNames)
         FreeNameSubtrees(cert->permittedNames, cert->heap);
     if (cert->excludedNames)
@@ -12916,7 +12920,7 @@ int wc_Ed25519PublicKeyToDer(const ed25519_key* key, byte* output, word32 inLen,
  * @return  BAD_FUNC_ARG when key is NULL.
  * @return  MEMORY_E when dynamic memory allocation failed.
  */
-int wc_Ed448PublicKeyToDer(ed448_key* key, byte* output, word32 inLen,
+int wc_Ed448PublicKeyToDer(const ed448_key* key, byte* output, word32 inLen,
                            int withAlg)
 {
     int    ret;
@@ -14968,7 +14972,7 @@ int GetTimeString(byte* date, int format, char* buf, int len, int dateLen)
 #endif /* WOLFSSL_ASN_TIME_STRING */
 
 /* Check time struct for valid values. Returns 0 for success */
-static int ValidateGmtime(struct tm* inTime)
+int ValidateGmtime(struct tm* inTime)
 {
     int ret = 1;
     if ((inTime != NULL) &&
@@ -17093,7 +17097,7 @@ int ConfirmSignature(SignatureCtx* sigCtx,
                 case SLH_DSA_SHAKE_192Sk:
                 case SLH_DSA_SHAKE_256Sk:
                 {
-                    int slhDsaParam = wc_SlhDsaOidToParam(keyOID);
+                    int slhDsaParam = wc_SlhDsaOidToParam((int)keyOID);
                     sigCtx->verify = 0;
 
                     /* Mirror PrivateKeyDecode/PublicKeyDecode: a recognised
@@ -17810,6 +17814,19 @@ int wolfssl_local_MatchIpSubnet(const byte* ip, int ipSz,
     return match;
 }
 
+/* RFC 5280 4.2.1.10: otherName matching is byte-exact comparison of the
+ * full OtherName encoding (OID || [0] EXPLICIT value). Both the leaf SAN
+ * (cert->altOtherNamesRaw) and the constraint subtree (Base_entry from
+ * DecodeSubtree) store the same form, so a memcmp suffices. */
+static int MatchOtherNameConstraint(DNS_entry* name, Base_entry* current)
+{
+    if (name == NULL || current == NULL)
+        return 0;
+    if (name->len != current->nameSz)
+        return 0;
+    return XMEMCMP(name->name, current->name, (size_t)current->nameSz) == 0;
+}
+
 /* Search through the list to find if the name is permitted.
  * name     The DNS name to search for
  * dnsList  The list to search through
@@ -17839,6 +17856,12 @@ static int PermittedListOk(DNS_entry* name, Base_entry* dnsList, byte nameType)
             else if (nameType == ASN_URI_TYPE) {
                 if (MatchUriNameConstraint(name->name, name->len,
                         current->name, current->nameSz)) {
+                    match = 1;
+                    break;
+                }
+            }
+            else if (nameType == ASN_OTHER_TYPE) {
+                if (MatchOtherNameConstraint(name, current)) {
                     match = 1;
                     break;
                 }
@@ -17890,6 +17913,12 @@ static int IsInExcludedList(DNS_entry* name, Base_entry* dnsList, byte nameType)
                     break;
                 }
             }
+            else if (nameType == ASN_OTHER_TYPE) {
+                if (MatchOtherNameConstraint(name, current)) {
+                    ret = 1;
+                    break;
+                }
+            }
             else if (name->len >= current->nameSz &&
                 wolfssl_local_MatchBaseName(nameType, name->name, name->len,
                                             current->name, current->nameSz)) {
@@ -17907,13 +17936,14 @@ static int IsInExcludedList(DNS_entry* name, Base_entry* dnsList, byte nameType)
 static int ConfirmNameConstraints(Signer* signer, DecodedCert* cert)
 {
     const byte nameTypes[] = {ASN_RFC822_TYPE, ASN_DNS_TYPE, ASN_DIR_TYPE,
-                              ASN_IP_TYPE, ASN_URI_TYPE};
+                              ASN_IP_TYPE, ASN_URI_TYPE, ASN_OTHER_TYPE};
     int i;
 
     if (signer == NULL || cert == NULL)
         return 0;
 
-    if (signer->excludedNames == NULL && signer->permittedNames == NULL)
+    if (signer->excludedNames == NULL && signer->permittedNames == NULL &&
+            !signer->extNameConstraintHasUnsupported)
         return 1;
 
     for (i=0; i < (int)sizeof(nameTypes); i++) {
@@ -17978,10 +18008,15 @@ static int ConfirmNameConstraints(Signer* signer, DecodedCert* cert)
             case ASN_URI_TYPE:
                 name = cert->altNames;
                 break;
+            case ASN_OTHER_TYPE:
+                /* otherName SAN entries are stored on cert->altOtherNamesRaw
+                 * (kept separate from altNames so the public altNames view
+                 * is unaffected). Each entry holds the raw OtherName
+                 * encoding (OID || [0] EXPLICIT value) and is byte-matched
+                 * against the issuing CA's subtree. */
+                name = cert->altOtherNamesRaw;
+                break;
             default:
-                /* Other types of names are ignored for now.
-                 * Shouldn't it be rejected if it there is a altNamesByType[nameType]
-                 * and signer->extNameConstraintCrit is set? */
                 return 0;
         }
 
@@ -18022,10 +18057,98 @@ static int ConfirmNameConstraints(Signer* signer, DecodedCert* cert)
         }
     }
 
+    /* RFC 5280 4.2.1.10: "If a name constraints extension that is marked as
+     * critical imposes constraints on a particular name form ... the
+     * application MUST either process the constraint or reject the
+     * certificate." otherName is processed by byte-comparison above; any
+     * remaining unsupported forms (registeredID, x400Address, ediPartyName)
+     * trigger the fail-closed reject below. */
+    if (signer->extNameConstraintCrit &&
+            signer->extNameConstraintHasUnsupported) {
+        WOLFSSL_MSG("Critical nameConstraints contains unsupported "
+                    "GeneralName form; rejecting");
+        return 0;
+    }
+
     return 1;
 }
 
 #endif /* IGNORE_NAME_CONSTRAINTS */
+
+#if !defined(WOLFCRYPT_ONLY) && !defined(NO_CERTS)
+/* Returns 1 if name is a syntactically valid DNS FQDN per RFC 952/1123.
+ *
+ * Rules enforced:
+ *   - Total effective length (excluding optional trailing dot) in [1, 253]
+ *   - Each label is 1-63 octets of [a-zA-Z0-9-], with _ allowed in all but
+ *     the last label.
+ *   - No label starts or ends with '-'
+ *   - At least two labels (single-label names are not "fully qualified")
+ *   - Final label (TLD) contains at least one letter (rejects all-numeric
+ *     strings that could be confused with IPv4 literals, and matches the
+ *     ICANN constraint that TLDs are alphabetic)
+ *   - Optional trailing dot is accepted (absolute FQDN form)
+ *   - Internationalized names are valid in their ACE/punycode (xn--) form
+ */
+int wolfssl_local_IsValidFQDN(const char* name, word32 nameSz)
+{
+    word32 i;
+    int labelLen = 0;
+    int labelCount = 0;
+    int curLabelHasAlpha = 0;
+    int curLabelHasUnderscore = 0;
+
+    if (name == NULL || nameSz == 0)
+        return 0;
+
+    /* Strip a single optional trailing dot before measuring.  "example.com."
+     * is the absolute form of the same FQDN.
+     */
+    if (name[nameSz - 1] == '.')
+        --nameSz;
+
+    if (nameSz < 1 || nameSz > 253)
+        return 0;
+
+    for (i = 0; i < nameSz; i++) {
+        byte c = (byte)name[i];
+
+        if (c == '.') {
+            if (labelLen == 0 || name[i - 1] == '-')
+                return 0;
+            ++labelCount;
+            labelLen = 0;
+            curLabelHasAlpha = 0;
+            curLabelHasUnderscore = 0;
+            continue;
+        }
+
+        if (++labelLen > 63)
+            return 0;
+
+        if (c == '-') {
+            if (labelLen == 1)
+                return 0;
+        }
+        else if (((c | 0x20) >= 'a') && ((c | 0x20) <= 'z')) {
+            curLabelHasAlpha = 1;
+        }
+        else if (c == '_') {
+            curLabelHasUnderscore = 1;
+        }
+        else if ((c < '0') || (c > '9')) {
+            return 0;
+        }
+    }
+
+    /* Final label (no trailing dot in the effective range to close it) */
+    if ((labelLen == 0) || (name[nameSz - 1] == '-') || curLabelHasUnderscore)
+        return 0;
+    ++labelCount;
+
+    return ((labelCount > 1) && curLabelHasAlpha);
+}
+#endif /* !WOLFCRYPT_ONLY && !NO_CERTS */
 
 #ifdef WOLFSSL_ASN_TEMPLATE
 #if defined(WOLFSSL_SEP) || defined(WOLFSSL_FPKI)
@@ -18325,10 +18448,36 @@ static int DecodeGeneralName(const byte* input, word32* inOutIdx, byte tag,
     }
     #endif /* WOLFSSL_RID_ALT_NAME */
 #endif /* IGNORE_NAME_CONSTRAINTS */
-#if defined(WOLFSSL_SEP) || defined(WOLFSSL_FPKI)
-    /* GeneralName choice: otherName */
+#ifndef IGNORE_NAME_CONSTRAINTS
+    /* GeneralName choice: otherName.
+     * Store the raw OtherName encoding (OID || [0] EXPLICIT value) on a
+     * dedicated internal list so ConfirmNameConstraints() can byte-match
+     * it against the issuing CA's nameConstraints subtree (RFC 5280
+     * 4.2.1.10). The raw form is kept separate from cert->altNames so
+     * the public altNames view (used by OpenSSL-compat APIs) reflects
+     * exactly what the SAN extension carries. */
     else if (tag == (ASN_CONTEXT_SPECIFIC | ASN_CONSTRUCTED | ASN_OTHER_TYPE)) {
-        /* TODO: test data for code path */
+        ret = SetDNSEntry(cert->heap, (const char*)(input + idx), len,
+                ASN_OTHER_TYPE, &cert->altOtherNamesRaw);
+        if (ret != 0) {
+            return ret;
+        }
+    #if defined(WOLFSSL_SEP) || defined(WOLFSSL_FPKI)
+        /* FPKI/SEP also OID-decode the otherName into a separate altNames
+         * entry that holds the parsed UPN/FASCN value (with oidSum != 0).
+         * That parsed entry is consumed by wc_GetUUIDFromCert /
+         * wc_GetFASCNFromCert; ConfirmNameConstraints() does not look at
+         * it - it iterates altOtherNamesRaw instead. */
+        ret = DecodeOtherName(cert, input, &idx, len);
+    #else
+        idx += (word32)len;
+    #endif
+    }
+#elif defined(WOLFSSL_SEP) || defined(WOLFSSL_FPKI)
+    /* No name constraints support in the build, but FPKI/SEP still need
+     * the parsed otherName entry for wc_GetUUIDFromCert /
+     * wc_GetFASCNFromCert. */
+    else if (tag == (ASN_CONTEXT_SPECIFIC | ASN_CONSTRUCTED | ASN_OTHER_TYPE)) {
         ret = DecodeOtherName(cert, input, &idx, len);
     }
 #endif
@@ -19471,8 +19620,14 @@ static int DecodeSubtreeGeneralName(const byte* input, word32 sz, byte tag,
 
     (void)heap;
 
-    /* if constructed has leading sequence */
-    if ((tag & ASN_CONSTRUCTED) == ASN_CONSTRUCTED) {
+    /* directoryName is encoded as [4] CONSTRUCTED { Name } where Name is a
+     * SEQUENCE - strip the inner SEQUENCE header.
+     * otherName is encoded as [0] CONSTRUCTED { OID, [0] EXPLICIT value }
+     * where the inner content is NOT a SEQUENCE; keep the bytes as-is so
+     * we can byte-match a leaf SAN otherName against the constraint.
+     */
+    if ((tag & ASN_CONSTRUCTED) == ASN_CONSTRUCTED &&
+            (tag & ASN_TYPE_MASK) != ASN_OTHER_TYPE) {
         ret = GetASN_Sequence(input, &nameIdx, &strLen, sz, 0);
         if (ret < 0) {
             ret = ASN_PARSE_E;
@@ -19531,8 +19686,17 @@ static int DecodeSubtreeGeneralName(const byte* input, word32 sz, byte tag,
  * @return  ASN_PARSE_E when SEQUENCE is not found as expected.
  */
 #ifdef WOLFSSL_ASN_TEMPLATE
+/* Decode a sub-tree of name constraints.
+ *
+ * @param [out]     hasUnsupported  Set to 1 when an entry with a GeneralName
+ *                                  form we cannot fully enforce was
+ *                                  encountered. Drives the RFC 5280 4.2.1.10
+ *                                  fail-closed requirement for critical
+ *                                  nameConstraints extensions; must not be
+ *                                  NULL.
+ */
 static int DecodeSubtree(const byte* input, word32 sz, Base_entry** head,
-                         word32 limit, void* heap)
+                         word32 limit, byte* hasUnsupported, void* heap)
 {
     DECL_ASNGETDATA(dataASN, subTreeASN_Length);
     word32 idx = 0;
@@ -19574,13 +19738,21 @@ static int DecodeSubtree(const byte* input, word32 sz, Base_entry** head,
                 t == (ASN_CONTEXT_SPECIFIC | ASN_RFC822_TYPE) ||
                 t == (ASN_CONTEXT_SPECIFIC | ASN_CONSTRUCTED | ASN_DIR_TYPE) ||
                 t == (ASN_CONTEXT_SPECIFIC | ASN_IP_TYPE) ||
-                t == (ASN_CONTEXT_SPECIFIC | ASN_URI_TYPE)) {
+                t == (ASN_CONTEXT_SPECIFIC | ASN_URI_TYPE) ||
+                t == (ASN_CONTEXT_SPECIFIC | ASN_CONSTRUCTED |
+                      ASN_OTHER_TYPE)) {
                 /* Parse the general name and store a new entry. */
                 ret = DecodeSubtreeGeneralName(input +
                     GetASNItem_DataIdx(dataASN[SUBTREEASN_IDX_BASE], input),
                     dataASN[SUBTREEASN_IDX_BASE].length, t, head, heap);
             }
-            /* Skip entry. */
+            else {
+                /* GeneralName form (e.g. registeredID, x400Address,
+                 * ediPartyName) we do not enforce. Record so the caller can
+                 * fail-closed when the nameConstraints extension is critical
+                 * (RFC 5280 4.2.1.10). */
+                *hasUnsupported = 1;
+            }
         }
     }
 
@@ -19628,6 +19800,7 @@ static int DecodeNameConstraints(const byte* input, word32 sz,
     DECL_ASNGETDATA(dataASN, nameConstraintsASN_Length);
     word32 idx = 0;
     int    ret = 0;
+    byte   hasUnsupported = 0;
 
     CALLOC_ASNGETDATA(dataASN, nameConstraintsASN_Length, ret, cert->heap);
 
@@ -19643,7 +19816,7 @@ static int DecodeNameConstraints(const byte* input, word32 sz,
                     dataASN[NAMECONSTRAINTSASN_IDX_PERMIT].data.ref.data,
                     dataASN[NAMECONSTRAINTSASN_IDX_PERMIT].data.ref.length,
                     &cert->permittedNames, WOLFSSL_MAX_NAME_CONSTRAINTS,
-                    cert->heap);
+                    &hasUnsupported, cert->heap);
         }
     }
     if (ret == 0) {
@@ -19653,8 +19826,12 @@ static int DecodeNameConstraints(const byte* input, word32 sz,
                     dataASN[NAMECONSTRAINTSASN_IDX_EXCLUDE].data.ref.data,
                     dataASN[NAMECONSTRAINTSASN_IDX_EXCLUDE].data.ref.length,
                     &cert->excludedNames, WOLFSSL_MAX_NAME_CONSTRAINTS,
-                    cert->heap);
+                    &hasUnsupported, cert->heap);
         }
+    }
+
+    if (ret == 0 && hasUnsupported) {
+        cert->extNameConstraintHasUnsupported = 1;
     }
 
     FREE_ASNGETDATA(dataASN, cert->heap);
@@ -19964,14 +20141,8 @@ static int DecodeSubjInfoAcc(const byte* input, word32 sz, DecodedCert* cert)
 {
     word32 idx = 0;
     int length = 0;
-    int ret = 0;
 
     WOLFSSL_ENTER("DecodeSubjInfoAcc");
-
-#ifdef OPENSSL_ALL
-    cert->extSubjAltNameSrc = input;
-    cert->extSubjAltNameSz = sz;
-#endif /* OPENSSL_ALL */
 
     /* Unwrap SubjectInfoAccessSyntax, the list of AccessDescriptions */
     if (GetSequence(input, &idx, &length, sz) < 0)
@@ -19985,12 +20156,11 @@ static int DecodeSubjInfoAcc(const byte* input, word32 sz, DecodedCert* cert)
         return ASN_PARSE_E;
     }
 
-    /* Per fpkx-x509-cert-profile-common... section 5.3.
-     * [The] subjectInfoAccess extension must contain at least one
-     * instance of the id-ad-caRepository access method containing a
-     * publicly accessible HTTP URI which returns as certs-only
-     * CMS.
-     */
+    /* RFC 5280 specifies that at least one entry must be present but does not
+     * specify any particular OID must be present. For certificates following
+     * fpki-x509-cert-profile-common, we extract the id-ad-caRepository caRepo
+     * entry to cert->extSubjInfoAccCaRepo / cert->extSubjInfoAccCaRepoSz for
+     * convenient user access. */
 
     while (idx < (word32)sz) {
         word32 oid = 0;
@@ -20020,14 +20190,8 @@ static int DecodeSubjInfoAcc(const byte* input, word32 sz, DecodedCert* cert)
         idx += (word32)length;
     }
 
-    if (cert->extSubjInfoAccCaRepo == NULL ||
-            cert->extSubjInfoAccCaRepoSz == 0) {
-        WOLFSSL_MSG("SubjectInfoAccess missing an URL.");
-        ret = ASN_PARSE_E;
-    }
-
-    WOLFSSL_LEAVE("DecodeSubjInfoAcc", ret);
-    return ret;
+    WOLFSSL_LEAVE("DecodeSubjInfoAcc", 0);
+    return 0;
 }
 #endif /* WOLFSSL_SUBJ_INFO_ACC */
 
@@ -23108,6 +23272,9 @@ int FillSigner(Signer* signer, DecodedCert* cert, int type, DerBuffer *der)
     #ifndef IGNORE_NAME_CONSTRAINTS
         signer->permittedNames = cert->permittedNames;
         signer->excludedNames  = cert->excludedNames;
+        signer->extNameConstraintCrit = cert->extNameConstraintCrit;
+        signer->extNameConstraintHasUnsupported =
+            cert->extNameConstraintHasUnsupported;
     #endif
     #ifndef NO_SKID
         XMEMCPY(signer->subjectKeyIdHash, cert->extSubjKeyId,
@@ -27644,7 +27811,7 @@ static int MakeSignature(CertSignCtx* certSignCtx, const byte* buf, word32 sz,
         word32 outSz = sigSz;
         ret = wc_SlhDsaKey_Sign(slhDsaKey, NULL, 0, buf, sz, sig, &outSz, rng);
         if (ret == 0)
-            ret = outSz;
+            ret = (int)outSz;
     }
 #endif /* WOLFSSL_HAVE_SLHDSA && !WOLFSSL_SLHDSA_VERIFY_ONLY */
 
@@ -32201,7 +32368,7 @@ int wc_Curve448PublicKeyDecode(const byte* input, word32* inOutIdx,
 #if defined(HAVE_ED448) && defined(HAVE_ED448_KEY_EXPORT)
 /* Write a Private ecc key, including public to DER format,
  * length on success else < 0 */
-int wc_Ed448KeyToDer(ed448_key* key, byte* output, word32 inLen)
+int wc_Ed448KeyToDer(const ed448_key* key, byte* output, word32 inLen)
 {
     if (key == NULL) {
         return BAD_FUNC_ARG;
@@ -32212,7 +32379,7 @@ int wc_Ed448KeyToDer(ed448_key* key, byte* output, word32 inLen)
 
 /* Write only private ecc key to DER format,
  * length on success else < 0 */
-int wc_Ed448PrivateKeyToDer(ed448_key* key, byte* output, word32 inLen)
+int wc_Ed448PrivateKeyToDer(const ed448_key* key, byte* output, word32 inLen)
 {
     if (key == NULL) {
         return BAD_FUNC_ARG;

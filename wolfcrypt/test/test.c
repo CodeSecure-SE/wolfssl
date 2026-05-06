@@ -1231,40 +1231,23 @@ typedef struct func_args {
 /* Kernel modules implement and install their own FIPS callback with similar
  * functionality.
  */
-#ifdef REALLY_LONG_DRBG_CONTINUOUS_TEST
-    int only_run_cb_once = 1;
-#endif
 #if defined(HAVE_FIPS) && !defined(WOLFSSL_KERNEL_MODE)
 static void myFipsCb(int ok, int err, const char* hash)
 {
-#ifdef REALLY_LONG_DRBG_CONTINUOUS_TEST
-    if (only_run_cb_once == 1) {
-#endif
-    printf("in my Fips callback, ok = %d, err = %d\n", ok, err);
-    printf("message = %s\n", wc_GetErrorString(err));
-    printf("hash = %s\n", hash);
+    static int rendered_fips_message = 0;
 
-    if (err == WC_NO_ERR_TRACE(IN_CORE_FIPS_E)) {
-        printf("In core integrity hash check failure, copy above hash\n");
-        printf("into verifyCore[] in fips_test.c and rebuild\n");
-#ifdef TEST_ALWAYS_RUN_TO_END
-        /* When TEST_ALWAYS_RUN_TO_END is defined, testwolfcrypt tries to
-         * run every test even after failures. But with a wrong integrity
-         * hash the FIPS module is in FAILED state and every API call will
-         * fail, fire this callback, and produce millions of lines of
-         * redundant output. Exit now -- the hash has been printed for
-         * fips-hash.sh to extract, and no test can possibly pass. */
-        exit(IN_CORE_FIPS_E); /* NOLINT(concurrency-mt-unsafe) */
-#endif
+    if (rendered_fips_message == 0) {
+        rendered_fips_message = 1;
+
+        printf("in my Fips callback, ok = %d, err = %d\n", ok, err);
+        printf("message = %s\n", wc_GetErrorString(err));
+        printf("hash = %s\n", hash);
+
+        if (err == WC_NO_ERR_TRACE(IN_CORE_FIPS_E)) {
+            printf("In core integrity hash check failure, copy above hash\n");
+            printf("into verifyCore[] in fips_test.c and rebuild\n");
+        }
     }
-#ifdef REALLY_LONG_DRBG_CONTINUOUS_TEST
-        only_run_cb_once = 0;
-    } else {
-        (void) ok;
-        (void) err;
-        (void) hash;
-    }
-#endif
 }
 #endif /* HAVE_FIPS && !WOLFSSL_KERNEL_MODE */
 
@@ -2387,6 +2370,14 @@ options: [-s max_relative_stack_bytes] [-m max_relative_heap_memory_bytes]\n\
         TEST_FAIL("CAVP selftest failed!\n", ret);
     else
         TEST_PASS("CAVP selftest passed!\n");
+#endif
+
+#if defined(HAVE_FIPS) && FIPS_VERSION3_GT(5,2,0)
+    ret = wc_RunAllCast_fips();
+    if (ret != 0)
+        TEST_FAIL("wc_RunAllCast_fips failed.\n", ret);
+    else
+        TEST_PASS("wc_RunAllCast_fips passed.\n");
 #endif
 
     if ( (ret = macro_test()) != 0)
@@ -16843,6 +16834,153 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t aes_cbc_test(void)
             ERROR_OUT(WC_TEST_RET_ENC_NC, out);
         }
         #endif /* HAVE_AES_DECRYPT */
+
+        /* Multi-block streaming: exercises the IV-handoff path with sz > 16
+         * so that out[0] and out[sz-16] differ. Hardware backends that stash
+         * the wrong ciphertext block into aes->reg between calls (e.g. the
+         * first block instead of the last) will fail the second KAT. */
+        {
+            WOLFSSL_SMALL_STACK_STATIC const byte msg4[] = {
+                0x6b,0xc1,0xbe,0xe2,0x2e,0x40,0x9f,0x96,
+                0xe9,0x3d,0x7e,0x11,0x73,0x93,0x17,0x2a,
+                0xae,0x2d,0x8a,0x57,0x1e,0x03,0xac,0x9c,
+                0x9e,0xb7,0x6f,0xac,0x45,0xaf,0x8e,0x51,
+                0x30,0xc8,0x1c,0x46,0xa3,0x5c,0xe4,0x11,
+                0xe5,0xfb,0xc1,0x19,0x1a,0x0a,0x52,0xef,
+                0xf6,0x9f,0x24,0x45,0xdf,0x4f,0x9b,0x17,
+                0xad,0x2b,0x41,0x7b,0xe6,0x6c,0x37,0x10
+            };
+            WOLFSSL_SMALL_STACK_STATIC const byte verify4[] = {
+                0x76,0x49,0xab,0xac,0x81,0x19,0xb2,0x46,
+                0xce,0xe9,0x8e,0x9b,0x12,0xe9,0x19,0x7d,
+                0x50,0x86,0xcb,0x9b,0x50,0x72,0x19,0xee,
+                0x95,0xdb,0x11,0x3a,0x91,0x76,0x78,0xb2,
+                0x73,0xbe,0xd6,0xb8,0xe3,0xc1,0x74,0x3b,
+                0x71,0x16,0xe6,0x9e,0x22,0x22,0x95,0x16,
+                0x3f,0xf1,0xca,0xa1,0x68,0x1f,0xac,0x09,
+                0x12,0x0e,0xca,0x30,0x75,0x86,0xe1,0xa7
+            };
+
+            ret = wc_AesSetKey(enc, key2, sizeof(key2), iv2, AES_ENCRYPTION);
+            if (ret != 0)
+                ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
+
+            XMEMSET(cipher, 0, sizeof(cipher));
+            ret = wc_AesCbcEncrypt(enc, cipher, msg4, WC_AES_BLOCK_SIZE * 2);
+        #if defined(WOLFSSL_ASYNC_CRYPT)
+            ret = wc_AsyncWait(ret, &enc->asyncDev, WC_ASYNC_FLAG_NONE);
+        #endif
+            if (ret != 0)
+                ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
+
+            ret = wc_AesCbcEncrypt(enc, cipher + WC_AES_BLOCK_SIZE * 2,
+                                   msg4 + WC_AES_BLOCK_SIZE * 2,
+                                   WC_AES_BLOCK_SIZE * 2);
+        #if defined(WOLFSSL_ASYNC_CRYPT)
+            ret = wc_AsyncWait(ret, &enc->asyncDev, WC_ASYNC_FLAG_NONE);
+        #endif
+            if (ret != 0)
+                ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
+
+            if (XMEMCMP(cipher, verify4, sizeof(verify4))) {
+                WOLFSSL_MSG("wc_AesCbcEncrypt streaming failed cipher compare");
+                ERROR_OUT(WC_TEST_RET_ENC_NC, out);
+            }
+
+            /* In-place multi-block streaming encrypt: input and output
+             * overlap. The next-call IV is read from the output buffer,
+             * which always holds ciphertext post-call, so this must work
+             * for any correct backend regardless of aliasing. */
+            ret = wc_AesSetKey(enc, key2, sizeof(key2), iv2, AES_ENCRYPTION);
+            if (ret != 0)
+                ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
+
+            XMEMCPY(cipher, msg4, sizeof(msg4));
+
+            ret = wc_AesCbcEncrypt(enc, cipher, cipher, WC_AES_BLOCK_SIZE * 2);
+        #if defined(WOLFSSL_ASYNC_CRYPT)
+            ret = wc_AsyncWait(ret, &enc->asyncDev, WC_ASYNC_FLAG_NONE);
+        #endif
+            if (ret != 0)
+                ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
+
+            ret = wc_AesCbcEncrypt(enc, cipher + WC_AES_BLOCK_SIZE * 2,
+                                   cipher + WC_AES_BLOCK_SIZE * 2,
+                                   WC_AES_BLOCK_SIZE * 2);
+        #if defined(WOLFSSL_ASYNC_CRYPT)
+            ret = wc_AsyncWait(ret, &enc->asyncDev, WC_ASYNC_FLAG_NONE);
+        #endif
+            if (ret != 0)
+                ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
+
+            if (XMEMCMP(cipher, verify4, sizeof(verify4))) {
+                WOLFSSL_MSG("wc_AesCbcEncrypt in-place streaming failed"
+                            " cipher compare");
+                ERROR_OUT(WC_TEST_RET_ENC_NC, out);
+            }
+
+        #ifdef HAVE_AES_DECRYPT
+            ret = wc_AesSetKey(dec, key2, sizeof(key2), iv2, AES_DECRYPTION);
+            if (ret != 0)
+                ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
+
+            XMEMSET(plain, 0, sizeof(plain));
+            ret = wc_AesCbcDecrypt(dec, plain, verify4, WC_AES_BLOCK_SIZE * 2);
+        #if defined(WOLFSSL_ASYNC_CRYPT)
+            ret = wc_AsyncWait(ret, &dec->asyncDev, WC_ASYNC_FLAG_NONE);
+        #endif
+            if (ret != 0)
+                ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
+
+            ret = wc_AesCbcDecrypt(dec, plain + WC_AES_BLOCK_SIZE * 2,
+                                   verify4 + WC_AES_BLOCK_SIZE * 2,
+                                   WC_AES_BLOCK_SIZE * 2);
+        #if defined(WOLFSSL_ASYNC_CRYPT)
+            ret = wc_AsyncWait(ret, &dec->asyncDev, WC_ASYNC_FLAG_NONE);
+        #endif
+            if (ret != 0)
+                ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
+
+            if (XMEMCMP(plain, msg4, sizeof(msg4))) {
+                WOLFSSL_MSG("wc_AesCbcDecrypt streaming failed plain compare");
+                ERROR_OUT(WC_TEST_RET_ENC_NC, out);
+            }
+
+            /* In-place multi-block streaming decrypt: input and output
+             * overlap, so backends must snapshot the last ciphertext block
+             * BEFORE decrypting (it is clobbered by the plaintext write).
+             * Backends that read the IV for the next call from the output
+             * buffer after decrypt will stash plaintext and garble the
+             * first block of the next call. */
+            ret = wc_AesSetKey(dec, key2, sizeof(key2), iv2, AES_DECRYPTION);
+            if (ret != 0)
+                ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
+
+            XMEMCPY(plain, verify4, sizeof(verify4));
+
+            ret = wc_AesCbcDecrypt(dec, plain, plain, WC_AES_BLOCK_SIZE * 2);
+        #if defined(WOLFSSL_ASYNC_CRYPT)
+            ret = wc_AsyncWait(ret, &dec->asyncDev, WC_ASYNC_FLAG_NONE);
+        #endif
+            if (ret != 0)
+                ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
+
+            ret = wc_AesCbcDecrypt(dec, plain + WC_AES_BLOCK_SIZE * 2,
+                                   plain + WC_AES_BLOCK_SIZE * 2,
+                                   WC_AES_BLOCK_SIZE * 2);
+        #if defined(WOLFSSL_ASYNC_CRYPT)
+            ret = wc_AsyncWait(ret, &dec->asyncDev, WC_ASYNC_FLAG_NONE);
+        #endif
+            if (ret != 0)
+                ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
+
+            if (XMEMCMP(plain, msg4, sizeof(msg4))) {
+                WOLFSSL_MSG("wc_AesCbcDecrypt in-place streaming failed"
+                            " plain compare");
+                ERROR_OUT(WC_TEST_RET_ENC_NC, out);
+            }
+        #endif /* HAVE_AES_DECRYPT */
+        }
 
         aes_cbc_oneshot_test();
     }
@@ -36918,7 +37056,8 @@ static wc_test_ret_t ecc_test_curve(WC_RNG* rng, int keySize, int curve_id)
 #endif
 
 #if defined(HAVE_ECC_KEY_IMPORT) && defined(HAVE_ECC_KEY_EXPORT) && \
-    !defined(NO_ASN_CRYPT) && !defined(WC_NO_RNG)
+    !defined(NO_ASN_CRYPT) && !defined(WC_NO_RNG) && \
+    !defined(WOLFSSL_ATECC508A) && !defined(WOLFSSL_ATECC608A)
     ret = ecc_test_key_decode(rng, keySize);
     if (ret < 0) {
         if (ret == WC_NO_ERR_TRACE(ECC_CURVE_OID_E)) {
@@ -36931,7 +37070,8 @@ static wc_test_ret_t ecc_test_curve(WC_RNG* rng, int keySize, int curve_id)
     }
 #endif
 
-#if defined(HAVE_ECC_KEY_EXPORT) && !defined(NO_ASN_CRYPT) && !defined(WC_NO_RNG)
+#if defined(HAVE_ECC_KEY_EXPORT) && !defined(NO_ASN_CRYPT) && !defined(WC_NO_RNG) && \
+    !defined(WOLFSSL_ATECC508A) && !defined(WOLFSSL_ATECC608A)
     ret = ecc_test_key_gen(rng, keySize);
     if (ret < 0) {
         if (ret == WC_NO_ERR_TRACE(ECC_CURVE_OID_E)) {
@@ -37381,7 +37521,8 @@ done:
 #endif /* HAVE_ECC_KEY_IMPORT && HAVE_ECC_KEY_EXPORT */
 
 #if defined(HAVE_ECC_KEY_IMPORT) && !defined(WOLFSSL_VALIDATE_ECC_IMPORT) && \
-    !defined(WOLFSSL_CRYPTOCELL) && !defined(WOLF_CRYPTO_CB_ONLY_ECC)
+    !defined(WOLFSSL_CRYPTOCELL) && !defined(WOLF_CRYPTO_CB_ONLY_ECC) && \
+    !defined(WOLFSSL_ATECC508A) && !defined(WOLFSSL_ATECC608A)
 static wc_test_ret_t ecc_mulmod_test(ecc_key* key1)
 {
     wc_test_ret_t ret;
@@ -37563,8 +37704,10 @@ static wc_test_ret_t ecc_def_curve_test(WC_RNG *rng)
     #endif
     TEST_SLEEP();
 
-    #if defined(HAVE_ECC_DHE) && !defined(WOLFSSL_CRYPTOCELL) && \
-       !defined(WOLF_CRYPTO_CB_ONLY_ECC)
+    #if defined(HAVE_ECC_DHE) && !defined(WC_NO_RNG) && \
+       !defined(WOLF_CRYPTO_CB_ONLY_ECC) && !defined(WOLFSSL_ATECC508A) && \
+       !defined(WOLFSSL_ATECC608A) && !defined(PLUTON_CRYPTO_ECC) && \
+       !defined(WOLFSSL_CRYPTOCELL)
     ret = ecc_ssh_test(key, rng);
     if (ret < 0)
         goto done;
@@ -37609,13 +37752,15 @@ static wc_test_ret_t ecc_def_curve_test(WC_RNG *rng)
         goto done;
     }
 
-#if defined(HAVE_ECC_KEY_IMPORT) && defined(HAVE_ECC_KEY_EXPORT)
+#if defined(HAVE_ECC_KEY_IMPORT) && defined(HAVE_ECC_KEY_EXPORT) && \
+    !defined(WOLFSSL_ATECC508A) && !defined(WOLFSSL_ATECC608A)
     ret = ecc_exp_imp_test(key);
     if (ret < 0)
         goto done;
 #endif
 #if defined(HAVE_ECC_KEY_IMPORT) && !defined(WOLFSSL_VALIDATE_ECC_IMPORT) && \
-    !defined(WOLFSSL_CRYPTOCELL)
+    !defined(WOLFSSL_CRYPTOCELL) && !defined(WOLFSSL_ATECC508A) && \
+    !defined(WOLFSSL_ATECC608A)
     ret = ecc_mulmod_test(key);
     if (ret < 0)
         goto done;
@@ -53979,6 +54124,16 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t lms_test_verify_only(void)
 
 #if defined(WOLFSSL_HAVE_SLHDSA)
 
+/* If kernel or embedded, test with verify-only so that overly lengthy keygen
+ * and siggen tests are omitted, leaning on the FIPS KATs.
+ */
+#if (defined(WOLFSSL_KERNEL_MODE) || \
+     defined(BENCH_EMBEDDED)) && \
+    !defined(WOLFSSL_SLHDSA_FORCE_FULL_TESTS) && \
+    !defined(WOLFSSL_SLHDSA_VERIFY_ONLY)
+    #define WOLFSSL_SLHDSA_VERIFY_ONLY
+#endif
+
 #ifndef WOLFSSL_SLHDSA_VERIFY_ONLY
 /* KeyGen KAT: deterministic key generation cross-validated against NIST CAVP
  * vectors. Verifies that MakeKeyWithRandom produces the expected sk and pk
@@ -66406,6 +66561,52 @@ static wc_test_ret_t mp_test_mont(mp_int* a, mp_int* m, mp_int* n, mp_int* r, WC
 }
 #endif
 
+/* mp_cond_swap_ct resolves to sp_cond_swap_ct in SP-math builds, which is only
+ * compiled when HAVE_ECC && ECC_TIMING_RESISTANT && !WC_NO_CACHE_RESISTANT.
+ * Gate the test to match. */
+#if !defined(WOLFSSL_SP_MATH) && !defined(WOLFSSL_SP_MATH_ALL)
+    #define MP_TEST_COND_SWAP_AVAILABLE
+#elif defined(HAVE_ECC) && defined(ECC_TIMING_RESISTANT) && \
+      !defined(WC_NO_CACHE_RESISTANT)
+    #define MP_TEST_COND_SWAP_AVAILABLE
+#endif
+
+#ifdef MP_TEST_COND_SWAP_AVAILABLE
+static wc_test_ret_t mp_test_cond_swap(mp_int* a, mp_int* b)
+{
+    int ret;
+    int c;
+
+    mp_zero(a);
+    mp_zero(b);
+    ret = mp_set_int(a, 0x12345678);
+    if (ret != 0) return WC_TEST_RET_ENC_EC(ret);
+    ret = mp_set_int(b, 0x9abcdef0);
+    if (ret != 0) return WC_TEST_RET_ENC_EC(ret);
+    c = (a->used > b->used) ? a->used : b->used;
+
+    /* m == 0: no swap. */
+    ret = mp_cond_swap_ct(a, b, c, 0);
+    if (ret != 0) return WC_TEST_RET_ENC_EC(ret);
+    if (a->dp[0] != 0x12345678 || b->dp[0] != 0x9abcdef0)
+        return WC_TEST_RET_ENC_NC;
+
+    /* m == 1: swap. */
+    ret = mp_cond_swap_ct(a, b, c, 1);
+    if (ret != 0) return WC_TEST_RET_ENC_EC(ret);
+    if (a->dp[0] != 0x9abcdef0 || b->dp[0] != 0x12345678)
+        return WC_TEST_RET_ENC_NC;
+
+    /* m == 1 again: swap back. */
+    ret = mp_cond_swap_ct(a, b, c, 1);
+    if (ret != 0) return WC_TEST_RET_ENC_EC(ret);
+    if (a->dp[0] != 0x12345678 || b->dp[0] != 0x9abcdef0)
+        return WC_TEST_RET_ENC_NC;
+
+    return 0;
+}
+#endif /* MP_TEST_COND_SWAP_AVAILABLE */
+
 WOLFSSL_TEST_SUBROUTINE wc_test_ret_t mp_test(void)
 {
     WC_RNG rng;
@@ -66717,6 +66918,10 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t mp_test(void)
 #if defined(HAVE_ECC) || \
     (!defined(NO_RSA) && !defined(WOLFSSL_RSA_VERIFY_ONLY))
     if ((ret = mp_test_mont(a, b, r1, r2, &rng)) != 0)
+        goto done;
+#endif
+#ifdef MP_TEST_COND_SWAP_AVAILABLE
+    if ((ret = mp_test_cond_swap(a, b)) != 0)
         goto done;
 #endif
 

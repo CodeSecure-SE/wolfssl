@@ -960,7 +960,7 @@ typedef struct WOLFSSL_ALERT_HISTORY {
 
 
 /* Valid Alert types from page 16/17
- * Add alert string to the function AlertTypeToString in src/ssl.c
+ * Add alert string to the function AlertTypeToString in src/internal.c
  */
 enum AlertDescription {
     invalid_alert                   =  -1,
@@ -998,7 +998,8 @@ enum AlertDescription {
     bad_certificate_status_response = 113, /**< RFC 6066, section 8 */
     unknown_psk_identity            = 115, /**< RFC 4279, section 2 */
     certificate_required            = 116, /**< RFC 8446, section 8.2 */
-    no_application_protocol         = 120
+    no_application_protocol         = 120,
+    ech_required                    = 121  /**< RFC 9849, section 5 */
 };
 
 #ifdef WOLFSSL_MYSQL_COMPATIBLE
@@ -1249,6 +1250,9 @@ WOLFSSL_API int wolfSSL_SetEchConfigs(WOLFSSL* ssl, const byte* echConfigs,
     word32 echConfigsLen);
 
 WOLFSSL_API int wolfSSL_GetEchConfigs(WOLFSSL* ssl, byte* echConfigs,
+    word32* echConfigsLen);
+
+WOLFSSL_API int wolfSSL_GetEchRetryConfigs(WOLFSSL* ssl, byte* echConfigs,
     word32* echConfigsLen);
 
 WOLFSSL_API void wolfSSL_SetEchEnable(WOLFSSL* ssl, byte enable);
@@ -4779,9 +4783,8 @@ enum {
     WOLFSSL_FFDHE_8192    = 260,
     WOLFSSL_FFDHE_END     = 511,
 
-#ifdef WOLFSSL_HAVE_MLKEM
+    /* Post Quantum KEM code points */
 
-#ifdef WOLFSSL_MLKEM_KYBER
     /* Old code points to keep compatibility with Kyber Round 3.
      * Taken from OQS's openssl provider, see:
      * https://github.com/open-quantum-safe/oqs-provider/blob/main/oqs-template/
@@ -4798,8 +4801,7 @@ enum {
     WOLFSSL_X448_KYBER_LEVEL3     = 12176,
     WOLFSSL_X25519_KYBER_LEVEL3   = 25497,
     WOLFSSL_P256_KYBER_LEVEL3     = 25498,
-#endif /* WOLFSSL_MLKEM_KYBER */
-#ifndef WOLFSSL_NO_ML_KEM
+
     /* Taken from draft-ietf-tls-mlkem, see:
      * https://datatracker.ietf.org/doc/draft-ietf-tls-mlkem/
      */
@@ -4828,8 +4830,6 @@ enum {
     WOLFSSL_SECP521R1MLKEM1024    = 12109,
     WOLFSSL_X25519MLKEM512        = 12214,
     WOLFSSL_X448MLKEM768          = 12215,
-#endif /* WOLFSSL_NO_ML_KEM */
-#endif /* WOLFSSL_HAVE_MLKEM */
     WOLF_ENUM_DUMMY_LAST_ELEMENT(SSL_H)
 };
 

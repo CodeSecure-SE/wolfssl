@@ -2703,8 +2703,10 @@ int InitSSL_Ctx(WOLFSSL_CTX* ctx, WOLFSSL_METHOD* method, void* heap)
         }
         #endif
     #else
-        ctx->CBIORecv = EmbedReceive;
-        ctx->CBIOSend = EmbedSend;
+        #ifndef WOLFSSL_DTLS_ONLY
+            ctx->CBIORecv = EmbedReceive;
+            ctx->CBIOSend = EmbedSend;
+        #endif
         #ifdef WOLFSSL_SESSION_EXPORT
             ctx->CBGetPeer = EmbedGetPeer;
             ctx->CBSetPeer = EmbedSetPeer;
@@ -2840,7 +2842,9 @@ int InitSSL_Ctx(WOLFSSL_CTX* ctx, WOLFSSL_METHOD* method, void* heap)
 #endif
 
 #ifdef WOLFSSL_EARLY_DATA
-    ctx->maxEarlyDataSz = MAX_EARLY_DATA_SZ;
+    /* RFC 8446 section E.5: 0-RTT off by default; opt in via
+     * wolfSSL_CTX_set_max_early_data(). */
+    ctx->maxEarlyDataSz = 0;
 #endif
 
 #if defined(HAVE_SESSION_TICKET) || !defined(NO_PSK)
@@ -8773,6 +8777,10 @@ void wolfSSL_ResourceFree(WOLFSSL* ssl)
         FreeEchConfigs(ssl->echConfigs, ssl->heap);
         ssl->echConfigs = NULL;
     }
+    if (ssl->echRetryConfigs != NULL) {
+        FreeEchConfigs(ssl->echRetryConfigs, ssl->heap);
+        ssl->echRetryConfigs = NULL;
+    }
 #endif /* HAVE_ECH */
 #endif /* WOLFSSL_TLS13 */
 #ifdef WOLFSSL_HAVE_TLS_UNIQUE
@@ -13310,9 +13318,17 @@ static int MatchIPv6(const char* pattern, int patternLen,
     XMEMSET(&addr2, 0, sizeof(addr2));
 
     /* Try parsing both as IPv6 */
-    if (XINET_PTON(WOLFSSL_IP6, patBuf, &addr1) != 1)
+#ifdef FREESCALE_MQX
+    if (XINET_PTON(WOLFSSL_IP6, patBuf, &addr1.sin6_addr, sizeof(addr1.sin6_addr)) != RTCS_OK)
+#else
+    if (XINET_PTON(WOLFSSL_IP6, patBuf, &addr1.sin6_addr) != 1)
+#endif
         return 0;
-    if (XINET_PTON(WOLFSSL_IP6, strBuf, &addr2) != 1)
+#ifdef FREESCALE_MQX
+    if (XINET_PTON(WOLFSSL_IP6, strBuf, &addr2.sin6_addr, sizeof(addr2.sin6_addr)) != RTCS_OK)
+#else
+    if (XINET_PTON(WOLFSSL_IP6, strBuf, &addr2.sin6_addr) != 1)
+#endif
         return 0;
 
     /* Compare raw address bytes */
@@ -13343,6 +13359,22 @@ int MatchDomainName(const char* pattern, int patternLen, const char* str,
     if (MatchIPv6(pattern, patternLen, str, strLen))
         return 1;
 #endif
+
+    if (leftWildcardOnly && (! wolfssl_local_IsValidFQDN(str, strLen))) {
+        /* Not a valid FQDN -- require byte-exact match, no case folding, no
+         * wildcard interpretation.  This is appropriate for an IPv4 match, for
+         * example, but also matches improvised names like "localhost", albeit
+         * case-sensitively.
+         */
+        return (((word32)patternLen == strLen) &&
+                (XMEMCMP(pattern, str, patternLen) == 0));
+    }
+
+    /* strip trailing dots if necessary (FQDN designator). */
+    if (str[strLen-1] == '.')
+        --strLen;
+    if (pattern[patternLen-1] == '.')
+        --patternLen;
 
     while (patternLen > 0) {
         /* Get the next pattern char to evaluate */
@@ -15744,6 +15776,8 @@ int ProcessPeerCerts(WOLFSSL* ssl, byte* input, word32* inOutIdx,
     byte* subjectHash = NULL;
     int alreadySigner = 0;
 
+    char* domainName = NULL;
+
 #if defined(HAVE_CERTIFICATE_STATUS_REQUEST_V2)
     int addToPendingCAs = 0;
 #endif
@@ -16932,17 +16966,34 @@ int ProcessPeerCerts(WOLFSSL* ssl, byte* input, word32* inOutIdx,
                 }
             #endif
 
-                if (!ssl->options.verifyNone && ssl->buffers.domainName.buffer) {
+                domainName = (char*)ssl->buffers.domainName.buffer;
+            #if !defined(NO_WOLFSSL_CLIENT) && defined(HAVE_ECH)
+                /* RFC 9849 s6.1.7: ECH offered but rejected by the server...
+                 * verify cert is valid for ECHConfig.public_name */
+                if (ssl->options.side == WOLFSSL_CLIENT_END &&
+                        ssl->echConfigs != NULL &&
+                        !ssl->options.echAccepted) {
+                    TLSX* echX = TLSX_Find(ssl->extensions, TLSX_ECH);
+                    if (echX != NULL && echX->data != NULL) {
+                        WOLFSSL_ECH* ech = (WOLFSSL_ECH*)echX->data;
+                        if (ech->echConfig != NULL &&
+                                ech->echConfig->publicName != NULL) {
+                            domainName = ech->echConfig->publicName;
+                        }
+                    }
+                }
+            #endif
+
+                if (!ssl->options.verifyNone && domainName) {
                 #ifndef WOLFSSL_ALLOW_NO_CN_IN_SAN
                     /* Per RFC 5280 section 4.2.1.6, "Whenever such identities
                      * are to be bound into a certificate, the subject
                      * alternative name extension MUST be used." */
                     if (args->dCert->altNames) {
-                        if (CheckForAltNames(args->dCert,
-                                (char*)ssl->buffers.domainName.buffer,
-                                (ssl->buffers.domainName.buffer == NULL ? 0 :
-                                (word32)XSTRLEN(
-                                (const char *)ssl->buffers.domainName.buffer)),
+                        if (CheckForAltNames(
+                                args->dCert,
+                                domainName,
+                                (word32)XSTRLEN((const char *)domainName),
                                 NULL, 0, 0) != 1) {
                             WOLFSSL_MSG("DomainName match on alt names failed");
                             /* try to get peer key still */
@@ -16955,11 +17006,9 @@ int ProcessPeerCerts(WOLFSSL* ssl, byte* input, word32* inOutIdx,
                         if (MatchDomainName(
                                 args->dCert->subjectCN,
                                 args->dCert->subjectCNLen,
-                                (char*)ssl->buffers.domainName.buffer,
-                                (ssl->buffers.domainName.buffer == NULL ? 0 :
-                                (word32)XSTRLEN(
-                                (const char *)ssl->buffers.domainName.buffer)
-                                ), 0) == 0)
+                                domainName,
+                                (word32)XSTRLEN((const char *)domainName),
+                                0) == 0)
                     #endif
                         {
                             WOLFSSL_MSG("DomainName match failed");
@@ -16970,18 +17019,19 @@ int ProcessPeerCerts(WOLFSSL* ssl, byte* input, word32* inOutIdx,
                 #else /* WOLFSSL_ALL_NO_CN_IN_SAN */
                     /* Old behavior. */
                 #ifndef  WOLFSSL_HOSTNAME_VERIFY_ALT_NAME_ONLY
-                    if (MatchDomainName(args->dCert->subjectCN,
+                    if (MatchDomainName(
+                                args->dCert->subjectCN,
                                 args->dCert->subjectCNLen,
-                                (char*)ssl->buffers.domainName.buffer,
-                                (ssl->buffers.domainName.buffer == NULL ? 0 :
-                                (word32)XSTRLEN(ssl->buffers.domainName.buffer)), 0) == 0)
+                                domainName,
+                                (word32)XSTRLEN((const char *)domainName),
+                                0) == 0)
                 #endif
                     {
-                        if (CheckForAltNames(args->dCert,
-                                 (char*)ssl->buffers.domainName.buffer,
-                                 (ssl->buffers.domainName.buffer == NULL ? 0 :
-                                 (word32)XSTRLEN(ssl->buffers.domainName.buffer)),
-                                 NULL, 0, 0) != 1) {
+                        if (CheckForAltNames(
+                                args->dCert,
+                                domainName,
+                                (word32)XSTRLEN((const char *)domainName),
+                                NULL, 0, 0) != 1) {
                             WOLFSSL_MSG("DomainName match failed");
                             /* try to get peer key still */
                             ret = DOMAIN_NAME_MISMATCH;
@@ -22208,6 +22258,13 @@ const char* AlertTypeToString(int type)
                 static const char no_application_protocol_str[] =
                     "no_application_protocol";
                 return no_application_protocol_str;
+            }
+
+        case ech_required:
+            {
+                static const char ech_required_str[] =
+                    "ech_required";
+                return ech_required_str;
             }
 
         default:
@@ -27828,6 +27885,9 @@ const char* wolfSSL_ERR_reason_error_string(unsigned long e)
 
     case SESSION_TICKET_NONCE_OVERFLOW:
         return "Session ticket nonce overflow";
+
+    case ECH_REQUIRED_E:
+        return "ECH offered but rejected by server";
     }
 
     return "unknown error number";
@@ -33943,7 +34003,8 @@ int SendClientKeyExchange(WOLFSSL* ssl)
                     /* Ensure the buffer is null-terminated. */
                     ssl->arrays->client_identity[MAX_PSK_ID_LEN] = '\0';
                     args->encSz = (word32)XSTRLEN(ssl->arrays->client_identity);
-                    if (args->encSz > MAX_PSK_ID_LEN) {
+                    if (args->encSz > MAX_PSK_ID_LEN ||
+                        args->encSz > MAX_ENCRYPT_SZ) {
                         ERROR_OUT(CLIENT_ID_ERROR, exit_scke);
                     }
                     XMEMCPY(args->encSecret, ssl->arrays->client_identity,
@@ -33974,6 +34035,9 @@ int SendClientKeyExchange(WOLFSSL* ssl)
                     if (esSz > MAX_PSK_ID_LEN) {
                         ERROR_OUT(CLIENT_ID_ERROR, exit_scke);
                     }
+                    if (esSz > MAX_ENCRYPT_SZ - (2 * OPAQUE16_LEN)) {
+                        ERROR_OUT(CLIENT_ID_ERROR, exit_scke);
+                    }
                     /* CLIENT: Pre-shared Key for peer authentication. */
                     ssl->options.peerAuthGood = 1;
 
@@ -33988,7 +34052,7 @@ int SendClientKeyExchange(WOLFSSL* ssl)
                     args->output += OPAQUE16_LEN;
                     XMEMCPY(args->output, ssl->arrays->client_identity, esSz);
                     args->output += esSz;
-                    args->length = args->encSz - esSz - OPAQUE16_LEN;
+                    args->length = args->encSz - esSz - (2 * OPAQUE16_LEN);
                     args->encSz = esSz + OPAQUE16_LEN;
 
                     CHECK_RET(ret, AllocKey(ssl, DYNAMIC_TYPE_DH,
@@ -34025,6 +34089,9 @@ int SendClientKeyExchange(WOLFSSL* ssl)
                     if (esSz > MAX_PSK_ID_LEN) {
                         ERROR_OUT(CLIENT_ID_ERROR, exit_scke);
                     }
+                    if (esSz > MAX_ENCRYPT_SZ - OPAQUE16_LEN - OPAQUE8_LEN) {
+                        ERROR_OUT(CLIENT_ID_ERROR, exit_scke);
+                    }
                     /* CLIENT: Pre-shared Key for peer authentication. */
                     ssl->options.peerAuthGood = 1;
 
@@ -34033,10 +34100,10 @@ int SendClientKeyExchange(WOLFSSL* ssl)
                     args->output += OPAQUE16_LEN;
                     XMEMCPY(args->output, ssl->arrays->client_identity, esSz);
                     args->output += esSz;
-                    args->encSz = esSz + OPAQUE16_LEN;
 
-                    /* length is used for public key size */
-                    args->length = MAX_ENCRYPT_SZ;
+                    args->length =
+                        args->encSz - esSz - OPAQUE16_LEN - OPAQUE8_LEN;
+                    args->encSz = esSz + OPAQUE16_LEN;
 
                     /* Create shared ECC key leaving room at the beginning
                      * of buffer for size of shared key. */
@@ -35405,16 +35472,14 @@ static int DoSessionTicket(WOLFSSL* ssl, const byte* input, word32* inOutIdx,
     int NamedGroupIsPqc(int group)
     {
         switch (group) {
-        #ifndef WOLFSSL_NO_ML_KEM
+            /* FIPS 204 ML-KEM */
             case WOLFSSL_ML_KEM_512:
             case WOLFSSL_ML_KEM_768:
             case WOLFSSL_ML_KEM_1024:
-        #endif
-        #ifdef WOLFSSL_MLKEM_KYBER
+            /* Kyber Round 3 */
             case WOLFSSL_KYBER_LEVEL1:
             case WOLFSSL_KYBER_LEVEL3:
             case WOLFSSL_KYBER_LEVEL5:
-        #endif
                 return 1;
             default:
                 return 0;
@@ -35424,17 +35489,12 @@ static int DoSessionTicket(WOLFSSL* ssl, const byte* input, word32* inOutIdx,
     /* Returns 1 when the given group is a PQC hybrid group, 0 otherwise. */
     int NamedGroupIsPqcHybrid(int group)
     {
-    #if defined(WOLFSSL_PQC_HYBRIDS) || defined(WOLFSSL_EXTRA_PQC_HYBRIDS) || \
-        defined(WOLFSSL_MLKEM_KYBER)
-
         switch (group) {
-        #ifndef WOLFSSL_NO_ML_KEM
-            #ifdef WOLFSSL_PQC_HYBRIDS
+            /* Standardized hybrids */
             case WOLFSSL_SECP256R1MLKEM768:
             case WOLFSSL_X25519MLKEM768:
             case WOLFSSL_SECP384R1MLKEM1024:
-            #endif /* WOLFSSL_PQC_HYBRIDS */
-            #ifdef WOLFSSL_EXTRA_PQC_HYBRIDS
+            /* Additional experimental hybrids */
             case WOLFSSL_SECP256R1MLKEM512:
             case WOLFSSL_SECP384R1MLKEM768:
             case WOLFSSL_SECP521R1MLKEM1024:
@@ -35445,9 +35505,7 @@ static int DoSessionTicket(WOLFSSL* ssl, const byte* input, word32* inOutIdx,
             case WOLFSSL_P384_ML_KEM_768_OLD:
             case WOLFSSL_P521_ML_KEM_1024_OLD:
             #endif
-            #endif /* WOLFSSL_EXTRA_PQC_HYBRIDS */
-        #endif
-        #ifdef WOLFSSL_MLKEM_KYBER
+            /* Kyber round 3 hybrids */
             case WOLFSSL_P256_KYBER_LEVEL3:
             case WOLFSSL_X25519_KYBER_LEVEL3:
             case WOLFSSL_P256_KYBER_LEVEL1:
@@ -35455,15 +35513,10 @@ static int DoSessionTicket(WOLFSSL* ssl, const byte* input, word32* inOutIdx,
             case WOLFSSL_P521_KYBER_LEVEL5:
             case WOLFSSL_X25519_KYBER_LEVEL1:
             case WOLFSSL_X448_KYBER_LEVEL3:
-        #endif
                 return 1;
             default:
                 return 0;
         }
-    #else
-        (void)group;
-        return 0;
-    #endif
     }
 #endif /* WOLFSSL_HAVE_MLKEM */
 
