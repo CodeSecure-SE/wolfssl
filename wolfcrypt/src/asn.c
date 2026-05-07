@@ -17057,7 +17057,7 @@ int ConfirmSignature(SignatureCtx* sigCtx,
                         goto exit_cs;
                     }
                     if ((ret = wc_dilithium_set_level(sigCtx->key.dilithium,
-                            level)) < 0) {
+                            (byte)level)) < 0) {
                         goto exit_cs;
                     }
                     if ((ret = wc_Dilithium_PublicKeyDecode(key, &idx,
@@ -18338,6 +18338,19 @@ static int DecodeOtherName(DecodedCert* cert, const byte* input,
  * @return  ASN_UNKNOWN_OID_E when the OID cannot be verified.
  * @return  MEMORY_E when dynamic memory allocation fails.
  */
+/* Reject IA5String SAN content that cannot legally appear in
+ * dNSName / rfc822Name / URI per RFC 5280 4.2.1.6. Currently just NUL. */
+static int DecodeGeneralNameCheckChars(const byte* input, int len)
+{
+    int i;
+    for (i = 0; i < len; i++) {
+        if (input[i] == 0) {
+            return ASN_PARSE_E;
+        }
+    }
+    return 0;
+}
+
 static int DecodeGeneralName(const byte* input, word32* inOutIdx, byte tag,
                              int len, DecodedCert* cert)
 {
@@ -18346,6 +18359,10 @@ static int DecodeGeneralName(const byte* input, word32* inOutIdx, byte tag,
 
     /* GeneralName choice: dnsName */
     if (tag == (ASN_CONTEXT_SPECIFIC | ASN_DNS_TYPE)) {
+        ret = DecodeGeneralNameCheckChars(input + idx, len);
+        if (ret != 0) {
+            return ret;
+        }
         ret = SetDNSEntry(cert->heap, (const char*)(input + idx), len,
                 ASN_DNS_TYPE, &cert->altNames);
         if (ret == 0) {
@@ -18373,6 +18390,10 @@ static int DecodeGeneralName(const byte* input, word32* inOutIdx, byte tag,
     }
     /* GeneralName choice: rfc822Name */
     else if (tag == (ASN_CONTEXT_SPECIFIC | ASN_RFC822_TYPE)) {
+        ret = DecodeGeneralNameCheckChars(input + idx, len);
+        if (ret != 0) {
+            return ret;
+        }
         ret = SetDNSEntry(cert->heap, (const char*)(input + idx), len,
                 ASN_RFC822_TYPE, &cert->altEmailNames);
         if (ret == 0) {
@@ -18381,6 +18402,10 @@ static int DecodeGeneralName(const byte* input, word32* inOutIdx, byte tag,
     }
     /* GeneralName choice: uniformResourceIdentifier */
     else if (tag == (ASN_CONTEXT_SPECIFIC | ASN_URI_TYPE)) {
+        ret = DecodeGeneralNameCheckChars(input + idx, len);
+        if (ret != 0) {
+            return ret;
+        }
         WOLFSSL_MSG("\tPutting URI into list but not using");
 
     #if !defined(WOLFSSL_NO_ASN_STRICT) && !defined(WOLFSSL_FPKI)
@@ -27780,7 +27805,7 @@ static int MakeSignature(CertSignCtx* certSignCtx, const byte* buf, word32 sz,
         word32 outSz = sigSz;
         ret = wc_falcon_sign_msg(buf, sz, sig, &outSz, falconKey, rng);
         if (ret == 0)
-            ret = outSz;
+            ret = (int)outSz;
     }
 #endif /* HAVE_FALCON */
 
@@ -27793,7 +27818,7 @@ static int MakeSignature(CertSignCtx* certSignCtx, const byte* buf, word32 sz,
                 (dilithiumKey->params->level == WC_ML_DSA_87_DRAFT)) {
             ret = wc_dilithium_sign_msg(buf, sz, sig, &outSz, dilithiumKey, rng);
             if (ret == 0)
-                ret = outSz;
+                ret = (int)outSz;
         }
         else
         #endif
@@ -27801,7 +27826,7 @@ static int MakeSignature(CertSignCtx* certSignCtx, const byte* buf, word32 sz,
             ret = wc_dilithium_sign_ctx_msg(NULL, 0, buf, sz, sig,
                 &outSz, dilithiumKey, rng);
             if (ret == 0)
-                ret = outSz;
+                ret = (int)outSz;
         }
     }
 #endif /* HAVE_DILITHIUM && !WOLFSSL_DILITHIUM_NO_SIGN */
@@ -34628,16 +34653,22 @@ enum {
 /* CRL Reason Code OID: 2.5.29.21 */
 static const byte crlReasonOid[] = { 0x55, 0x1d, 0x15 };
 
-/* Parse CRL entry extensions to extract the reason code.
- * Sets *reasonCode if found, otherwise leaves it unchanged. */
-static void ParseCRL_ReasonCode(const byte* buff, word32 idx, word32 maxIdx,
-                                int* reasonCode)
+/* Parse CRL entry extensions.
+ * Extracts the reason code into *reasonCode if the CRL Reason extension
+ * is present. Per RFC 5280 Section 5.3, returns ASN_CRIT_EXT_E if any
+ * unknown extension is marked critical. Returns 0 on success. */
+static int ParseCRL_EntryExtensions(const byte* buff, word32 idx, word32 maxIdx,
+                                    int* reasonCode)
 {
     while (idx < maxIdx) {
         int len;
+        int oidLen;
         word32 end;
         word32 localIdx;
+        word32 oidContent;
         byte tag;
+        int critical = 0;
+        int isReasonOid = 0;
 
         /* Each extension is a SEQUENCE */
         if (GetSequence(buff, &idx, &len, maxIdx) < 0) {
@@ -34645,23 +34676,39 @@ static void ParseCRL_ReasonCode(const byte* buff, word32 idx, word32 maxIdx,
         }
         end = idx + (word32)len;
 
-        /* Check for CRL Reason OID: 2.5.29.21 */
-        if (end - idx >= (word32)(2 + sizeof(crlReasonOid)) &&
-                buff[idx] == ASN_OBJECT_ID &&
-                buff[idx + 1] == sizeof(crlReasonOid) &&
-                XMEMCMP(buff + idx + 2, crlReasonOid,
+        /* Parse OID: tag, length (short or long form), content */
+        if (GetASNTag(buff, &idx, &tag, end) < 0 ||
+                tag != ASN_OBJECT_ID) {
+            break;
+        }
+        if (GetLength(buff, &idx, &oidLen, end) < 0) {
+            break;
+        }
+        oidContent = idx;
+        if (idx + (word32)oidLen > end) {
+            break;
+        }
+
+        /* Check if it's the CRL Reason OID: 2.5.29.21 */
+        if ((word32)oidLen == sizeof(crlReasonOid) &&
+                XMEMCMP(buff + oidContent, crlReasonOid,
                         sizeof(crlReasonOid)) == 0) {
-            /* Skip past the OID */
-            idx += 2 + (word32)sizeof(crlReasonOid);
-            /* Skip optional critical BOOLEAN */
-            localIdx = idx;
-            if (GetASNTag(buff, &localIdx, &tag, end) == 0 &&
-                    tag == ASN_BOOLEAN) {
-                /* Consume full BOOLEAN TLV (tag + length + value). */
-                if (GetBoolean(buff, &idx, end) < 0) {
-                    break;
-                }
+            isReasonOid = 1;
+        }
+        idx = oidContent + (word32)oidLen;
+
+        /* Parse optional critical BOOLEAN */
+        localIdx = idx;
+        if (GetASNTag(buff, &localIdx, &tag, end) == 0 &&
+                tag == ASN_BOOLEAN) {
+            int ret = GetBoolean(buff, &idx, end);
+            if (ret < 0) {
+                break;
             }
+            critical = ret;
+        }
+
+        if (isReasonOid) {
             /* Get OCTET STRING wrapping the ENUMERATED */
             if (GetOctetString(buff, &idx, &len, end) >= 0) {
                 /* Parse ENUMERATED reason value */
@@ -34677,8 +34724,15 @@ static void ParseCRL_ReasonCode(const byte* buff, word32 idx, word32 maxIdx,
                 }
             }
         }
+        else if (critical) {
+            /* RFC 5280 Section 5.3: reject CRL with unknown critical
+             * entry extension. */
+            WOLFSSL_MSG("Unknown critical CRL entry extension");
+            return ASN_CRIT_EXT_E;
+        }
         idx = end;
     }
+    return 0;
 }
 
 #ifdef HAVE_CRL
@@ -34691,8 +34745,7 @@ WOLFSSL_TEST_VIS int wc_ParseCRLReasonFromExtensions(const byte* ext,
         return BAD_FUNC_ARG;
     }
 
-    ParseCRL_ReasonCode(ext, 0, extSz, reasonCode);
-    return 0;
+    return ParseCRL_EntryExtensions(ext, 0, extSz, reasonCode);
 }
 #endif
 
@@ -34755,49 +34808,58 @@ static int GetRevoked(RevokedCert* rcert, const byte* buff, word32* idx,
         /* Parse CRL entry extensions (v2 only) */
         if (dataASN[REVOKEDASN_IDX_TIME_EXT].length > 0) {
             word32 extOff = dataASN[REVOKEDASN_IDX_TIME_EXT].offset;
-            word32 extLen = dataASN[REVOKEDASN_IDX_TIME_EXT].length;
-            word32 extEnd = extOff + extLen;
-            word32 extIdx2 = extOff;
+            word32 extTagEnd = extOff +
+                    dataASN[REVOKEDASN_IDX_TIME_EXT].length + 6;
+            int extLen;
+
+            /* .offset points at the outer SEQUENCE tag. Re-parse the
+             * SEQUENCE header to locate the content start (list of
+             * Extension SEQUENCEs), which handles long-form length.
+             * extTagEnd adds 6 to cover the worst-case tag+long-form-length
+             * header for the outer SEQUENCE. */
+            if (GetSequence(buff, &extOff, &extLen, extTagEnd) < 0) {
+                ret = ASN_PARSE_E;
+            }
+            else {
+                word32 extEnd = extOff + (word32)extLen;
 
 #if defined(OPENSSL_EXTRA)
-            /* Store raw DER of extensions for OpenSSL compat API.
-             * Include the outer SEQUENCE tag+length. */
-            {
-                /* Back up to include the SEQUENCE header. We know the
-                 * content starts at extOff, so the header is just before.
-                 * Use the raw buffer start from before GetASN_Items. */
-                word32 seqHdrSz = 0;
-                /* The outer SEQUENCE header is at most 4 bytes before
-                 * content. Rather than guess, store just the content. */
-                rc->extensions = (byte*)XMALLOC(extLen, dcrl->heap,
+                /* Store raw DER of extension contents for OpenSSL compat. */
+                rc->extensions = (byte*)XMALLOC((size_t)extLen, dcrl->heap,
                                                 DYNAMIC_TYPE_REVOKED);
                 if (rc->extensions != NULL) {
-                    XMEMCPY(rc->extensions, buff + extOff, extLen);
-                    rc->extensionsSz = extLen;
+                    XMEMCPY(rc->extensions, buff + extOff, (size_t)extLen);
+                    rc->extensionsSz = (word32)extLen;
                 }
-                (void)seqHdrSz;
-            }
 #endif
 
-            ParseCRL_ReasonCode(buff, extIdx2, extEnd, &rc->reasonCode);
+                ret = ParseCRL_EntryExtensions(buff, extOff, extEnd,
+                    &rc->reasonCode);
+            }
         }
 
-        /* Add revoked certificate to chain. */
+        if (ret == 0) {
+            /* Add revoked certificate to chain. */
 #ifndef CRL_STATIC_REVOKED_LIST
-        rc->next = dcrl->certs;
-        dcrl->certs = rc;
+            rc->next = dcrl->certs;
+            dcrl->certs = rc;
 #endif
-        dcrl->totalCerts++;
+            dcrl->totalCerts++;
+        }
     }
 
     FREE_ASNGETDATA(dataASN, dcrl->heap);
-#ifndef CRL_STATIC_REVOKED_LIST
     if ((ret != 0) && (rc != NULL)) {
 #if defined(OPENSSL_EXTRA)
         XFREE(rc->extensions, dcrl->heap, DYNAMIC_TYPE_REVOKED);
+        rc->extensions = NULL;
+        rc->extensionsSz = 0;
 #endif
+#ifndef CRL_STATIC_REVOKED_LIST
         XFREE(rc, dcrl->heap, DYNAMIC_TYPE_CRL);
+#endif
     }
+#ifndef CRL_STATIC_REVOKED_LIST
     (void)rcert;
 #endif
     return ret;
@@ -34821,7 +34883,13 @@ static int ParseCRL_RevokedCerts(RevokedCert* rcert, DecodedCRL* dcrl,
     /* Parse each revoked certificate. */
     while ((ret == 0) && (idx < maxIdx)) {
         /* Parse a revoked certificate. */
-        if (GetRevoked(rcert, buff, &idx, dcrl, maxIdx) < 0) {
+        int r = GetRevoked(rcert, buff, &idx, dcrl, maxIdx);
+        if (r == WC_NO_ERR_TRACE(ASN_CRIT_EXT_E)) {
+            /* Preserve the specific error so callers can distinguish a
+             * rejected critical extension from a generic parse failure. */
+            ret = r;
+        }
+        else if (r < 0) {
             ret = ASN_PARSE_E;
         }
     }
