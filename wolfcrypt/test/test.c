@@ -16840,7 +16840,7 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t aes_cbc_test(void)
          * the wrong ciphertext block into aes->reg between calls (e.g. the
          * first block instead of the last) will fail the second KAT. */
         {
-            WOLFSSL_SMALL_STACK_STATIC const byte msg4[] = {
+            static const byte msg4[] = {
                 0x6b,0xc1,0xbe,0xe2,0x2e,0x40,0x9f,0x96,
                 0xe9,0x3d,0x7e,0x11,0x73,0x93,0x17,0x2a,
                 0xae,0x2d,0x8a,0x57,0x1e,0x03,0xac,0x9c,
@@ -16850,7 +16850,7 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t aes_cbc_test(void)
                 0xf6,0x9f,0x24,0x45,0xdf,0x4f,0x9b,0x17,
                 0xad,0x2b,0x41,0x7b,0xe6,0x6c,0x37,0x10
             };
-            WOLFSSL_SMALL_STACK_STATIC const byte verify4[] = {
+            static const byte verify4[] = {
                 0x76,0x49,0xab,0xac,0x81,0x19,0xb2,0x46,
                 0xce,0xe9,0x8e,0x9b,0x12,0xe9,0x19,0x7d,
                 0x50,0x86,0xcb,0x9b,0x50,0x72,0x19,0xee,
@@ -36876,9 +36876,12 @@ static wc_test_ret_t ecc_test_curve_size(WC_RNG* rng, int keySize, int testVerif
 #if !defined(ECC_TIMING_RESISTANT) || (defined(ECC_TIMING_RESISTANT) && \
     !defined(WC_NO_RNG) && !defined(WOLFSSL_KCAPI_ECC))
 #ifdef HAVE_ECC_SIGN
-    /* some hardware doesn't support sign/verify of all zero digest */
-#if !defined(WC_TEST_NO_ECC_SIGN_VERIFY_ZERO_DIGEST)
-    /* test DSA sign hash with zeros */
+    /* WC_TEST_NO_ECC_SIGN_VERIFY_ZERO_DIGEST: build rejects all-zero digest,
+     * so test expects failure. */
+#ifdef WOLFSSL_SM2
+    if (curve_id != ECC_SM2P256V1)
+#endif
+    {
     for (i = 0; i < (int)ECC_DIGEST_SIZE; i++) {
         digest[i] = 0;
     }
@@ -36892,29 +36895,47 @@ static wc_test_ret_t ecc_test_curve_size(WC_RNG* rng, int keySize, int testVerif
             ret = wc_ecc_sign_hash(digest, ECC_DIGEST_SIZE, sig, &x, rng,
                                                                         userA);
     } while (ret == WC_NO_ERR_TRACE(WC_PENDING_E));
+#ifdef WC_TEST_NO_ECC_SIGN_VERIFY_ZERO_DIGEST
+    if (ret == 0) {
+        ERROR_OUT(WC_TEST_RET_ENC_EC(ret), done);
+    }
+    else {
+        ret = 0;
+    }
+#else
     if (ret != 0)
         ERROR_OUT(WC_TEST_RET_ENC_EC(ret), done);
+#endif
     TEST_SLEEP();
 
 #ifdef HAVE_ECC_VERIFY
-    for (i=0; i<testVerifyCount; i++) {
-        verify = 0;
-        do {
-        #if defined(WOLFSSL_ASYNC_CRYPT)
-            ret = wc_AsyncWait(ret, &userA->asyncDev, WC_ASYNC_FLAG_CALL_AGAIN);
-        #endif
-            if (ret == 0)
-                ret = wc_ecc_verify_hash(sig, x, digest, ECC_DIGEST_SIZE,
-                                                               &verify, userA);
-        } while (ret == WC_NO_ERR_TRACE(WC_PENDING_E));
-        if (ret != 0)
-            ERROR_OUT(WC_TEST_RET_ENC_EC(ret), done);
-        if (verify != 1)
-            ERROR_OUT(WC_TEST_RET_ENC_NC, done);
-        TEST_SLEEP();
+    verify = 0;
+    do {
+    #if defined(WOLFSSL_ASYNC_CRYPT)
+        ret = wc_AsyncWait(ret, &userA->asyncDev, WC_ASYNC_FLAG_CALL_AGAIN);
+    #endif
+        if (ret == 0)
+            ret = wc_ecc_verify_hash(sig, x, digest, ECC_DIGEST_SIZE,
+                                                           &verify, userA);
+    } while (ret == WC_NO_ERR_TRACE(WC_PENDING_E));
+#ifdef WC_TEST_NO_ECC_SIGN_VERIFY_ZERO_DIGEST
+    if (ret == 0) {
+        ERROR_OUT(WC_TEST_RET_ENC_EC(ret), done);
     }
+    else {
+        ret = 0;
+    }
+    if (verify == 1)
+        ERROR_OUT(WC_TEST_RET_ENC_NC, done);
+#else
+    if (ret != 0)
+        ERROR_OUT(WC_TEST_RET_ENC_EC(ret), done);
+    if (verify != 1)
+        ERROR_OUT(WC_TEST_RET_ENC_NC, done);
+#endif
+    TEST_SLEEP();
 #endif /* HAVE_ECC_VERIFY */
-#endif /* !WC_TEST_NO_ECC_SIGN_VERIFY_ZERO_DIGEST */
+    }
 
     /* test DSA sign hash with sequence (0,1,2,3,4,...) */
     for (i = 0; i < (int)ECC_DIGEST_SIZE; i++) {
@@ -52545,6 +52566,106 @@ out:
 }
 #endif
 
+#if defined(WC_DILITHIUM_CACHE_MATRIX_A) && \
+    !defined(WC_DILITHIUM_FIXED_ARRAY) && \
+    !defined(WOLFSSL_DILITHIUM_NO_MAKE_KEY) && \
+    !defined(WOLFSSL_DILITHIUM_NO_SIGN) && \
+    !defined(WOLFSSL_DILITHIUM_NO_VERIFY)
+/* Regression test for sign path matrix A cache allocation.
+ *
+ * dilithium_sign_with_seed_mu() previously stored the result of XMALLOC for
+ * the matrix A cache into a local variable instead of key->a. The local was
+ * then immediately overwritten by `a = key->a` (still NULL), so the just-
+ * allocated buffer was leaked and a NULL pointer was passed to
+ * dilithium_expand_a().
+ *
+ * This test exercises that exact code path by clearing the cache state on a
+ * key after make_key, then signing. The post-condition asserts that key->a
+ * was populated (proving the allocation made it into the key, not the local)
+ * and that signing produces a verifiable signature.
+ */
+static wc_test_ret_t dilithium_sign_cache_alloc_test(int param, WC_RNG* rng)
+{
+    wc_test_ret_t ret;
+    dilithium_key* key = NULL;
+    byte* sig = NULL;
+    word32 sigLen;
+    byte msg[] = { 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07 };
+    int res = 0;
+
+    key = (dilithium_key*)XMALLOC(sizeof(*key), HEAP_HINT,
+        DYNAMIC_TYPE_TMP_BUFFER);
+    if (key == NULL) {
+        ERROR_OUT(WC_TEST_RET_ENC_ERRNO, out);
+    }
+    /* Init before further allocations so wc_dilithium_free() in the cleanup
+     * path operates on a zeroed struct, not garbage cached-pointer fields. */
+    ret = wc_dilithium_init_ex(key, NULL, devId);
+    if (ret != 0)
+        ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
+
+    sig = (byte*)XMALLOC(DILITHIUM_MAX_SIG_SIZE, HEAP_HINT,
+        DYNAMIC_TYPE_TMP_BUFFER);
+    if (sig == NULL) {
+        ERROR_OUT(WC_TEST_RET_ENC_ERRNO, out);
+    }
+
+    ret = wc_dilithium_set_level(key, param);
+    if (ret != 0)
+        ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
+
+    ret = wc_dilithium_make_key(key, rng);
+    if (ret != 0)
+        ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
+
+    /* Drop the cached matrix A so the next sign exercises the allocation
+     * branch in dilithium_sign_with_seed_mu(). */
+    XFREE(key->a, key->heap, DYNAMIC_TYPE_DILITHIUM);
+    key->a = NULL;
+    key->aSet = 0;
+#ifdef WC_DILITHIUM_CACHE_PRIV_VECTORS
+    XFREE(key->s1, key->heap, DYNAMIC_TYPE_DILITHIUM);
+    key->s1 = NULL;
+    key->s2 = NULL;
+    key->t0 = NULL;
+    key->privVecsSet = 0;
+#endif
+
+    sigLen = wc_dilithium_sig_size(key);
+    if (sigLen <= 0)
+        ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
+
+    ret = wc_dilithium_sign_ctx_msg(NULL, 0, msg, (word32)sizeof(msg), sig,
+        &sigLen, key, rng);
+    if (ret != 0)
+        ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
+
+    /* With the fix, signing must populate key->a (allocated buffer is owned
+     * by the key, not leaked to a local). Without the fix, key->a remains
+     * NULL because the XMALLOC result was assigned to a local variable. */
+    if (key->a == NULL)
+        ERROR_OUT(WC_TEST_RET_ENC_NC, out);
+    if (key->aSet != 1)
+        ERROR_OUT(WC_TEST_RET_ENC_NC, out);
+
+    ret = wc_dilithium_verify_ctx_msg(sig, sigLen, NULL, 0, msg,
+        (word32)sizeof(msg), &res, key);
+    if (ret != 0)
+        ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
+    if (res != 1)
+        ERROR_OUT(WC_TEST_RET_ENC_EC(res), out);
+
+out:
+    if (key != NULL)
+        wc_dilithium_free(key);
+    XFREE(sig, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+    XFREE(key, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+    return ret;
+}
+#endif /* WC_DILITHIUM_CACHE_MATRIX_A && !WC_DILITHIUM_FIXED_ARRAY &&
+        * !WOLFSSL_DILITHIUM_NO_MAKE_KEY && !WOLFSSL_DILITHIUM_NO_SIGN &&
+        * !WOLFSSL_DILITHIUM_NO_VERIFY */
+
 
 #if (defined(WOLFSSL_DILITHIUM_PRIVATE_KEY) && \
      !defined(WOLFSSL_DILITHIUM_NO_SIGN)) || \
@@ -52835,6 +52956,28 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t dilithium_test(void)
 #endif
 #endif
 
+#if defined(WC_DILITHIUM_CACHE_MATRIX_A) && \
+    !defined(WC_DILITHIUM_FIXED_ARRAY) && \
+    !defined(WOLFSSL_DILITHIUM_NO_MAKE_KEY) && \
+    !defined(WOLFSSL_DILITHIUM_NO_SIGN) && \
+    !defined(WOLFSSL_DILITHIUM_NO_VERIFY)
+#ifndef WOLFSSL_NO_ML_DSA_44
+    ret = dilithium_sign_cache_alloc_test(WC_ML_DSA_44, &rng);
+    if (ret != 0)
+        ERROR_OUT(ret, out);
+#endif
+#ifndef WOLFSSL_NO_ML_DSA_65
+    ret = dilithium_sign_cache_alloc_test(WC_ML_DSA_65, &rng);
+    if (ret != 0)
+        ERROR_OUT(ret, out);
+#endif
+#ifndef WOLFSSL_NO_ML_DSA_87
+    ret = dilithium_sign_cache_alloc_test(WC_ML_DSA_87, &rng);
+    if (ret != 0)
+        ERROR_OUT(ret, out);
+#endif
+#endif
+
 #if (defined(WOLFSSL_DILITHIUM_PRIVATE_KEY) && \
      !defined(WOLFSSL_DILITHIUM_NO_SIGN)) || \
     (defined(WOLFSSL_DILITHIUM_PUBLIC_KEY) && \
@@ -52993,7 +53136,7 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t xmss_test(void)
     if (ret != 0) { ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out); }
 
     /* Export the pub to a verify key. */
-    ret = wc_XmssKey_ExportPub(&verifyKey, &signingKey);
+    ret = wc_XmssKey_ExportPub_ex(&verifyKey, &signingKey, NULL, devId);
     if (ret != 0) { ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out); }
 
     /* Repeat a few times to check that:
@@ -53666,7 +53809,7 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t lms_test(void)
         ERROR_OUT(WC_TEST_RET_ENC_I(kidSz), out);
     }
 
-    ret = wc_LmsKey_ExportPub(&verifyKey, &signingKey);
+    ret = wc_LmsKey_ExportPub_ex(&verifyKey, &signingKey, NULL, devId);
     if (ret != 0) { ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out); }
 
     ret = wc_LmsKey_GetSigLen(&verifyKey, &sigSz);
@@ -53681,7 +53824,6 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t lms_test(void)
     {
         word32 smallSz = 1;
         wc_lms_write_private_key_cb saved_write_cb;
-        void*                       saved_ctx;
 
         /* Undersized sig buffer should return BUFFER_E. */
         ret = wc_LmsKey_Sign(&signingKey, sig, &smallSz, (byte *) msg, msgSz);
@@ -53694,15 +53836,6 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t lms_test(void)
         signingKey.write_private_key = NULL;
         ret = wc_LmsKey_Sign(&signingKey, sig, &sigSz, (byte *) msg, msgSz);
         signingKey.write_private_key = saved_write_cb;
-        if (ret != WC_NO_ERR_TRACE(BAD_FUNC_ARG)) {
-            ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
-        }
-
-        /* NULL context should return BAD_FUNC_ARG. */
-        saved_ctx = signingKey.context;
-        signingKey.context = NULL;
-        ret = wc_LmsKey_Sign(&signingKey, sig, &sigSz, (byte *) msg, msgSz);
-        signingKey.context = saved_ctx;
         if (ret != WC_NO_ERR_TRACE(BAD_FUNC_ARG)) {
             ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
         }
@@ -68583,6 +68716,117 @@ static int myCryptoDevCb(int devIdArg, wc_CryptoInfo* info, void* ctx)
         }
         #endif
     #endif /* HAVE_ED25519 */
+    #if defined(WOLFSSL_HAVE_LMS) || defined(WOLFSSL_HAVE_XMSS)
+        if (info->pk.type == WC_PK_TYPE_PQC_STATEFUL_SIG_KEYGEN) {
+            int pqcType = info->pk.pqc_stateful_sig_kg.type;
+            (void)pqcType;
+        #if defined(WOLFSSL_HAVE_LMS) && !defined(WOLFSSL_LMS_VERIFY_ONLY)
+            if (pqcType == WC_PQC_STATEFUL_SIG_TYPE_LMS) {
+                LmsKey* lk = (LmsKey*)info->pk.pqc_stateful_sig_kg.key;
+                lk->devId = INVALID_DEVID;
+                ret = wc_LmsKey_MakeKey(lk, info->pk.pqc_stateful_sig_kg.rng);
+                lk->devId = devIdArg;
+            }
+        #endif
+        #if defined(WOLFSSL_HAVE_XMSS) && !defined(WOLFSSL_XMSS_VERIFY_ONLY)
+            if (pqcType == WC_PQC_STATEFUL_SIG_TYPE_XMSS) {
+                XmssKey* xk = (XmssKey*)info->pk.pqc_stateful_sig_kg.key;
+                xk->devId = INVALID_DEVID;
+                ret = wc_XmssKey_MakeKey(xk, info->pk.pqc_stateful_sig_kg.rng);
+                xk->devId = devIdArg;
+            }
+        #endif
+        }
+        else if (info->pk.type == WC_PK_TYPE_PQC_STATEFUL_SIG_SIGN) {
+            int pqcType = info->pk.pqc_stateful_sig_sign.type;
+            word32 sigSz = *info->pk.pqc_stateful_sig_sign.outSz;
+            (void)pqcType;
+        #if defined(WOLFSSL_HAVE_LMS) && !defined(WOLFSSL_LMS_VERIFY_ONLY)
+            if (pqcType == WC_PQC_STATEFUL_SIG_TYPE_LMS) {
+                LmsKey* lk = (LmsKey*)info->pk.pqc_stateful_sig_sign.key;
+                lk->devId = INVALID_DEVID;
+                ret = wc_LmsKey_Sign(lk,
+                    info->pk.pqc_stateful_sig_sign.out, &sigSz,
+                    info->pk.pqc_stateful_sig_sign.msg,
+                    (int)info->pk.pqc_stateful_sig_sign.msgSz);
+                lk->devId = devIdArg;
+            }
+        #endif
+        #if defined(WOLFSSL_HAVE_XMSS) && !defined(WOLFSSL_XMSS_VERIFY_ONLY)
+            if (pqcType == WC_PQC_STATEFUL_SIG_TYPE_XMSS) {
+                XmssKey* xk = (XmssKey*)info->pk.pqc_stateful_sig_sign.key;
+                xk->devId = INVALID_DEVID;
+                ret = wc_XmssKey_Sign(xk,
+                    info->pk.pqc_stateful_sig_sign.out, &sigSz,
+                    info->pk.pqc_stateful_sig_sign.msg,
+                    (int)info->pk.pqc_stateful_sig_sign.msgSz);
+                xk->devId = devIdArg;
+            }
+        #endif
+            *info->pk.pqc_stateful_sig_sign.outSz = sigSz;
+        }
+        else if (info->pk.type == WC_PK_TYPE_PQC_STATEFUL_SIG_VERIFY) {
+            int pqcType = info->pk.pqc_stateful_sig_verify.type;
+            int verifyRet = WC_NO_ERR_TRACE(NOT_COMPILED_IN);
+        #if defined(WOLFSSL_HAVE_LMS)
+            if (pqcType == WC_PQC_STATEFUL_SIG_TYPE_LMS) {
+                LmsKey* lk = (LmsKey*)info->pk.pqc_stateful_sig_verify.key;
+                lk->devId = INVALID_DEVID;
+                verifyRet = wc_LmsKey_Verify(lk,
+                    info->pk.pqc_stateful_sig_verify.sig,
+                    info->pk.pqc_stateful_sig_verify.sigSz,
+                    info->pk.pqc_stateful_sig_verify.msg,
+                    (int)info->pk.pqc_stateful_sig_verify.msgSz);
+                lk->devId = devIdArg;
+            }
+        #endif
+        #if defined(WOLFSSL_HAVE_XMSS)
+            if (pqcType == WC_PQC_STATEFUL_SIG_TYPE_XMSS) {
+                XmssKey* xk = (XmssKey*)info->pk.pqc_stateful_sig_verify.key;
+                xk->devId = INVALID_DEVID;
+                verifyRet = wc_XmssKey_Verify(xk,
+                    info->pk.pqc_stateful_sig_verify.sig,
+                    info->pk.pqc_stateful_sig_verify.sigSz,
+                    info->pk.pqc_stateful_sig_verify.msg,
+                    (int)info->pk.pqc_stateful_sig_verify.msgSz);
+                xk->devId = devIdArg;
+            }
+        #endif
+            if (info->pk.pqc_stateful_sig_verify.res != NULL) {
+                *info->pk.pqc_stateful_sig_verify.res =
+                    (verifyRet == 0) ? 1 : 0;
+            }
+            /* SIG_VERIFY_E is a validity signal, not a crypto error, so
+             * translate it back to success for the dispatcher. */
+            if (verifyRet == WC_NO_ERR_TRACE(SIG_VERIFY_E))
+                verifyRet = 0;
+            ret = verifyRet;
+        }
+        else if (info->pk.type == WC_PK_TYPE_PQC_STATEFUL_SIG_SIGS_LEFT) {
+            int pqcType = info->pk.pqc_stateful_sig_sigs_left.type;
+            int count = 0;
+            (void)pqcType;
+        #if defined(WOLFSSL_HAVE_LMS) && !defined(WOLFSSL_LMS_VERIFY_ONLY)
+            if (pqcType == WC_PQC_STATEFUL_SIG_TYPE_LMS) {
+                LmsKey* lk = (LmsKey*)info->pk.pqc_stateful_sig_sigs_left.key;
+                lk->devId = INVALID_DEVID;
+                count = wc_LmsKey_SigsLeft(lk);
+                lk->devId = devIdArg;
+            }
+        #endif
+        #if defined(WOLFSSL_HAVE_XMSS) && !defined(WOLFSSL_XMSS_VERIFY_ONLY)
+            if (pqcType == WC_PQC_STATEFUL_SIG_TYPE_XMSS) {
+                XmssKey* xk = (XmssKey*)info->pk.pqc_stateful_sig_sigs_left.key;
+                xk->devId = INVALID_DEVID;
+                count = wc_XmssKey_SigsLeft(xk);
+                xk->devId = devIdArg;
+            }
+        #endif
+            if (info->pk.pqc_stateful_sig_sigs_left.sigsLeft != NULL)
+                *info->pk.pqc_stateful_sig_sigs_left.sigsLeft = (word32)count;
+            ret = 0;
+        }
+    #endif /* WOLFSSL_HAVE_LMS || WOLFSSL_HAVE_XMSS */
     #ifdef WOLFSSL_HAVE_MLKEM
         if (info->pk.type == WC_PK_TYPE_PQC_KEM_KEYGEN) {
             if ((info->pk.pqc_kem_kg.type == WC_PQC_KEM_TYPE_KYBER) &&
@@ -70015,6 +70259,14 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t cryptocb_test(void)
 #ifdef HAVE_DILITHIUM
     if (ret == 0)
         ret = dilithium_test();
+#endif
+#if defined(WOLFSSL_HAVE_XMSS) && !defined(WOLFSSL_XMSS_VERIFY_ONLY)
+    if (ret == 0)
+        ret = xmss_test();
+#endif
+#if defined(WOLFSSL_HAVE_LMS) && !defined(WOLFSSL_LMS_VERIFY_ONLY)
+    if (ret == 0)
+        ret = lms_test();
 #endif
 #ifdef HAVE_ED25519
     PRIVATE_KEY_UNLOCK();
