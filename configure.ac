@@ -2975,48 +2975,158 @@ AC_ARG_WITH([maxq10xx],
     ]
 )
 
+AC_ARG_ENABLE([microchip],
+    [AS_HELP_STRING([--enable-microchip],[Enable wolfSSL support for microchip/atmel 508/608/100 (default: disabled)])],
+    [ ENABLED_ATMEL=$enableval ],
+    [ ENABLED_ATMEL=no ]
+    )
+
+if test "$ENABLED_ATMEL" != "no"
+then
+    AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_MICROCHIP"
+
+    for v in `echo $ENABLED_ATMEL | tr "," " "`
+    do
+      case $v in
+        508)
+            AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_ATECC508A"
+            ;;
+
+        608)
+            AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_ATECC608A"
+            ;;
+
+        100)
+            AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_MICROCHIP_TA100 -DMICROCHIP_DEV_TYPE=TA100"
+            ;;
+      esac
+    done
+fi
+
+
 # Microchip/Atmel CryptoAuthLib
 ENABLED_CRYPTOAUTHLIB="no"
-trylibatcadir=""
 AC_ARG_WITH([cryptoauthlib],
-    [AS_HELP_STRING([--with-cryptoauthlib=PATH],[PATH to CryptoAuthLib install (default /usr/)])],
-    [
-        AC_MSG_CHECKING([for cryptoauthlib])
-        CPPFLAGS="$CPPFLAGS -DWOLFSSL_ATECC508A"
-        LIBS="$LIBS -lcryptoauth"
+    [AS_HELP_STRING([--with-cryptoauthlib=PATH],
+                    [PATH to CryptoAuthLib install (default: system paths)])],
+    [with_cryptoauthlib=$withval],
+    [with_cryptoauthlib=no])
 
-        AC_LINK_IFELSE([AC_LANG_PROGRAM([[#include <cryptoauthlib.h>]], [[ atcab_init(0); ]])],[ libatca_linked=yes ],[ libatca_linked=no ])
+AS_IF([test "x$with_cryptoauthlib" != "xno"], [
+    AS_IF([test "x$ENABLED_ATMEL" = "xno"], [
+        AC_MSG_ERROR([--with-cryptoauthlib requires --enable-microchip=<devices>.])
+    ])
+    AC_MSG_CHECKING([for CryptoAuthLib])
 
-        if test "x$libatca_linked" = "xno" ; then
-            if test "x$withval" != "xno" ; then
-                trylibatcadir=$withval
+    libdir=""
+    incdir=""
+    cryptoauthlib_found="no"
+
+    saved_LIBS="$LIBS"
+    saved_LDFLAGS="$LDFLAGS"
+    saved_CPPFLAGS="$CPPFLAGS"
+    saved_CFLAGS="$CFLAGS"
+
+    # Method 1: Try pkg-config first (most reliable)
+    m4_ifdef([PKG_CHECK_MODULES], [
+        PKG_CHECK_MODULES([CRYPTOAUTHLIB], [cryptoauthlib], [
+            CPPFLAGS="$CRYPTOAUTHLIB_CFLAGS $CPPFLAGS"
+            CFLAGS="$CRYPTOAUTHLIB_CFLAGS $CFLAGS"
+            LIBS="$CRYPTOAUTHLIB_LIBS $LIBS"
+            cryptoauthlib_found="pkg-config"
+        ], [:])
+    ])
+
+    # Method 2: Manual search if pkg-config failed
+    AS_IF([test "x$cryptoauthlib_found" = "xno"], [
+        AS_IF([test "x$with_cryptoauthlib" = "xyes"], [
+            search_dirs="/usr /usr/local"
+        ], [
+            search_dirs="$with_cryptoauthlib"
+        ])
+
+        for trylibatcadir in $search_dirs; do
+            for try_libdir in "$trylibatcadir/lib" "$trylibatcadir/lib64"; do
+                if test -f "$try_libdir/libcryptoauth.so" || test -f "$try_libdir/libcryptoauth.a"; then
+                    libdir="$try_libdir"
+                    break
+                fi
+            done
+
+            if test -z "$libdir"; then
+                if test -x /usr/bin/dpkg-architecture; then
+                    DEB_HOST_MULTIARCH=`dpkg-architecture -qDEB_HOST_MULTIARCH 2>/dev/null`
+                    if test -n "$DEB_HOST_MULTIARCH"; then
+                        try_libdir="$trylibatcadir/lib/$DEB_HOST_MULTIARCH"
+                        if test -f "$try_libdir/libcryptoauth.so" || test -f "$try_libdir/libcryptoauth.a"; then
+                            libdir="$try_libdir"
+                        fi
+                    fi
+                fi
             fi
-            if test "x$withval" = "xyes" ; then
-                trylibatcadir="/usr"
+
+            for try_incdir in "$trylibatcadir/include/cryptoauthlib" "$trylibatcadir/include"; do
+                if test -f "$try_incdir/cryptoauthlib.h"; then
+                    incdir="$try_incdir"
+                    break
+                fi
+            done
+
+            if test -n "$libdir" && test -n "$incdir"; then
+                break
             fi
+            libdir=""
+            incdir=""
+        done
 
-            LDFLAGS="$LDFLAGS -L$trylibatcadir/lib"
-            CPPFLAGS="$CPPFLAGS -I$trylibatcadir/lib"
-
-            AC_LINK_IFELSE([AC_LANG_PROGRAM([[#include <cryptoauthlib.h>]], [[ atcab_init(0); ]])],[ libatca_linked=yes ],[ libatca_linked=no ])
-
-            if test "x$libatca_linked" = "xno" ; then
-                AC_MSG_ERROR([cryptoauthlib isn't found.
-                If it's already installed, specify its path using --with-cryptoauthlib=/dir/])
-            fi
-
-            AM_LDFLAGS="$AM_LDFLAGS -L$trylibatcadir/lib"
-            AM_CFLAGS="$AM_CFLAGS -I$trylibatcadir/lib"
-            AC_MSG_RESULT([yes])
-        else
-            AC_MSG_RESULT([yes])
+        if test -n "$libdir" && test -n "$incdir"; then
+            CPPFLAGS="-I$incdir $CPPFLAGS"
+            CFLAGS="-I$incdir $CFLAGS"
+            LDFLAGS="-L$libdir $LDFLAGS"
+            LIBS="-lcryptoauth $LIBS"
+            cryptoauthlib_found="$libdir"
         fi
+    ])
 
-        ENABLED_CRYPTOAUTHLIB="yes"
-        AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_ATECC508A"
-    ]
-)
+    AS_IF([test "x$cryptoauthlib_found" != "xno"], [
+        wolfssl_include=""
+        AS_IF([test -f "${srcdir}/wolfssl/wolfcrypt/types.h"], [
+            wolfssl_include="-I${srcdir}"
+        ], [test -f "${srcdir}/wolfssl.h"], [
+            wolfssl_include="-I${srcdir}"
+        ])
 
+        test_CPPFLAGS="$wolfssl_include $CPPFLAGS"
+        test_CFLAGS="$wolfssl_include $CFLAGS"
+
+        saved_test_CPPFLAGS="$CPPFLAGS"
+        saved_test_CFLAGS="$CFLAGS"
+        CPPFLAGS="$test_CPPFLAGS"
+        CFLAGS="$test_CFLAGS"
+
+        AC_LINK_IFELSE([AC_LANG_PROGRAM(
+            [[#include <cryptoauthlib.h>]],
+            [[atcab_init(0); return 0;]])],
+            [
+                ENABLED_CRYPTOAUTHLIB="yes"
+                AC_MSG_RESULT([yes ($cryptoauthlib_found)])
+                AC_DEFINE([HAVE_CRYPTOAUTHLIB], [1], [CryptoAuthLib support])
+                CPPFLAGS="$saved_test_CPPFLAGS"
+                CFLAGS="$saved_test_CFLAGS"
+            ],
+            [
+                LIBS="$saved_LIBS"
+                LDFLAGS="$saved_LDFLAGS"
+                CPPFLAGS="$saved_CPPFLAGS"
+                CFLAGS="$saved_CFLAGS"
+                AC_MSG_RESULT([no - compilation failed])
+                AC_MSG_ERROR([CryptoAuthLib found but compilation check failed. Check config.log for details.])
+            ])
+    ], [
+        AC_MSG_RESULT([no - library not found])
+        AC_MSG_ERROR([CryptoAuthLib not found. Install it or specify path with --with-cryptoauthlib=/path])
+    ])
+])
 
 # TropicSquare TROPIC01
 # Example: "./configure --with-tropic01=/home/pi/libtropic"
@@ -4899,6 +5009,15 @@ then
     test -z "$enable_asynccrypt_sw" && enable_asynccrypt_sw=yes
 fi
 
+# Handle RSA/DH nonblock - the SP non-blocking dispatch wants the same
+# WOLFSSL_ASYNC_CRYPT_SW shim that ECC/Curve25519 nonblock use so the
+# TLS layer can manage per-SSL nb contexts and yield MP_WOULDBLOCK.
+if test "$enable_rsa" = "nonblock" || test "$enable_dh" = "nonblock"
+then
+    test -z "$enable_asynccrypt" && enable_asynccrypt=yes
+    test -z "$enable_asynccrypt_sw" && enable_asynccrypt_sw=yes
+fi
+
 if test "$ENABLED_CURVE25519" = "no" && test "$ENABLED_QUIC" = "yes" && test "$ENABLED_FIPS" = "no"
 then
     ENABLED_CURVE25519=yes
@@ -5415,7 +5534,7 @@ fi
 
 # RSA
 AC_ARG_ENABLE([rsa],
-    [AS_HELP_STRING([--enable-rsa],[Enable RSA (default: enabled)])],
+    [AS_HELP_STRING([--enable-rsa],[Enable RSA (default: enabled). Set to "nonblock" to enable non-blocking RSA via TFM fp_exptmod_nb or SP small mod_exp_nb])],
     [ ENABLED_RSA=$enableval ],
     [ ENABLED_RSA=yes ]
     )
@@ -5423,6 +5542,17 @@ AC_ARG_ENABLE([rsa],
 if test "$ENABLED_RSA" = "no"
 then
     AM_CFLAGS="$AM_CFLAGS -DNO_RSA"
+elif test "$ENABLED_RSA" = "nonblock"
+then
+    AM_CFLAGS="$AM_CFLAGS -DWC_RSA_NONBLOCK"
+    ENABLED_RSA=yes
+    ENABLED_CERTS=yes
+    # asynccrypt + asynccrypt-sw are auto-enabled earlier in this file when
+    # --enable-rsa=nonblock is detected, so the TLS layer can pick up the
+    # per-SSL nb context and yield MP_WOULDBLOCK. RSA_LOW_MEM is left as a
+    # user choice - the SP non-block backend's compile-time check in
+    # wolfssl/wolfcrypt/rsa.h enforces it for SP, while the TFM (fastmath)
+    # backend supports the CRT path without it.
 else
     # turn off RSA if leanpsk or leantls on
     if test "$ENABLED_LEANPSK" = "yes" || test "$ENABLED_LEANTLS" = "yes"
@@ -5502,7 +5632,7 @@ fi
 
 # DH
 AC_ARG_ENABLE([dh],
-    [AS_HELP_STRING([--enable-dh],[Enable DH (default: enabled)])],
+    [AS_HELP_STRING([--enable-dh],[Enable DH (default: enabled). Set to "nonblock" to enable non-blocking DH key agreement via SP small mod_exp_nb])],
     [ ENABLED_DH=$enableval ],
     [ ENABLED_DH=yes ]
     )
@@ -5515,6 +5645,11 @@ fi
 if test "$ENABLED_DH" = "no"
 then
     AM_CFLAGS="$AM_CFLAGS -DNO_DH"
+elif test "$ENABLED_DH" = "nonblock"
+then
+    AM_CFLAGS="$AM_CFLAGS -DWC_DH_NONBLOCK"
+    ENABLED_DH=yes
+    # asynccrypt + asynccrypt-sw are auto-enabled earlier in this file.
 else
     # turn off DH if leanpsk or leantls on
     if test "$ENABLED_LEANPSK" = "yes" || test "$ENABLED_LEANTLS" = "yes"

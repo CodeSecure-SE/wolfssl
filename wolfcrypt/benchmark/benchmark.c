@@ -805,7 +805,6 @@ static WC_INLINE void bench_append_memory_info(char* buffer, size_t size,
 #define TEST_STRING    "Everyone gets Friday off."
 #define TEST_STRING_SZ 25
 
-
 /* Bit values for each algorithm that is able to be benchmarked.
  * Common grouping of algorithms also.
  * Each algorithm has a unique value for its type e.g. cipher.
@@ -2082,6 +2081,9 @@ static const char* bench_result_words2[][6] = {
 #endif
 };
 #endif /* !WC_NO_RNG || WOLFSSL_HAVE_MLKEM */
+#if defined(WOLFSSL_MICROCHIP_TA100)
+    #include <wolfssl/wolfcrypt/port/atmel/atmel.h>
+#endif
 
 #ifdef WOLFSSL_CAAM
     #include <wolfssl/wolfcrypt/port/caam/wolfcaam.h>
@@ -2109,7 +2111,9 @@ static const char* bench_result_words2[][6] = {
     static volatile int g_threadCount;
 #endif
 
-#if defined(WOLFSSL_ASYNC_CRYPT) || defined(WOLFSSL_CAAM) || defined(WC_USE_DEVID)
+#if defined(WOLFSSL_ASYNC_CRYPT) || defined(WOLFSSL_CAAM) || \
+    defined(WC_USE_DEVID) || \
+    defined(WOLFSSL_MICROCHIP_TA100)
     #ifndef NO_HW_BENCH
         #define BENCH_DEVID
     #endif
@@ -10571,7 +10575,7 @@ exit_rsa_sign:
                                           1, &times, ntimes, &pending)) {
                     #if !defined(WOLFSSL_RSA_VERIFY_INLINE) && \
                         !defined(WOLFSSL_RSA_PUBLIC_ONLY)
-                        ret = wc_RsaSSL_Verify(enc[i], idx, out[i],
+                            ret = wc_RsaSSL_Verify(enc[i], idx, out[i],
                                                       rsaKeySz/8, rsaKey[i]);
                     #elif defined(USE_CERT_BUFFERS_2048)
                         XMEMCPY(enc[i], rsa_2048_sig, sizeof(rsa_2048_sig));
@@ -10708,6 +10712,13 @@ void bench_rsa(int useDeviceID)
 #else
         /* Note: To benchmark public only define WOLFSSL_PUBLIC_MP */
         rsaKeySz = 0;
+#endif
+#if defined(WOLFSSL_KEY_GEN) && defined(WOLFSSL_MICROCHIP_TA100)
+        /* Create new keys since you cannot import a private key to TA100 */
+        ret = wc_MakeRsaKey(rsaKey[i], rsaKeySz, WC_RSA_EXPONENT, &gRng);
+        if (ret) {
+            goto exit;
+        }
 #endif
     }
 
@@ -12726,41 +12737,102 @@ void bench_slhdsa(int param)
        );
     bench_stats_asym_finish(name, len, "vrfy-msg", 0, count, start, ret);
 
-    /* Pre-hash interface: hash message, then sign the hash. */
-    PRIVATE_KEY_UNLOCK();
-    bench_stats_start(&count, &start);
-    do {
-        sigLen = WC_SLHDSA_MAX_SIG_LEN;
-        ret = wc_SlhDsaKey_SignHashDeterministic(key, ctx, 0, msg,
-            (word32)sizeof(msg), WC_HASH_TYPE_SHA256, sig, &sigLen);
-        if (ret != 0) {
-            goto exit;
-        }
-        count++;
-        RECORD_MULTI_VALUE_STATS();
-    } while (bench_stats_check(start)
-#ifdef MULTI_VALUE_STATISTICS
-       || runs < minimum_runs
-#endif
-       );
-    PRIVATE_KEY_LOCK();
-    bench_stats_asym_finish(name, len, "sign-pre", 0, count, start, ret);
+#ifndef NO_SHA256
+    /* Pre-hash interface: hash message ONCE outside the timed loop (the
+     * bench measures sign/verify, not the application-side hash), then sign
+     * and verify the digest. SHA-256 path: only built when SHA-256 is
+     * available; HashSLH-DSA still works at runtime with any hashType the
+     * build supports, but the bench needs a compile-time choice. */
+    {
+        byte digest[WC_SHA256_DIGEST_SIZE];
 
-    bench_stats_start(&count, &start);
-    do {
-        ret = wc_SlhDsaKey_VerifyHash(key_vfy, ctx, 0, msg,
-            (word32)sizeof(msg), WC_HASH_TYPE_SHA256, sig, sigLen);
+        ret = wc_Sha256Hash(msg, (word32)sizeof(msg), digest);
         if (ret != 0) {
             goto exit;
         }
-        count++;
-        RECORD_MULTI_VALUE_STATS();
-    } while (bench_stats_check(start)
+
+        PRIVATE_KEY_UNLOCK();
+        bench_stats_start(&count, &start);
+        do {
+            sigLen = WC_SLHDSA_MAX_SIG_LEN;
+            ret = wc_SlhDsaKey_SignHashDeterministic(key, ctx, 0, digest,
+                (word32)sizeof(digest), WC_HASH_TYPE_SHA256, sig, &sigLen);
+            if (ret != 0) {
+                goto exit;
+            }
+            count++;
+            RECORD_MULTI_VALUE_STATS();
+        } while (bench_stats_check(start)
 #ifdef MULTI_VALUE_STATISTICS
-       || runs < minimum_runs
+           || runs < minimum_runs
 #endif
-       );
-    bench_stats_asym_finish(name, len, "vrfy-pre", 0, count, start, ret);
+           );
+        PRIVATE_KEY_LOCK();
+        bench_stats_asym_finish(name, len, "sign-pre", 0, count, start, ret);
+
+        bench_stats_start(&count, &start);
+        do {
+            ret = wc_SlhDsaKey_VerifyHash(key_vfy, ctx, 0, digest,
+                (word32)sizeof(digest), WC_HASH_TYPE_SHA256, sig, sigLen);
+            if (ret != 0) {
+                goto exit;
+            }
+            count++;
+            RECORD_MULTI_VALUE_STATS();
+        } while (bench_stats_check(start)
+#ifdef MULTI_VALUE_STATISTICS
+           || runs < minimum_runs
+#endif
+           );
+        bench_stats_asym_finish(name, len, "vrfy-pre", 0, count, start, ret);
+    }
+#elif defined(WOLFSSL_SHAKE256)
+    /* SHAKE-only build (NO_SHA256): use SHAKE256 prehash bench instead. */
+    {
+        byte digest[WC_SHA3_512_DIGEST_SIZE];
+
+        ret = wc_Shake256Hash(msg, (word32)sizeof(msg), digest,
+            WC_SHA3_512_DIGEST_SIZE);
+        if (ret != 0) {
+            goto exit;
+        }
+
+        PRIVATE_KEY_UNLOCK();
+        bench_stats_start(&count, &start);
+        do {
+            sigLen = WC_SLHDSA_MAX_SIG_LEN;
+            ret = wc_SlhDsaKey_SignHashDeterministic(key, ctx, 0, digest,
+                (word32)sizeof(digest), WC_HASH_TYPE_SHAKE256, sig, &sigLen);
+            if (ret != 0) {
+                goto exit;
+            }
+            count++;
+            RECORD_MULTI_VALUE_STATS();
+        } while (bench_stats_check(start)
+#ifdef MULTI_VALUE_STATISTICS
+           || runs < minimum_runs
+#endif
+           );
+        PRIVATE_KEY_LOCK();
+        bench_stats_asym_finish(name, len, "sign-pre", 0, count, start, ret);
+
+        bench_stats_start(&count, &start);
+        do {
+            ret = wc_SlhDsaKey_VerifyHash(key_vfy, ctx, 0, digest,
+                (word32)sizeof(digest), WC_HASH_TYPE_SHAKE256, sig, sigLen);
+            if (ret != 0) {
+                goto exit;
+            }
+            count++;
+            RECORD_MULTI_VALUE_STATS();
+        } while (bench_stats_check(start)
+#ifdef MULTI_VALUE_STATISTICS
+           || runs < minimum_runs
+#endif
+           );
+        bench_stats_asym_finish(name, len, "vrfy-pre", 0, count, start, ret);
+    }
+#endif /* NO_SHA256 / WOLFSSL_SHAKE256 */
 
 exit:
 #ifdef WC_DECLARE_VAR_IS_HEAP_ALLOC
@@ -12985,6 +13057,9 @@ void bench_ecc(int useDeviceID, int curveId)
                                       deviceID)) < 0) {
             goto exit;
         }
+#if defined(WOLFSSL_MICROCHIP_TA100)
+        genKey[i]->slot = atmel_ecc_alloc(ATMEL_SLOT_ECDHE_ALICE);
+#endif
         ret = wc_ecc_make_key_ex(&gRng, keySize, genKey[i], curveId);
     #ifdef WOLFSSL_ASYNC_CRYPT
         ret = wc_AsyncWait(ret, &genKey[i]->asyncDev, WC_ASYNC_FLAG_NONE);
@@ -12997,6 +13072,9 @@ void bench_ecc(int useDeviceID, int curveId)
         if ((ret = wc_ecc_init_ex(genKey2[i], HEAP_HINT, deviceID)) < 0) {
             goto exit;
         }
+#if defined(WOLFSSL_MICROCHIP_TA100)
+        genKey2[i]->slot = atmel_ecc_alloc(ATMEL_SLOT_ECDHE_BOB);
+#endif
         if ((ret = wc_ecc_make_key_ex(&gRng, keySize, genKey2[i],
                     curveId)) > 0) {
             goto exit;
@@ -13193,7 +13271,10 @@ exit:
     WC_FREE_ARRAY(sig, BENCH_MAX_PENDING, HEAP_HINT);
     WC_FREE_ARRAY(digest, BENCH_MAX_PENDING, HEAP_HINT);
 #endif
-
+#if defined(WOLFSSL_MICROCHIP_TA100)
+    atmel_ecc_free(ATMEL_SLOT_ECDHE_ALICE);
+    atmel_ecc_free(ATMEL_SLOT_ECDHE_BOB);
+#endif
     (void)useDeviceID;
     (void)pending;
     (void)x;
