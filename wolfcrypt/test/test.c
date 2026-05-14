@@ -15738,7 +15738,7 @@ static wc_test_ret_t aes_cbc_iv_state_test(Aes* enc, Aes* dec, byte* cipher,
      * the wrong ciphertext block into aes->reg between calls (e.g. the
      * first block instead of the last) will fail the second KAT. */
     {
-        WOLFSSL_SMALL_STACK_STATIC const byte msg4[] = {
+        static const byte msg4[] = {
             0x6b,0xc1,0xbe,0xe2,0x2e,0x40,0x9f,0x96,
             0xe9,0x3d,0x7e,0x11,0x73,0x93,0x17,0x2a,
             0xae,0x2d,0x8a,0x57,0x1e,0x03,0xac,0x9c,
@@ -15748,7 +15748,7 @@ static wc_test_ret_t aes_cbc_iv_state_test(Aes* enc, Aes* dec, byte* cipher,
             0xf6,0x9f,0x24,0x45,0xdf,0x4f,0x9b,0x17,
             0xad,0x2b,0x41,0x7b,0xe6,0x6c,0x37,0x10
         };
-        WOLFSSL_SMALL_STACK_STATIC const byte verify4[] = {
+        static const byte verify4[] = {
             0x76,0x49,0xab,0xac,0x81,0x19,0xb2,0x46,
             0xce,0xe9,0x8e,0x9b,0x12,0xe9,0x19,0x7d,
             0x50,0x86,0xcb,0x9b,0x50,0x72,0x19,0xee,
@@ -19521,10 +19521,9 @@ static wc_test_ret_t aesgcm_non12iv_test(Aes* enc, Aes* dec)
     XFREE(large_output, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
     XFREE(large_outdec, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
 #endif
-#else
+#endif /* ENABLE_NON_12BYTE_IV_TEST */
     (void)enc;
     (void)dec;
-#endif /* ENABLE_NON_12BYTE_IV_TEST */
     return ret;
 }
 
@@ -34317,6 +34316,8 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t pbkdf2_test(void)
     if (XMEMCMP(derived, verify, sizeof(verify)) != 0)
         return WC_TEST_RET_ENC_NC;
 
+#if !defined(HAVE_SELFTEST) && \
+    (!defined(HAVE_FIPS) || FIPS_VERSION3_GE(7,0,0))
     {
         int cur_pbkdf_limit = wc_PBKDF_max_iterations_set(iterations - 1);
         if (cur_pbkdf_limit <= 0)
@@ -34340,9 +34341,9 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t pbkdf2_test(void)
             return WC_TEST_RET_ENC_EC(ret);
         ret = 0;
     }
+#endif /* !HAVE_SELFTEST) && (!HAVE_FIPS || FIPS_VERSION3_GE(7,0,0)) */
 
     return ret;
-
 }
 #endif /* HAVE_PBKDF2 && !NO_SHA256 && !NO_HMAC */
 
@@ -34397,7 +34398,8 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t pwdbased_test(void)
         return ret;
 #endif
 #if defined(HAVE_PKCS12) && !defined(NO_ASN) && !defined(NO_PWDBASED) && \
-    !defined(NO_HMAC) && !defined(NO_CERTS) && !defined(WOLFSSL_NO_MALLOC)
+    !defined(NO_HMAC) && !defined(NO_CERTS) && !defined(WOLFSSL_NO_MALLOC) && \
+    !defined(HAVE_SELFTEST) && (!defined(HAVE_FIPS) || FIPS_VERSION_GE(7,0))
     /* Test that a crafted PKCS#12 with INT_MAX MAC iterations is rejected
      * immediately rather than hanging in DoPKCS12Hash(). */
     {
@@ -34445,7 +34447,8 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t pwdbased_test(void)
             return ret;
     }
 #endif /* HAVE_PKCS12 && !NO_ASN && !NO_PWDBASED && !NO_HMAC && !NO_CERTS && */
-       /* !WOLFSSL_NO_MALLOC                                                 */
+       /* !WOLFSSL_NO_MALLOC &&                                              */
+       /* !HAVE_SELFTEST && (!HAVE_FIPS || FIPS_VERSION_GE(7,0))             */
 #ifdef HAVE_SCRYPT
     ret = scrypt_test();
 #endif
@@ -34543,6 +34546,7 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t pkcs12_test(void)
         goto out;
     }
 
+#if !defined(HAVE_SELFTEST) && (!defined(HAVE_FIPS) || FIPS_VERSION_GE(7,0))
     /* Test that a crafted PKCS#12 with INT_MAX MAC iterations is rejected
      * immediately rather than hanging in DoPKCS12Hash(). This is a 90-byte
      * minimal PKCS#12 with mac->itt = 0x7FFFFFFF (2,147,483,647). */
@@ -34587,6 +34591,7 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t pkcs12_test(void)
             ret = 0;  /* rejection is the expected outcome */
         }
     }
+#endif /* !HAVE_SELFTEST && (!HAVE_FIPS || FIPS_VERSION_GE(7,0)) */
 
 out:
 
@@ -43255,6 +43260,8 @@ static wc_test_ret_t ecc_buffers_encrypt_test(ecc_key* cliKey, ecc_key* servKey,
     if (XMEMCMP(plain, in, inLen))
         return WC_TEST_RET_ENC_NC;
 
+#if !defined(HAVE_SELFTEST) && \
+    (!defined(HAVE_FIPS) || FIPS_VERSION3_GE(6,0,0))
     /* Negative test: corrupt HMAC tag in encrypted msg, expect
      * HASH_TYPE_E from wc_ecc_decrypt. */
     out[x - 1] ^= 0x01;
@@ -43262,6 +43269,7 @@ static wc_test_ret_t ecc_buffers_encrypt_test(ecc_key* cliKey, ecc_key* servKey,
     ret = wc_ecc_decrypt(servKey, tmpKey, out, x, plain, &y, NULL);
     if (ret != WC_NO_ERR_TRACE(HASH_TYPE_E))
         return WC_TEST_RET_ENC_EC(ret);
+#endif /* !HAVE_SELFTEST && (!HAVE_FIPS || FIPS_VERSION3_GE(6,0,0)) */
 
     (void)tmpKey;
     return 0;
