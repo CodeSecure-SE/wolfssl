@@ -51,6 +51,10 @@ static const char *wolfsentry_config_path = NULL;
 #include <wolfssl/test.h>
 #include <wolfssl/error-ssl.h>
 
+#ifdef WOLFSSL_SWDEV
+    #include "tests/swdev/swdev_loader.h"
+#endif
+
 #ifdef USE_FLAT_TEST_H
     #include "client.h"
 #else
@@ -849,6 +853,7 @@ static int ClientBenchmarkThroughput(WOLFSSL_CTX* ctx, char* host, word16 port,
                     WOLFSSL_ASYNC_WHILE_PENDING(ret = wolfSSL_write(ssl, tx_buffer, len),
                                                 ret <= 0);
                     if (ret != len) {
+                        err = wolfSSL_get_error(ssl, 0);
                         LOG_ERROR("SSL_write bench error %d!\n", err);
                         if (!exitWithRet)
                             err_sys("SSL_write failed");
@@ -912,7 +917,11 @@ doExit:
         XFREE(rx_buffer, NULL, DYNAMIC_TYPE_TMP_BUFFER);
     }
     else {
-        err_sys("wolfSSL_connect failed");
+        err = wolfSSL_get_error(ssl, 0);
+        LOG_ERROR("wolfSSL_connect error %d, %s\n", err,
+            wolfSSL_ERR_error_string((unsigned long)err, NULL));
+        if (!exitWithRet)
+            err_sys("wolfSSL_connect failed");
     }
 
     wolfSSL_shutdown(ssl);
@@ -4884,6 +4893,7 @@ THREAD_RETURN WOLFSSL_THREAD client_test(void* args)
         ret = NonBlockingSSL_Connect(sslResume);  /* will keep retrying on timeout */
 #endif
         if (ret != WOLFSSL_SUCCESS) {
+            err = wolfSSL_get_error(sslResume, 0);
             LOG_ERROR("wolfSSL_connect resume error %d, %s\n", err,
                 wolfSSL_ERR_error_string((unsigned long)err, buffer));
             wolfSSL_free(sslResume); sslResume = NULL;
@@ -5056,6 +5066,12 @@ exit:
         wolfSSL_Debugging_ON();
 #endif
         wolfSSL_Init();
+#ifdef WOLFSSL_SWDEV
+        if (wc_SwDev_Init() != 0) {
+            fprintf(stderr, "wc_SwDev_Init failed\n");
+            return EXIT_FAILURE;
+        }
+#endif
         ChangeToWolfRoot();
 
 #if !defined(NO_WOLFSSL_CLIENT) && !defined(NO_TLS)
@@ -5066,6 +5082,9 @@ exit:
 #endif
 #else
         fprintf(stderr, "Client not compiled in!\n");
+#endif
+#ifdef WOLFSSL_SWDEV
+        wc_SwDev_Cleanup();
 #endif
         wolfSSL_Cleanup();
 

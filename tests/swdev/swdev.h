@@ -1,4 +1,4 @@
-/* test_rc2.h
+/* swdev.h
  *
  * Copyright (C) 2006-2026 wolfSSL Inc.
  *
@@ -19,24 +19,31 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1335, USA
  */
 
-#ifndef WOLFCRYPT_TEST_RC2_H
-#define WOLFCRYPT_TEST_RC2_H
+/* sole exported interface. */
 
-#include <tests/api/api_decl.h>
+#ifndef WC_SWDEV_H
+#define WC_SWDEV_H
 
-int test_wc_Rc2SetKey(void);
-int test_wc_Rc2SetIV(void);
-int test_wc_Rc2EcbEncryptDecrypt(void);
-int test_wc_Rc2CbcEncryptDecrypt(void);
-int test_wc_Rc2Cbc_MonteCarlo(void);
-int test_wc_Rc2Free(void);
+#include <wolfssl/wolfcrypt/cryptocb.h>
 
-#define TEST_RC2_DECLS                                      \
-    TEST_DECL_GROUP("rc2", test_wc_Rc2SetKey),              \
-    TEST_DECL_GROUP("rc2", test_wc_Rc2SetIV),               \
-    TEST_DECL_GROUP("rc2", test_wc_Rc2EcbEncryptDecrypt),   \
-    TEST_DECL_GROUP("rc2", test_wc_Rc2CbcEncryptDecrypt),   \
-    TEST_DECL_GROUP("rc2", test_wc_Rc2Cbc_MonteCarlo),      \
-    TEST_DECL_GROUP("rc2", test_wc_Rc2Free)
+#ifdef __cplusplus
+extern "C" {
+#endif
 
-#endif /* WOLFCRYPT_TEST_RC2_H */
+#define WC_SWDEV_ID 0x77736465 /* 'w' 's' 'd' 'e' */
+
+#if defined(__GNUC__) || defined(__clang__)
+#define WC_SWDEV_EXPORT __attribute__((visibility("default")))
+#else
+#define WC_SWDEV_EXPORT
+#endif
+
+WC_SWDEV_EXPORT int  wc_SwDev_Callback(int devId, wc_CryptoInfo* info,
+    void* ctx);
+WC_SWDEV_EXPORT void wc_SwDev_InternalCleanup(void);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* WC_SWDEV_H */
