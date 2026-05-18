@@ -3844,7 +3844,7 @@ int test_tls13_ch2_different_cs(void)
 }
 
 #if defined(WOLFSSL_TLS13) && !defined(NO_WOLFSSL_SERVER) && \
-    defined(HAVE_ECC)
+    defined(HAVE_ECC) && !defined(NO_FILESYSTEM)
 /* Called when writing. */
 static int MESend(WOLFSSL* ssl, char* buf, int sz, void* ctx)
 {
@@ -3881,7 +3881,7 @@ int test_tls13_sg_missing(void)
 {
     EXPECT_DECLS;
 #if defined(WOLFSSL_TLS13) && !defined(NO_WOLFSSL_SERVER) && \
-    defined(HAVE_ECC)
+    defined(HAVE_ECC) && !defined(NO_FILESYSTEM)
     WOLFSSL_CTX *ctx = NULL;
     WOLFSSL *ssl = NULL;
     byte clientHello[] = {
@@ -3952,7 +3952,7 @@ int test_tls13_ks_missing(void)
 {
     EXPECT_DECLS;
 #if defined(WOLFSSL_TLS13) && !defined(NO_WOLFSSL_SERVER) && \
-    defined(HAVE_ECC)
+    defined(HAVE_ECC) && !defined(NO_FILESYSTEM)
     WOLFSSL_CTX *ctx = NULL;
     WOLFSSL *ssl = NULL;
     byte clientHello[] = {
@@ -4282,7 +4282,8 @@ int test_key_share_mismatch(void)
 
 
 #if defined(WOLFSSL_TLS13) && !defined(NO_RSA) && defined(HAVE_ECC) && \
-    defined(HAVE_AESGCM) && !defined(NO_WOLFSSL_SERVER)
+    defined(HAVE_AESGCM) && !defined(NO_WOLFSSL_SERVER) && \
+    !defined(NO_FILESYSTEM)
 /* Called when writing. */
 static int Tls13PTASend(WOLFSSL* ssl, char* buf, int sz, void* ctx)
 {
@@ -4410,7 +4411,8 @@ int test_tls13_plaintext_alert(void)
     EXPECT_DECLS;
 
 #if defined(WOLFSSL_TLS13) && !defined(NO_RSA) && defined(HAVE_ECC) && \
-    defined(HAVE_AESGCM) && !defined(NO_WOLFSSL_SERVER)
+    defined(HAVE_AESGCM) && !defined(NO_WOLFSSL_SERVER) && \
+    !defined(NO_FILESYSTEM)
     byte clientMsgs[] = {
         /* Client Hello */
         0x16, 0x03, 0x03, 0x01, 0x9b, 0x01, 0x00, 0x01,
@@ -5278,6 +5280,48 @@ int test_tls13_short_session_ticket(void)
          * zero-padded, not garbage from an OOB read. */
         ExpectBufEQ(ssl_c->session->sessionID, shortTicket, 5);
     }
+
+    wolfSSL_free(ssl_c);
+    wolfSSL_free(ssl_s);
+    wolfSSL_CTX_free(ctx_c);
+    wolfSSL_CTX_free(ctx_s);
+#endif
+    return EXPECT_RESULT();
+}
+
+
+/* RFC 8446 Section 4.6.1: a NewSessionTicket lifetime greater than
+ * MAX_LIFETIME (604800 seconds, 7 days) must be rejected. The public
+ * wolfSSL_CTX_set_TicketHint setter clamps the value, so write the
+ * out-of-range hint directly into the server CTX to force the server to
+ * encode an over-limit lifetime onto the wire and confirm the client's
+ * DoTls13NewSessionTicket bound check fires. */
+int test_tls13_new_session_ticket_max_lifetime(void)
+{
+    EXPECT_DECLS;
+#if defined(HAVE_MANUAL_MEMIO_TESTS_DEPENDENCIES) && \
+    defined(WOLFSSL_TLS13) && defined(HAVE_SESSION_TICKET)
+    struct test_memio_ctx test_ctx;
+    WOLFSSL_CTX *ctx_c = NULL, *ctx_s = NULL;
+    WOLFSSL *ssl_c = NULL, *ssl_s = NULL;
+    char buf[64];
+
+    XMEMSET(&test_ctx, 0, sizeof(test_ctx));
+    ExpectIntEQ(test_memio_setup(&test_ctx, &ctx_c, &ctx_s, &ssl_c, &ssl_s,
+                    wolfTLSv1_3_client_method, wolfTLSv1_3_server_method), 0);
+
+    /* Bypass the public-API clamp at 604800. */
+    if (EXPECT_SUCCESS()) {
+        ctx_s->ticketHint = MAX_LIFETIME + 1;
+    }
+
+    ExpectIntEQ(test_memio_do_handshake(ssl_c, ssl_s, 10, NULL), 0);
+
+    /* Reading the post-handshake NewSessionTicket should surface the
+     * over-limit lifetime as SERVER_HINT_ERROR. */
+    ExpectIntEQ(wolfSSL_read(ssl_c, buf, sizeof(buf)), WOLFSSL_FATAL_ERROR);
+    ExpectIntEQ(wolfSSL_get_error(ssl_c, WOLFSSL_FATAL_ERROR),
+                WC_NO_ERR_TRACE(SERVER_HINT_ERROR));
 
     wolfSSL_free(ssl_c);
     wolfSSL_free(ssl_s);
