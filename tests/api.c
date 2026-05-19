@@ -1567,7 +1567,7 @@ static int test_dual_alg_ecdsa_mldsa(void)
     !defined(WOLFSSL_DILITHIUM_NO_SIGN) && \
     !defined(WOLFSSL_DILITHIUM_NO_VERIFY) && !defined(WOLFSSL_SMALL_STACK)
     WOLFSSL_CERT_MANAGER * cm = NULL;
-    MlDsaKey    alt_ca_key;
+    wc_MlDsaKey alt_ca_key;
     ecc_key     ca_key;
     WC_RNG      rng;
     int         ret = 0;
@@ -23976,21 +23976,23 @@ static int test_ParseSerial0FixtureMatrix(void)
         ExpectIntGE(derSz = wc_CertPemToDer(pemBuf, (int)pemSz, derBuf,
             (int)pemSz, CERT_TYPE), 0);
 
-        wc_InitDecodedCert(&dc, derBuf, (word32)derSz, NULL);
-        ret = wc_ParseCert(&dc, CERT_TYPE, NO_VERIFY, NULL);
-        if (cases[i].certTypeShouldPass)
-            ExpectIntEQ(ret, 0);
-        else
-            ExpectIntNE(ret, 0);
-        wc_FreeDecodedCert(&dc);
+        if (EXPECT_SUCCESS()) {
+            wc_InitDecodedCert(&dc, derBuf, (word32)derSz, NULL);
+            ret = wc_ParseCert(&dc, CERT_TYPE, NO_VERIFY, NULL);
+            if (cases[i].certTypeShouldPass)
+                ExpectIntEQ(ret, 0);
+            else
+                ExpectIntNE(ret, 0);
+            wc_FreeDecodedCert(&dc);
 
-        wc_InitDecodedCert(&dc, derBuf, (word32)derSz, NULL);
-        ret = wc_ParseCert(&dc, CA_TYPE, NO_VERIFY, NULL);
-        if (cases[i].caTypeShouldPass)
-            ExpectIntEQ(ret, 0);
-        else
-            ExpectIntNE(ret, 0);
-        wc_FreeDecodedCert(&dc);
+            wc_InitDecodedCert(&dc, derBuf, (word32)derSz, NULL);
+            ret = wc_ParseCert(&dc, CA_TYPE, NO_VERIFY, NULL);
+            if (cases[i].caTypeShouldPass)
+                ExpectIntEQ(ret, 0);
+            else
+                ExpectIntNE(ret, 0);
+            wc_FreeDecodedCert(&dc);
+        }
 
         XFREE(derBuf, NULL, DYNAMIC_TYPE_TMP_BUFFER);
         XFREE(pemBuf, NULL, DYNAMIC_TYPE_TMP_BUFFER);
