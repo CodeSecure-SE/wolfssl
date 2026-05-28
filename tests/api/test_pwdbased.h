@@ -1,4 +1,4 @@
-/* test_ossl_rand.h
+/* test_pwdbased.h
  *
  * Copyright (C) 2006-2026 wolfSSL Inc.
  *
@@ -19,23 +19,16 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1335, USA
  */
 
-#ifndef WOLFCRYPT_TEST_OSSL_RAND_H
-#define WOLFCRYPT_TEST_OSSL_RAND_H
+#ifndef WOLFCRYPT_TEST_PWDBASED_H
+#define WOLFCRYPT_TEST_PWDBASED_H
 
 #include <tests/api/api_decl.h>
 
-int test_wolfSSL_RAND_set_rand_method(void);
-int test_wolfSSL_RAND_bytes(void);
-int test_wolfSSL_RAND_load_file(void);
-int test_wolfSSL_RAND(void);
-int test_wolfSSL_RAND_poll(void);
+int test_wc_PBKDF1_ex_iterations(void);
+int test_wc_PBKDF2_ex_iterations(void);
 
-#define TEST_OSSL_RAND_DECLS                                            \
-    TEST_DECL_GROUP("ossl_rand", test_wolfSSL_RAND_set_rand_method),    \
-    TEST_DECL_GROUP("ossl_rand", test_wolfSSL_RAND_bytes),              \
-    TEST_DECL_GROUP("ossl_rand", test_wolfSSL_RAND_load_file),          \
-    TEST_DECL_GROUP("ossl_rand", test_wolfSSL_RAND),                    \
-    TEST_DECL_GROUP("ossl_rand", test_wolfSSL_RAND_poll)
+#define TEST_PWDBASED_DECLS                                                 \
+    TEST_DECL_GROUP("pwdbased", test_wc_PBKDF1_ex_iterations),             \
+    TEST_DECL_GROUP("pwdbased", test_wc_PBKDF2_ex_iterations)
 
-#endif /* WOLFCRYPT_TEST_OSSL_RAND_H */
-
+#endif /* WOLFCRYPT_TEST_PWDBASED_H */

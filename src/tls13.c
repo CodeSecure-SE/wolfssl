@@ -1051,17 +1051,22 @@ int Tls13_Exporter(WOLFSSL* ssl, unsigned char *out, size_t outLen,
             protocol, protocolLen, (byte*)label, (word32)labelLen,
             emptyHash, hashLen, (int)hashType);
     if (ret != 0)
-        return ret;
+        goto cleanup;
 
     /* Hash(context_value) */
     ret = wc_Hash(hashType, context, (word32)contextLen, hashOut, WC_MAX_DIGEST_SIZE);
     if (ret != 0)
-        return ret;
+        goto cleanup;
 
     ret = Tls13HKDFExpandLabel(ssl, out, (word32)outLen, firstExpand, hashLen,
             protocol, protocolLen, exporterLabel, EXPORTER_LABEL_SZ,
             hashOut, hashLen, (int)hashType);
 
+cleanup:
+    /* firstExpand is the per-label Derive-Secret PRK and hashOut holds
+     * Hash(context_value); wipe both before the stack frame is reclaimed. */
+    ForceZero(firstExpand, sizeof(firstExpand));
+    ForceZero(hashOut, sizeof(hashOut));
     return ret;
 }
 #endif
@@ -5775,7 +5780,14 @@ int DoTls13ServerHello(WOLFSSL* ssl, const byte* input, word32* inOutIdx,
     ) {
         /* RFC 9147 Section 5.3 / RFC 9001 Section 8.4: DTLS 1.3 and QUIC
          * ServerHello must have empty legacy_session_id_echo. */
-        if (args->sessIdSz != 0) {
+        int requireEmptyEcho = 1;
+#ifdef WOLFSSL_DTLS13_ECHO_LEGACY_SESSION_ID
+        /* Compat: a wolfSSL <= 5.9.0 DTLS 1.3 server echoes the client's
+         * legacy_session_id; accept any echo. */
+        if (ssl->options.dtls)
+            requireEmptyEcho = 0;
+#endif
+        if (requireEmptyEcho && args->sessIdSz != 0) {
             WOLFSSL_MSG("args->sessIdSz != 0");
             WOLFSSL_ERROR_VERBOSE(INVALID_PARAMETER);
             return INVALID_PARAMETER;
@@ -6086,8 +6098,13 @@ static int DoTls13CertificateRequest(WOLFSSL* ssl, const byte* input,
     len = input[(*inOutIdx)++];
     if ((*inOutIdx - begin) + len > size)
         return BUFFER_ERROR;
-    if (ssl->options.connectState < FINISHED_DONE && len > 0)
-        return BUFFER_ERROR;
+    /* INVALID_PARAMETER does not map to illegal_parameter in the central
+     * alert path, so emit the alert explicitly before returning. */
+    if (ssl->options.connectState < FINISHED_DONE && len > 0) {
+        SendAlert(ssl, alert_fatal, illegal_parameter);
+        WOLFSSL_ERROR_VERBOSE(INVALID_PARAMETER);
+        return INVALID_PARAMETER;
+    }
 
 #ifdef WOLFSSL_POST_HANDSHAKE_AUTH
     /* Remember the request context bytes; the CertReqCtx allocation and
@@ -6973,7 +6990,7 @@ static int RestartHandshakeHashWithCookie(WOLFSSL* ssl, Cookie* cookie)
 
     /* Reconstruct the HelloRetryMessage for handshake hash. */
     sessIdSz = ssl->session->sessionIDSz;
-#ifdef WOLFSSL_DTLS13
+#if defined(WOLFSSL_DTLS13) && !defined(WOLFSSL_DTLS13_ECHO_LEGACY_SESSION_ID)
     /* RFC 9147 Section 5.3: DTLS 1.3 must use empty legacy_session_id. */
     if (ssl->options.dtls)
         sessIdSz = 0;
@@ -7453,7 +7470,7 @@ int DoTls13ClientHello(WOLFSSL* ssl, const byte* input, word32* inOutIdx,
     if (sessIdSz + args->idx > helloSz)
         ERROR_OUT(BUFFER_ERROR, exit_dch);
 
-#ifdef WOLFSSL_DTLS13
+#if defined(WOLFSSL_DTLS13) && !defined(WOLFSSL_DTLS13_ECHO_LEGACY_SESSION_ID)
     /* RFC 9147 Section 5.3: DTLS 1.3 ServerHello must have empty
      * legacy_session_id_echo. Don't store the client's value so it
      * won't be echoed in SendTls13ServerHello. */
@@ -8058,7 +8075,7 @@ int SendTls13ServerHello(WOLFSSL* ssl, byte extMsgType)
     WOLFSSL_BUFFER(ssl->arrays->serverRandom, RAN_LEN);
 #endif
 
-#ifdef WOLFSSL_DTLS13
+#if defined(WOLFSSL_DTLS13) && !defined(WOLFSSL_DTLS13_ECHO_LEGACY_SESSION_ID)
     if (ssl->options.dtls) {
         /* RFC 9147 Section 5.3: DTLS 1.3 ServerHello must have empty
          * legacy_session_id_echo. */
@@ -13182,6 +13199,21 @@ static int SanityCheckTls13MsgReceived(WOLFSSL* ssl, byte type)
                 WOLFSSL_ERROR_VERBOSE(OUT_OF_ORDER_E);
                 return OUT_OF_ORDER_E;
             }
+            /* RFC 8446 4.6.2: A client that receives a post-handshake
+             * CertificateRequest message without having sent the
+             * "post_handshake_auth" extension MUST send an
+             * "unexpected_message" fatal alert. wolfSSL_allow_post_handshake_auth()
+             * must be called before wolfSSL_connect() so postHandshakeAuth
+             * reflects whether the extension was offered. */
+            if (ssl->options.serverState >= SERVER_FINISHED_COMPLETE &&
+                ssl->options.clientState == CLIENT_FINISHED_COMPLETE &&
+                !ssl->options.postHandshakeAuth) {
+                WOLFSSL_MSG("Post-handshake CertificateRequest received "
+                            "without having sent post_handshake_auth "
+                            "extension");
+                WOLFSSL_ERROR_VERBOSE(OUT_OF_ORDER_E);
+                return OUT_OF_ORDER_E;
+            }
         #endif
         #if defined(HAVE_SESSION_TICKET) || !defined(NO_PSK)
             /* Server's authenticating with PSK must not send this. */
@@ -14882,7 +14914,11 @@ int wolfSSL_CTX_allow_post_handshake_auth(WOLFSSL_CTX* ctx)
  *
  * ssl  The SSL/TLS object.
  * returns BAD_FUNC_ARG when ssl is NULL, or not using TLS v1.3,
- * SIDE_ERROR when not a client and 0 on success.
+ * SIDE_ERROR when not a client, BAD_STATE_E when called after the handshake
+ * has started, and 0 on success.
+ *
+ * Must be called before wolfSSL_connect() so the post_handshake_auth
+ * extension can be included in the ClientHello.
  */
 int wolfSSL_allow_post_handshake_auth(WOLFSSL* ssl)
 {
@@ -14890,6 +14926,8 @@ int wolfSSL_allow_post_handshake_auth(WOLFSSL* ssl)
         return BAD_FUNC_ARG;
     if (ssl->options.side == WOLFSSL_SERVER_END)
         return SIDE_ERROR;
+    if (ssl->options.handShakeState != NULL_STATE)
+        return BAD_STATE_E;
 
     ssl->options.postHandshakeAuth = 1;
 

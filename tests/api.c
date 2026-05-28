@@ -242,6 +242,7 @@
 #include <tests/api/test_asn.h>
 #include <tests/api/test_pkcs7.h>
 #include <tests/api/test_pkcs12.h>
+#include <tests/api/test_pwdbased.h>
 #include <tests/api/test_ossl_asn1.h>
 #include <tests/api/test_ossl_bn.h>
 #include <tests/api/test_ossl_bio.h>
@@ -16027,6 +16028,57 @@ static int test_wolfSSL_Tls13_ECH_long_SNI(void)
     return EXPECT_RESULT();
 }
 
+static int ech_seek_extensions(byte* buf, word16* innerExtLen)
+{
+    word16 idx;
+    byte sessionIdLen;
+    word16 cipherSuitesLen;
+    byte compressionLen;
+
+    idx = OPAQUE16_LEN + RAN_LEN;
+
+    sessionIdLen = buf[idx++];
+    idx += sessionIdLen;
+
+    ato16(buf + idx, &cipherSuitesLen);
+    idx += OPAQUE16_LEN + cipherSuitesLen;
+
+    compressionLen = buf[idx++];
+    idx += compressionLen;
+
+    ato16(buf + idx, innerExtLen);
+    idx += OPAQUE16_LEN;
+
+    return idx;
+}
+
+static int ech_find_extension(byte* buf, word16* idx_p, word16 extType)
+{
+    word16 idx;
+    word16 innerExtIdx;
+    word16 innerExtLen;
+
+    innerExtIdx = ech_seek_extensions(buf + *idx_p, &innerExtLen) + *idx_p;
+    idx = innerExtIdx;
+
+    while (idx - innerExtIdx < innerExtLen) {
+        word16 type;
+        word16 len;
+
+        ato16(buf + idx, &type);
+        if (type == extType) {
+            *idx_p = idx;
+            return 0;
+        }
+
+        idx += OPAQUE16_LEN;
+        ato16(buf + idx, &len);
+        idx += OPAQUE16_LEN + len;
+    }
+
+    return BAD_FUNC_ARG;
+}
+
 /* Test the HRR ECH rejection fallback path:
  * client offers ECH, HRR is triggered, server sends HRR without ECH extension,
  * client falls back to the outer transcript, then aborts with ech_required. */
@@ -16130,7 +16182,7 @@ static int test_wolfSSL_Tls13_ECH_ch2_decrypt_error(void)
 {
     EXPECT_DECLS;
     test_ssl_memio_ctx test_ctx;
-    int i;
+    word16 idx = RECORD_HEADER_SZ + HANDSHAKE_HEADER_SZ;
 
     XMEMSET(&test_ctx, 0, sizeof(test_ctx));
 
@@ -16163,22 +16215,20 @@ static int test_wolfSSL_Tls13_ECH_ch2_decrypt_error(void)
         /* Corrupt one byte of the ECH ciphertext in the CH2 record in s_buff.
          * ECH outer extension layout after the 0xFE0D type marker:
          *   extLen(2) + outerType(1) + kdfId(2) + aeadId(2) + configId(1)
-         *   + encLen(2, always 0 in CH2) + payloadLen(2) = 12 bytes, so the
-         * ciphertext starts 14 bytes past the first 0xFE byte. */
-        for (i = 0; i < test_ctx.s_len - 1; i++) {
-            if (test_ctx.s_buff[i] == 0xFE && test_ctx.s_buff[i + 1] == 0x0D) {
-                if (i + 14 < test_ctx.s_len)
-                    test_ctx.s_buff[i + 14] ^= 0xFF;
-                break;
-            }
-        }
+         *   + encLen(2) + payloadLen(2) = 12 bytes,
+         * so the ciphertext starts 14 bytes past the first 0xFE byte. */
+        ExpectIntEQ(ech_find_extension(test_ctx.s_buff, &idx, TLSXT_ECH), 0);
+        if (EXPECT_SUCCESS() && (idx + 14 < test_ctx.s_len))
+            test_ctx.s_buff[idx + 14] ^= 0xFF;
 
         /* Server processes the corrupted CH2.
          * hpkeContext is preserved, TLSX_ECH_Parse correctly identifies the CH2
          *   round and sends decrypt_error. */
-        (void)wolfSSL_accept(test_ctx.s_ssl);
-        ExpectIntEQ(wolfSSL_get_error(test_ctx.s_ssl, 0),
-            WC_NO_ERR_TRACE(DECRYPT_ERROR));
+        if (EXPECT_SUCCESS()) {
+            (void)wolfSSL_accept(test_ctx.s_ssl);
+            ExpectIntEQ(wolfSSL_get_error(test_ctx.s_ssl, 0),
+                WC_NO_ERR_TRACE(DECRYPT_ERROR));
+        }
     }
 
     test_ssl_memio_cleanup(&test_ctx);
@@ -16388,65 +16438,14 @@ static int test_wolfSSL_Tls13_ECH_enable_disable(void)
 #if defined(WOLFSSL_TLS13) && defined(HAVE_ECH) && \
     defined(WOLFSSL_TEST_ECH) && defined(HAVE_SSL_MEMIO_TESTS_DEPENDENCIES) && \
     !defined(WOLFSSL_NO_TLS12)
-static int ech_tamper_seek_extension(byte* innerCh, word16* innerExtLen)
-{
-    word16 idx;
-    byte sessionIdLen;
-    word16 cipherSuitesLen;
-    byte compressionLen;
-
-    idx = OPAQUE16_LEN + RAN_LEN;
-
-    sessionIdLen = innerCh[idx++];
-    idx += sessionIdLen;
-
-    ato16(innerCh + idx, &cipherSuitesLen);
-    idx += OPAQUE16_LEN + cipherSuitesLen;
-
-    compressionLen = innerCh[idx++];
-    idx += compressionLen;
-
-    ato16(innerCh + idx, innerExtLen);
-    idx += OPAQUE16_LEN;
-
-    return idx;
-}
-
-static int ech_tamper_find_extension(byte* innerCh, word16* idx_p,
-    word16 extType)
-{
-    word16 idx;
-    word16 innerExtIdx;
-    word16 innerExtLen;
-
-    idx = innerExtIdx = ech_tamper_seek_extension(innerCh, &innerExtLen);
-
-    while (idx - innerExtIdx < innerExtLen) {
-        word16 type;
-        word16 len;
-
-        ato16(innerCh + idx, &type);
-        if (type == extType) {
-            *idx_p = idx;
-            return 0;
-        }
-
-        idx += OPAQUE16_LEN;
-        ato16(innerCh + idx, &len);
-        idx += OPAQUE16_LEN + len;
-    }
-
-    return BAD_FUNC_ARG;
-}
-
 static int ech_tamper_downgrade(byte* innerCh, word32 innerChLen)
 {
     int ret;
-    word16 idx;
+    word16 idx = 0;
 
     (void)innerChLen;
 
-    ret = ech_tamper_find_extension(innerCh, &idx, TLSXT_SUPPORTED_VERSIONS);
+    ret = ech_find_extension(innerCh, &idx, TLSXT_SUPPORTED_VERSIONS);
     if (ret == 0) {
         /* change extension type to something unknown */
         innerCh[idx] = 0xFA;
@@ -16464,7 +16463,7 @@ static int ech_tamper_padding(byte* innerCh, word32 innerChLen)
     word16 innerExtLen;
 
     /* get the unpadded length */
-    idx = ech_tamper_seek_extension(innerCh, &innerExtLen);
+    idx = ech_seek_extensions(innerCh, &innerExtLen);
     idx += innerExtLen;
 
     /* no padding, but the test would fail if the message is not incorrect...
@@ -16481,11 +16480,11 @@ static int ech_tamper_padding(byte* innerCh, word32 innerChLen)
 static int ech_tamper_type(byte* innerCh, word32 innerChLen)
 {
     int ret;
-    word16 idx;
+    word16 idx = 0;
 
     (void)innerChLen;
 
-    ret = ech_tamper_find_extension(innerCh, &idx, TLSXT_ECH);
+    ret = ech_find_extension(innerCh, &idx, TLSXT_ECH);
     if (ret == 0) {
         /* change type to outer */
         innerCh[idx + 4] = ECH_TYPE_OUTER;
@@ -16499,12 +16498,12 @@ static int ech_tamper_type(byte* innerCh, word32 innerChLen)
 static int ech_tamper_key_share(byte* innerCh, word32 innerChLen)
 {
     int ret;
-    word16 idx;
+    word16 idx = 0;
     word16 len;
 
     (void)innerChLen;
 
-    ret = ech_tamper_find_extension(innerCh, &idx, TLSXT_KEY_SHARE);
+    ret = ech_find_extension(innerCh, &idx, TLSXT_KEY_SHARE);
     if (ret == 0) {
         ato16(innerCh + idx + 8, &len);
         if (len == 0) {
@@ -36696,11 +36695,15 @@ static int test_write_dup(void)
     } methods[] = {
 #ifndef WOLFSSL_NO_TLS12
         {wolfTLSv1_2_client_method, wolfTLSv1_2_server_method, "TLS 1.2", WOLFSSL_TLSV1_2},
+#ifdef WOLFSSL_DTLS
         {wolfDTLSv1_2_client_method, wolfDTLSv1_2_server_method, "DTLS 1.2", WOLFSSL_TLSV1_2},
+#endif
 #endif
 #ifdef WOLFSSL_TLS13
         {wolfTLSv1_3_client_method, wolfTLSv1_3_server_method, "TLS 1.3", WOLFSSL_TLSV1_3},
+#ifdef WOLFSSL_DTLS13
         {wolfDTLSv1_3_client_method, wolfDTLSv1_3_server_method, "DTLS 1.3", WOLFSSL_TLSV1_3},
+#endif
 #endif
     };
     struct {
@@ -36907,11 +36910,15 @@ static int test_write_dup_want_write(void)
     } methods[] = {
 #ifndef WOLFSSL_NO_TLS12
         {wolfTLSv1_2_client_method, wolfTLSv1_2_server_method, "TLS 1.2", WOLFSSL_TLSV1_2},
+#ifdef WOLFSSL_DTLS
         {wolfDTLSv1_2_client_method, wolfDTLSv1_2_server_method, "DTLS 1.2", WOLFSSL_TLSV1_2},
+#endif
 #endif
 #ifdef WOLFSSL_TLS13
         {wolfTLSv1_3_client_method, wolfTLSv1_3_server_method, "TLS 1.3", WOLFSSL_TLSV1_3},
+#ifdef WOLFSSL_DTLS13
         {wolfDTLSv1_3_client_method, wolfDTLSv1_3_server_method, "DTLS 1.3", WOLFSSL_TLSV1_3},
+#endif
 #endif
     };
 
@@ -37039,7 +37046,9 @@ static int test_write_dup_want_write_simul(void)
     } methods[] = {
 #ifdef WOLFSSL_TLS13
         {wolfTLSv1_3_client_method, wolfTLSv1_3_server_method, "TLS 1.3"},
+#ifdef WOLFSSL_DTLS13
         {wolfDTLSv1_3_client_method, wolfDTLSv1_3_server_method, "DTLS 1.3"},
+#endif
 #endif
     };
 
@@ -40251,6 +40260,9 @@ TEST_CASE testCases[] = {
 
     /* wolfCrypt PKCS#12 */
     TEST_PKCS12_DECLS,
+
+    /* wolfCrypt pwdbased (PBKDF1/PBKDF2) */
+    TEST_PWDBASED_DECLS,
 
     /*
      * test_wolfCrypt_Cleanup needs to come after the above wolfCrypt tests to
