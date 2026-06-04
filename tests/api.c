@@ -7199,6 +7199,162 @@ static int test_wolfSSL_get_finished(void)
     return EXPECT_RESULT();
 }
 
+#if defined(HAVE_SSL_MEMIO_TESTS_DEPENDENCIES) && \
+    defined(WOLFSSL_HAVE_TLS_UNIQUE) && defined(WOLFSSL_TLS13)
+static int test_wolfSSL_get_finished_overrun_on_handshake(WOLFSSL_CTX* ctx,
+    WOLFSSL* ssl)
+{
+    EXPECT_DECLS;
+    /* Destination buffer immediately followed by a guard region. Both are
+     * byte arrays (alignment 1) so there is no padding between them and the
+     * guard bytes sit directly after buf. The caller promises only
+     * TLS_FINISHED_SZ writable bytes via the count argument, so wolfSSL must
+     * not write past buf[] into the guard region. */
+    struct {
+        byte buf[TLS_FINISHED_SZ];
+        byte guard[WC_MAX_DIGEST_SIZE];
+    } probe;
+    byte   full[WC_MAX_DIGEST_SIZE];
+    size_t msg_len;
+    word32 i;
+
+    (void)ctx;
+
+    XMEMSET(&probe, 0, sizeof(probe));
+    XMEMSET(probe.guard, 0x5A, sizeof(probe.guard));
+
+    /* For a TLS 1.3 connection the Finished message is the handshake hash
+     * size (32 bytes for SHA-256, 48 for SHA-384), which is larger than the
+     * count of TLS_FINISHED_SZ (12) we pass here. The buffer is too small to
+     * hold the Finished message, so the call must fail and write nothing
+     * rather than copying the full length and overrunning buf[]. */
+    msg_len = wolfSSL_get_finished(ssl, probe.buf, TLS_FINISHED_SZ);
+    ExpectIntEQ(msg_len, WOLFSSL_FAILURE);
+
+    /* Nothing must have been written: buf[] stays zero and the guard bytes
+     * that follow it stay 0x5A. */
+    for (i = 0; i < (word32)sizeof(probe.buf); i++) {
+        ExpectIntEQ(probe.buf[i], 0x00);
+    }
+    for (i = 0; i < (word32)sizeof(probe.guard); i++) {
+        ExpectIntEQ(probe.guard[i], 0x5A);
+    }
+
+    /* A sufficiently large buffer must still succeed and report the actual
+     * Finished length, which is between TLS_FINISHED_SZ and the max digest
+     * size. */
+    XMEMSET(full, 0, sizeof(full));
+    msg_len = wolfSSL_get_finished(ssl, full, sizeof(full));
+    ExpectIntGE(msg_len, TLS_FINISHED_SZ);
+    ExpectIntLE(msg_len, WC_MAX_DIGEST_SIZE);
+
+    return EXPECT_RESULT();
+}
+#endif /* HAVE_SSL_MEMIO_TESTS_DEPENDENCIES && WOLFSSL_HAVE_TLS_UNIQUE &&
+        * WOLFSSL_TLS13 */
+
+static int test_wolfSSL_get_finished_overrun(void)
+{
+    EXPECT_DECLS;
+#if defined(HAVE_SSL_MEMIO_TESTS_DEPENDENCIES) && \
+    defined(WOLFSSL_HAVE_TLS_UNIQUE) && defined(WOLFSSL_TLS13)
+    test_ssl_cbf client_cbf;
+    test_ssl_cbf server_cbf;
+
+    XMEMSET(&client_cbf, 0, sizeof(client_cbf));
+    XMEMSET(&server_cbf, 0, sizeof(server_cbf));
+
+    /* Force TLS 1.3 so the stored Finished length exceeds TLS_FINISHED_SZ. */
+    client_cbf.method = wolfTLSv1_3_client_method;
+    server_cbf.method = wolfTLSv1_3_server_method;
+
+    ExpectIntEQ(test_wolfSSL_client_server_nofail_memio(&client_cbf,
+        &server_cbf, test_wolfSSL_get_finished_overrun_on_handshake),
+        TEST_SUCCESS);
+#endif /* HAVE_SSL_MEMIO_TESTS_DEPENDENCIES && WOLFSSL_HAVE_TLS_UNIQUE &&
+        * WOLFSSL_TLS13 */
+
+    return EXPECT_RESULT();
+}
+
+#if defined(HAVE_SSL_MEMIO_TESTS_DEPENDENCIES) && \
+    defined(WOLFSSL_HAVE_TLS_UNIQUE) && defined(WOLFSSL_TLS13)
+static int test_wolfSSL_get_peer_finished_overrun_on_handshake(WOLFSSL_CTX* ctx,
+    WOLFSSL* ssl)
+{
+    EXPECT_DECLS;
+    /* Destination buffer immediately followed by a guard region. Both are
+     * byte arrays (alignment 1) so there is no padding between them and the
+     * guard bytes sit directly after buf. The caller promises only
+     * TLS_FINISHED_SZ writable bytes via the count argument, so wolfSSL must
+     * not write past buf[] into the guard region. */
+    struct {
+        byte buf[TLS_FINISHED_SZ];
+        byte guard[WC_MAX_DIGEST_SIZE];
+    } probe;
+    byte   full[WC_MAX_DIGEST_SIZE];
+    size_t msg_len;
+    word32 i;
+
+    (void)ctx;
+
+    XMEMSET(&probe, 0, sizeof(probe));
+    XMEMSET(probe.guard, 0x5A, sizeof(probe.guard));
+
+    /* For a TLS 1.3 connection the peer Finished message is the handshake
+     * hash size (32 bytes for SHA-256, 48 for SHA-384), which is larger than
+     * the count of TLS_FINISHED_SZ (12) we pass here. The buffer is too small
+     * to hold the Finished message, so the call must fail and write nothing
+     * rather than copying the full length and overrunning buf[]. */
+    msg_len = wolfSSL_get_peer_finished(ssl, probe.buf, TLS_FINISHED_SZ);
+    ExpectIntEQ(msg_len, WOLFSSL_FAILURE);
+
+    /* Nothing must have been written: buf[] stays zero and the guard bytes
+     * that follow it stay 0x5A. */
+    for (i = 0; i < (word32)sizeof(probe.buf); i++) {
+        ExpectIntEQ(probe.buf[i], 0x00);
+    }
+    for (i = 0; i < (word32)sizeof(probe.guard); i++) {
+        ExpectIntEQ(probe.guard[i], 0x5A);
+    }
+
+    /* A sufficiently large buffer must still succeed and report the actual
+     * Finished length, which is between TLS_FINISHED_SZ and the max digest
+     * size. */
+    XMEMSET(full, 0, sizeof(full));
+    msg_len = wolfSSL_get_peer_finished(ssl, full, sizeof(full));
+    ExpectIntGE(msg_len, TLS_FINISHED_SZ);
+    ExpectIntLE(msg_len, WC_MAX_DIGEST_SIZE);
+
+    return EXPECT_RESULT();
+}
+#endif /* HAVE_SSL_MEMIO_TESTS_DEPENDENCIES && WOLFSSL_HAVE_TLS_UNIQUE &&
+        * WOLFSSL_TLS13 */
+
+static int test_wolfSSL_get_peer_finished_overrun(void)
+{
+    EXPECT_DECLS;
+#if defined(HAVE_SSL_MEMIO_TESTS_DEPENDENCIES) && \
+    defined(WOLFSSL_HAVE_TLS_UNIQUE) && defined(WOLFSSL_TLS13)
+    test_ssl_cbf client_cbf;
+    test_ssl_cbf server_cbf;
+
+    XMEMSET(&client_cbf, 0, sizeof(client_cbf));
+    XMEMSET(&server_cbf, 0, sizeof(server_cbf));
+
+    /* Force TLS 1.3 so the stored Finished length exceeds TLS_FINISHED_SZ. */
+    client_cbf.method = wolfTLSv1_3_client_method;
+    server_cbf.method = wolfTLSv1_3_server_method;
+
+    ExpectIntEQ(test_wolfSSL_client_server_nofail_memio(&client_cbf,
+        &server_cbf, test_wolfSSL_get_peer_finished_overrun_on_handshake),
+        TEST_SUCCESS);
+#endif /* HAVE_SSL_MEMIO_TESTS_DEPENDENCIES && WOLFSSL_HAVE_TLS_UNIQUE &&
+        * WOLFSSL_TLS13 */
+
+    return EXPECT_RESULT();
+}
+
 
 #if defined(WOLFSSL_SESSION_EXPORT) && !defined(WOLFSSL_NO_TLS12)
 #ifdef WOLFSSL_TLS13
@@ -10026,8 +10182,7 @@ static int test_wolfSSL_URI(void)
     wolfSSL_FreeX509(x509);
     x509 = NULL;
 
-#if !defined(IGNORE_NAME_CONSTRAINTS) && !defined(WOLFSSL_NO_ASN_STRICT) \
-    && !defined(WOLFSSL_FPKI)
+#if !defined(IGNORE_NAME_CONSTRAINTS) && !defined(WOLFSSL_NO_ASN_STRICT)
     ExpectNull(x509 = wolfSSL_X509_load_certificate_file(badUri,
         WOLFSSL_FILETYPE_PEM));
 #else
@@ -18595,6 +18750,7 @@ static int test_wolfSSL_GENERAL_NAME_print(void)
     ACCESS_DESCRIPTION* ad = NULL;
     ASN1_IA5STRING *dnsname = NULL;
     ASN1_OBJECT* ridObj = NULL;
+    X509_NAME* dirName = NULL;
 
     const unsigned char v4Addr[] = {192,168,53,1};
     const unsigned char v6Addr[] =
@@ -18849,22 +19005,35 @@ static int test_wolfSSL_GENERAL_NAME_print(void)
 
     /* test for GEN_DIRNAME */
     ExpectNotNull(gn = wolfSSL_GENERAL_NAME_new());
+    /* Build a real directoryName (X509_NAME) so the print path exercises
+     * wolfSSL_X509_NAME_print_ex on a valid object. Forcing the type without
+     * setting d.directoryName would leave it aliasing the default IA5 string
+     * and cause an out-of-bounds read when printed. */
+    ExpectNotNull(dirName = X509_NAME_new());
+    ExpectIntEQ(X509_NAME_add_entry_by_NID(dirName, NID_commonName,
+        MBSTRING_UTF8, (unsigned char*)"wolfSSLDirNameTest", -1, -1, 0), 1);
     if (gn != NULL) {
+        /* Replace the default IA5 string allocated by GENERAL_NAME_new with
+         * the directoryName and take ownership of it. */
+        wolfSSL_ASN1_STRING_free(gn->d.ia5);
         gn->type = GEN_DIRNAME;
+        gn->d.directoryName = dirName;
+        dirName = NULL; /* gn owns it now; freed by GENERAL_NAME_free */
     }
     ExpectIntEQ(GENERAL_NAME_print(out, gn), 1);
     XMEMSET(outbuf,0,sizeof(outbuf));
     ExpectIntGT(BIO_read(out, outbuf, sizeof(outbuf)), 0);
+    /* Output must start with the label and contain the directory name. */
     ExpectIntEQ(XSTRNCMP((const char*)outbuf, dirNameStr, XSTRLEN(dirNameStr)),
         0);
+    ExpectNotNull(XSTRSTR((const char*)outbuf, "wolfSSLDirNameTest"));
     /* Duplicating GEN_DIRNAME not supported. */
     ExpectNull(dup_gn = GENERAL_NAME_dup(gn));
-    /* Restore to GEN_IA5 (default) to avoid memory leak. */
-    if (gn != NULL) {
-        gn->type = GEN_IA5;
-    }
     GENERAL_NAME_free(gn);
     gn = NULL;
+    /* Only freed here if ownership was not transferred (e.g. gn alloc failed). */
+    X509_NAME_free(dirName);
+    dirName = NULL;
 
     /* test for GEN_RID */
     p = ridData;
@@ -22508,6 +22677,172 @@ static int test_NameConstraints_OtherName(void)
     return EXPECT_RESULT();
 }
 
+#if defined(WOLFSSL_ASN_TEMPLATE) && \
+    defined(WOLFSSL_CERT_REQ) && !defined(NO_ASN_TIME) && \
+    defined(WOLFSSL_CERT_GEN) && defined(HAVE_ECC) && \
+    defined(WOLFSSL_CERT_EXT) && !defined(NO_CERTS) && \
+    defined(WOLFSSL_ALT_NAMES) && defined(WOLFSSL_CUSTOM_OID) && \
+    defined(HAVE_OID_ENCODING) && !defined(IGNORE_NAME_CONSTRAINTS)
+/* Build a SubjectAltName extension value with a single GeneralName of the
+ * given context tag (0x82 dnsName, 0x86 URI) carrying `val`. */
+static word32 build_simple_san(byte* out, word32 outSz, byte gnTag,
+    const char* val)
+{
+    word32 vlen = (word32)XSTRLEN(val);
+    if (vlen > 0x7F || outSz < vlen + 4)
+        return 0;
+    out[0] = 0x30;                              /* SEQUENCE */
+    out[1] = (byte)(vlen + 2);
+    out[2] = gnTag;                             /* [tag] GeneralName */
+    out[3] = (byte)vlen;
+    XMEMCPY(out + 4, val, vlen);
+    return vlen + 4;
+}
+
+/* Build a NameConstraints extension value with a single subtree ([0]
+ * permitted or [1] excluded) carrying a GeneralName of context tag `gnTag`
+ * with value `val`. */
+static word32 build_simple_nameConstraints(byte* out, word32 outSz,
+    int excluded, byte gnTag, const char* val)
+{
+    word32 vlen = (word32)XSTRLEN(val);
+    word32 n3 = vlen + 2;       /* GeneralSubtree content: the base GN */
+    word32 n2 = n3 + 2;         /* subtrees list content: one GeneralSubtree */
+    word32 n1 = n2 + 2;         /* SEQUENCE content: the subtrees list */
+    if (vlen > 0x7F || outSz < n1 + 2)
+        return 0;
+    out[0] = 0x30;                              /* SEQUENCE */
+    out[1] = (byte)n1;
+    out[2] = excluded ? 0xA1 : 0xA0;            /* [1] excluded / [0] permitted */
+    out[3] = (byte)n2;
+    out[4] = 0x30;                              /* GeneralSubtree */
+    out[5] = (byte)n3;
+    out[6] = gnTag;                             /* base GeneralName */
+    out[7] = (byte)vlen;
+    XMEMCPY(out + 8, val, vlen);
+    return n1 + 2;
+}
+#endif
+
+/* End-to-end enforcement of DNS and URI nameConstraints against wildcard and
+ * sub-host leaf SANs, exercised through the real chain-verification path.
+ *
+ * DNS subtree semantics (RFC 5280 4.2.1.10) plus wildcard reasoning:
+ *   - excluded DNS:foo.example.com must reject a leaf SAN *.example.com,
+ *     because the wildcard can expand to the excluded host (security gap).
+ *   - permitted DNS:example.com must accept *.example.com (contained), while
+ *     permitted DNS:foo.example.com must reject it (the wildcard can escape).
+ * URI semantics: a constraint without a leading dot is an EXACT host match,
+ * not a subtree, so permitted URI:host.com must reject https://www.host.com/.
+ */
+static int test_NameConstraints_DnsUriWildcard(void)
+{
+    EXPECT_DECLS;
+#if defined(WOLFSSL_ASN_TEMPLATE) && \
+    defined(WOLFSSL_CERT_REQ) && !defined(NO_ASN_TIME) && \
+    defined(WOLFSSL_CERT_GEN) && defined(HAVE_ECC) && \
+    defined(WOLFSSL_CERT_EXT) && !defined(NO_CERTS) && \
+    defined(WOLFSSL_ALT_NAMES) && defined(WOLFSSL_CUSTOM_OID) && \
+    defined(HAVE_OID_ENCODING) && !defined(IGNORE_NAME_CONSTRAINTS)
+    byte nc[64];
+    byte san[64];
+    word32 ncSz, sanSz;
+    const byte DNS = 0x82;  /* [2] dnsName */
+    const byte URI = 0x86;  /* [6] uniformResourceIdentifier */
+
+    /* --- DNS, excluded subtree --- */
+
+    /* (1) Excluded foo.example.com vs wildcard SAN that can reach it: the
+     *     pre-fix byte-length guard let this through. Must reject. */
+    ncSz  = build_simple_nameConstraints(nc, sizeof(nc), 1, DNS,
+                "foo.example.com");
+    sanSz = build_simple_san(san, sizeof(san), DNS, "*.example.com");
+    ExpectIntGT((int)ncSz, 0);
+    ExpectIntGT((int)sanSz, 0);
+    ExpectIntEQ(verify_with_otherName_chain(nc, ncSz, 1, san, sanSz),
+        WC_NO_ERR_TRACE(ASN_NAME_INVALID_E));
+
+    /* (2) Positive control: same exclusion, wildcard in a different domain
+     *     cannot reach foo.example.com -> accept. */
+    sanSz = build_simple_san(san, sizeof(san), DNS, "*.other.com");
+    ExpectIntGT((int)sanSz, 0);
+    ExpectIntEQ(verify_with_otherName_chain(nc, ncSz, 1, san, sanSz), 0);
+
+    /* (3) Regression: literal SAN inside the excluded subtree still rejects. */
+    sanSz = build_simple_san(san, sizeof(san), DNS, "foo.example.com");
+    ExpectIntGT((int)sanSz, 0);
+    ExpectIntEQ(verify_with_otherName_chain(nc, ncSz, 1, san, sanSz),
+        WC_NO_ERR_TRACE(ASN_NAME_INVALID_E));
+
+    /* (4) Regression: literal SAN outside the excluded subtree accepts. */
+    sanSz = build_simple_san(san, sizeof(san), DNS, "bar.other.com");
+    ExpectIntGT((int)sanSz, 0);
+    ExpectIntEQ(verify_with_otherName_chain(nc, ncSz, 1, san, sanSz), 0);
+
+    /* --- DNS, permitted subtree --- */
+
+    /* (5) Permitted example.com accepts *.example.com (fully contained). */
+    ncSz  = build_simple_nameConstraints(nc, sizeof(nc), 0, DNS, "example.com");
+    sanSz = build_simple_san(san, sizeof(san), DNS, "*.example.com");
+    ExpectIntGT((int)ncSz, 0);
+    ExpectIntGT((int)sanSz, 0);
+    ExpectIntEQ(verify_with_otherName_chain(nc, ncSz, 1, san, sanSz), 0);
+
+    /* (6) Permitted foo.example.com rejects *.example.com (the wildcard can
+     *     expand outside the permitted subtree). */
+    ncSz  = build_simple_nameConstraints(nc, sizeof(nc), 0, DNS,
+                "foo.example.com");
+    sanSz = build_simple_san(san, sizeof(san), DNS, "*.example.com");
+    ExpectIntGT((int)ncSz, 0);
+    ExpectIntGT((int)sanSz, 0);
+    ExpectIntEQ(verify_with_otherName_chain(nc, ncSz, 1, san, sanSz),
+        WC_NO_ERR_TRACE(ASN_NAME_INVALID_E));
+
+    /* --- URI, exact-host vs subtree semantics --- */
+
+    /* (7) Permitted URI host.com (no leading dot) is an EXACT host match:
+     *     a sub-host URI is NOT contained -> reject. Pre-fix this wrongly
+     *     subtree-matched and accepted. */
+    ncSz  = build_simple_nameConstraints(nc, sizeof(nc), 0, URI, "host.com");
+    sanSz = build_simple_san(san, sizeof(san), URI, "https://www.host.com/");
+    ExpectIntGT((int)ncSz, 0);
+    ExpectIntGT((int)sanSz, 0);
+    ExpectIntEQ(verify_with_otherName_chain(nc, ncSz, 1, san, sanSz),
+        WC_NO_ERR_TRACE(ASN_NAME_INVALID_E));
+
+    /* (8) Permitted URI host.com accepts the exact host. */
+    sanSz = build_simple_san(san, sizeof(san), URI, "https://host.com/path");
+    ExpectIntGT((int)sanSz, 0);
+    ExpectIntEQ(verify_with_otherName_chain(nc, ncSz, 1, san, sanSz), 0);
+
+    /* (9) Permitted URI .host.com (leading dot) is a subtree: the sub-host is
+     *     accepted but the bare host is not. */
+    ncSz  = build_simple_nameConstraints(nc, sizeof(nc), 0, URI, ".host.com");
+    sanSz = build_simple_san(san, sizeof(san), URI, "https://www.host.com/");
+    ExpectIntGT((int)ncSz, 0);
+    ExpectIntGT((int)sanSz, 0);
+    ExpectIntEQ(verify_with_otherName_chain(nc, ncSz, 1, san, sanSz), 0);
+
+    sanSz = build_simple_san(san, sizeof(san), URI, "https://host.com/");
+    ExpectIntGT((int)sanSz, 0);
+    ExpectIntEQ(verify_with_otherName_chain(nc, ncSz, 1, san, sanSz),
+        WC_NO_ERR_TRACE(ASN_NAME_INVALID_E));
+
+    /* (10) Excluded URI host.com (exact): bare host excluded, sub-host not. */
+    ncSz  = build_simple_nameConstraints(nc, sizeof(nc), 1, URI, "host.com");
+    sanSz = build_simple_san(san, sizeof(san), URI, "https://host.com/");
+    ExpectIntGT((int)ncSz, 0);
+    ExpectIntGT((int)sanSz, 0);
+    ExpectIntEQ(verify_with_otherName_chain(nc, ncSz, 1, san, sanSz),
+        WC_NO_ERR_TRACE(ASN_NAME_INVALID_E));
+
+    sanSz = build_simple_san(san, sizeof(san), URI, "https://www.host.com/");
+    ExpectIntGT((int)sanSz, 0);
+    ExpectIntEQ(verify_with_otherName_chain(nc, ncSz, 1, san, sanSz), 0);
+#endif
+    return EXPECT_RESULT();
+}
+
 static int test_MakeCertWithCaFalse(void)
 {
     EXPECT_DECLS;
@@ -24999,6 +25334,111 @@ static int test_wolfSSL_X509_print(void)
 
     X509_free(x509);
     BIO_free(bio);
+#endif
+    return EXPECT_RESULT();
+}
+
+static int test_wolfSSL_X509_print_basic_constraints(void)
+{
+    EXPECT_DECLS;
+#if defined(OPENSSL_EXTRA) && !defined(NO_FILESYSTEM) && \
+   !defined(NO_RSA) && defined(XSNPRINTF) && !defined(WC_DISABLE_RADIX_ZERO_PAD)
+    /* X509_print must match OpenSSL's Basic Constraints output: "CA:TRUE"
+     * alone when no pathLenConstraint is present, and "CA:TRUE, pathlen:N"
+     * when one is (including the meaningful value 0). */
+    struct {
+        const char* file;
+        const char* expect; /* substring that must be present */
+        const char* absent; /* substring that must be absent, or NULL */
+    } cases[] = {
+        { "./certs/ca-cert.pem", "CA:TRUE", "pathlen" },
+        { "./certs/intermediate/ca-int-cert.pem", "CA:TRUE, pathlen:1", NULL },
+        { "./certs/test-pathlen/chainG-ICA1-pathlen0.pem",
+              "CA:TRUE, pathlen:0", NULL },
+    };
+    size_t i;
+
+    for (i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        X509* x509 = NULL;
+        BIO*  bio  = NULL;
+        char* data = NULL;
+        int   len  = 0;
+        char  buf[8192];
+
+        ExpectNotNull(x509 = X509_load_certificate_file(cases[i].file,
+            WOLFSSL_FILETYPE_PEM));
+        ExpectNotNull(bio = BIO_new(BIO_s_mem()));
+        ExpectIntEQ(X509_print(bio, x509), SSL_SUCCESS);
+        /* Memory BIO data is not NUL-terminated; copy into a bounded buffer. */
+        ExpectIntGT((len = BIO_get_mem_data(bio, &data)), 0);
+        ExpectIntLT(len, (int)sizeof(buf));
+        if ((data != NULL) && (len > 0) && (len < (int)sizeof(buf))) {
+            XMEMCPY(buf, data, (size_t)len);
+            buf[len] = '\0';
+            ExpectNotNull(XSTRSTR(buf, cases[i].expect));
+            if (cases[i].absent != NULL) {
+                ExpectNull(XSTRSTR(buf, cases[i].absent));
+            }
+        }
+        BIO_free(bio);
+        X509_free(x509);
+    }
+#endif
+    return EXPECT_RESULT();
+}
+
+static int test_wolfSSL_X509_print_ext_key_usage(void)
+{
+    EXPECT_DECLS;
+#if defined(OPENSSL_EXTRA) && !defined(NO_FILESYSTEM) && \
+   !defined(NO_RSA) && defined(XSNPRINTF) && !defined(WC_DISABLE_RADIX_ZERO_PAD)
+    /* Self-signed RSA cert (CN="wolfSSL anyEKU test", valid until 2126) whose
+     * only Extended Key Usage is anyExtendedKeyUsage (OID 2.5.29.37.0).
+     * X509_print must render it as "Any Extended Key Usage" to match OpenSSL,
+     * rather than omitting it. */
+    static const char anyEkuCertPem[] =
+        "-----BEGIN CERTIFICATE-----\n"
+        "MIIDMDCCAhigAwIBAgIUGFipYIiuuQZHNjsi0R8t6nZrFVowDQYJKoZIhvcNAQEL\n"
+        "BQAwHjEcMBoGA1UEAwwTd29sZlNTTCBhbnlFS1UgdGVzdDAgFw0yNjA1MjgwMTI5\n"
+        "MjBaGA8yMTI2MDUwNDAxMjkyMFowHjEcMBoGA1UEAwwTd29sZlNTTCBhbnlFS1Ug\n"
+        "dGVzdDCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBAKIXS15QjpWlqpqk\n"
+        "sUTD/mgm7akIZfp2DVoweJsf8BC/tnwMX1noWUFjBC8SLOHyhx4bmWxVBzFXv/uu\n"
+        "ICoUCq63pgnxj3rQbPAa1pwAX4UsYS1PS/2mO2o7lRLRdDLIaBXuUClVHGjti9x5\n"
+        "x5++4FFhOhKNt7CkYVAfXasTFKdZqSnKdlYX2rM8LoCjP3YHIC5jEIgjyNUEqzup\n"
+        "Ls02dIaAly5O8yzasUtULwE76E/UpyhE+o2dkhxnc6ukqU5CBLeHNOUJgvThW1lS\n"
+        "SlGXl8Kd5uvBvDflXb6y3TQBEY/hb40JzYeH+hHf4YIqCtvfy6PMA+Rcu2CKlDpP\n"
+        "FVf85pUCAwEAAaNkMGIwHQYDVR0OBBYEFAkmMlYp9K3sbeQ8/RluOviXZ3JcMB8G\n"
+        "A1UdIwQYMBaAFAkmMlYp9K3sbeQ8/RluOviXZ3JcMA8GA1UdEwEB/wQFMAMBAf8w\n"
+        "DwYDVR0lBAgwBgYEVR0lADANBgkqhkiG9w0BAQsFAAOCAQEAHX5wAZDAyFSmmsn4\n"
+        "Mu7TayCx+VbcBgvL4ZdxxJYXexslzI8OviKSgpC56LaVB5JpNqZtFS4pZZikG7nv\n"
+        "kYCoiU33XN82/gggq1bv8rKO740V6kGev3gfEeJuTX30fCPZ18znE1fU8+VQba1L\n"
+        "bPn0h746Ivom47/1VMg6y7CbTJg90+lloPWcTWujYfm5jWychqWurhfZmAYcUlBH\n"
+        "Ksk0l4kiEJA6lSnPp3MqBS0GzwsCixSqYc1W1TlwNGNg38cLP2Z5jerJZlazuVws\n"
+        "SeEbYO6TIhsy6QJy0Pd7hu9DUOKRxp+OQubL6WgWpjrGl1LUzH5sI5pyWueEAEBu\n"
+        "e74xbw==\n"
+        "-----END CERTIFICATE-----\n";
+    X509* x509 = NULL;
+    BIO*  bio  = NULL;
+    char* data = NULL;
+    int   len  = 0;
+    char  buf[8192];
+
+    ExpectNotNull(x509 = wolfSSL_X509_load_certificate_buffer(
+        (const unsigned char*)anyEkuCertPem, (int)XSTRLEN(anyEkuCertPem),
+        WOLFSSL_FILETYPE_PEM));
+    ExpectNotNull(bio = BIO_new(BIO_s_mem()));
+    ExpectIntEQ(X509_print(bio, x509), SSL_SUCCESS);
+    /* Memory BIO data is not NUL-terminated; copy into a bounded buffer. */
+    ExpectIntGT((len = BIO_get_mem_data(bio, &data)), 0);
+    ExpectIntLT(len, (int)sizeof(buf));
+    if ((data != NULL) && (len > 0) && (len < (int)sizeof(buf))) {
+        XMEMCPY(buf, data, (size_t)len);
+        buf[len] = '\0';
+        ExpectNotNull(XSTRSTR(buf, "X509v3 Extended Key Usage"));
+        ExpectNotNull(XSTRSTR(buf, "Any Extended Key Usage"));
+    }
+    BIO_free(bio);
+    X509_free(x509);
 #endif
     return EXPECT_RESULT();
 }
@@ -29680,7 +30120,8 @@ static int test_extra_alerts_wrong_cs(void)
 #endif
 
 #if defined(WOLFSSL_TLS13) && !defined(WOLFSSL_NO_TLS12) &&   \
-    defined(HAVE_MANUAL_MEMIO_TESTS_DEPENDENCIES) && defined(WOLFSSL_AES_256)
+    defined(HAVE_MANUAL_MEMIO_TESTS_DEPENDENCIES) && defined(WOLFSSL_AES_256) && \
+    defined(BUILD_TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384)
 
 #define TEST_CS_DOWNGRADE_CLIENT "ECDHE-RSA-AES256-GCM-SHA384"
 
@@ -33942,6 +34383,7 @@ TEST_CASE testCases[] = {
     TEST_DECL(test_PathLenSelfIssuedAllowed),
     TEST_DECL(test_PathLenNoKeyUsage),
     TEST_DECL(test_NameConstraints_OtherName),
+    TEST_DECL(test_NameConstraints_DnsUriWildcard),
     TEST_DECL(test_ParseSerial0FixtureMatrix),
     TEST_DECL(test_MakeCertWithCaFalse),
 #ifdef WOLFSSL_CERT_SIGN_CB
@@ -34073,6 +34515,8 @@ TEST_CASE testCases[] = {
     TEST_DECL(test_wolfSSL_X509_CRL),
 #ifndef NO_BIO
     TEST_DECL(test_wolfSSL_X509_print),
+    TEST_DECL(test_wolfSSL_X509_print_basic_constraints),
+    TEST_DECL(test_wolfSSL_X509_print_ext_key_usage),
     TEST_DECL(test_wolfSSL_X509_CRL_print),
 #endif
 
@@ -34299,6 +34743,8 @@ TEST_CASE testCases[] = {
 
 #ifdef HAVE_IO_TESTS_DEPENDENCIES
     TEST_DECL(test_wolfSSL_get_finished),
+    TEST_DECL(test_wolfSSL_get_finished_overrun),
+    TEST_DECL(test_wolfSSL_get_peer_finished_overrun),
 #endif
     TEST_DECL(test_SSL_CIPHER_get_xxx),
     TEST_DECL(test_wolfSSL_ERR_strings),
@@ -34578,6 +35024,7 @@ TEST_CASE testCases[] = {
     TEST_DECL(test_ocsp_response_parsing),
     TEST_DECL(test_ocsp_certid_enc_dec),
     TEST_DECL(test_ocsp_certid_dup),
+    TEST_DECL(test_ocsp_resp_find_status_serial_prefix),
     TEST_DECL(test_ocsp_tls_cert_cb),
     TEST_DECL(test_ocsp_cert_unknown_crl_fallback),
     TEST_DECL(test_ocsp_cert_unknown_crl_fallback_nonleaf),
