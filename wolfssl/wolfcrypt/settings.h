@@ -1539,18 +1539,17 @@
 #endif
 
 #if defined(WOLFSSL_uITRON4)
+    #define XMALLOC_USER
+    #include <stddef.h>
+    #define ITRON_POOL_SIZE 1024*20
+    extern int uITRON4_minit(size_t poolsz) ;
+    extern void *uITRON4_malloc(size_t sz) ;
+    extern void *uITRON4_realloc(void *p, size_t sz) ;
+    extern void uITRON4_free(void *p) ;
 
-#define XMALLOC_USER
-#include <stddef.h>
-#define ITRON_POOL_SIZE 1024*20
-extern int uITRON4_minit(size_t poolsz) ;
-extern void *uITRON4_malloc(size_t sz) ;
-extern void *uITRON4_realloc(void *p, size_t sz) ;
-extern void uITRON4_free(void *p) ;
-
-#define XMALLOC(sz, heap, type)     ((void)(heap), (void)(type), uITRON4_malloc(sz))
-#define XREALLOC(p, sz, heap, type) ((void)(heap), (void)(type), uITRON4_realloc(p, sz))
-#define XFREE(p, heap, type)        ((void)(heap), (void)(type), uITRON4_free(p))
+    #define XMALLOC(sz, heap, type)     ((void)(heap), (void)(type), uITRON4_malloc(sz))
+    #define XREALLOC(p, sz, heap, type) ((void)(heap), (void)(type), uITRON4_realloc(p, sz))
+    #define XFREE(p, heap, type)        ((void)(heap), (void)(type), uITRON4_free(p))
 #endif
 
 #if defined(WOLFSSL_uTKERNEL2)
@@ -3925,6 +3924,12 @@ extern void uITRON4_free(void *p) ;
     #ifndef NO_CTYPE_H
         #define NO_CTYPE_H
     #endif
+    /* Linux kernel includes linux/stddef.h.  The gcc stddef.h conflicts with it
+     * (e.g. offsetof()) and needs to be inhibited.
+     */
+    #ifndef NO_STDDEF_H
+        #define NO_STDDEF_H
+    #endif
     #undef HAVE_ERRNO_H
     #undef HAVE_THREAD_LS
     #undef HAVE_ATEXIT
@@ -5246,6 +5251,13 @@ blinding by defining WC_BLINDING_NO_RNG_ACKNOWLEDGE_WEAKNESS."
 
 #if defined(WC_RNG_BANK_SUPPORT) && defined(NO_ASN_TIME)
     #undef WC_RNG_BANK_SUPPORT
+#endif
+
+/* The OCSP responder time-stamps every response it generates (producedAt,
+ * thisUpdate and, for revoked certs, revocationDate), so it needs ASN time
+ * support. */
+#if defined(HAVE_OCSP_RESPONDER) && defined(NO_ASN_TIME)
+    #undef HAVE_OCSP_RESPONDER
 #endif
 
 #ifdef HAVE_OCSP_RESPONDER

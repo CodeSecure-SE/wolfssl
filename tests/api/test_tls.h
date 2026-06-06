@@ -33,11 +33,16 @@ int test_tls12_bad_cv_sig_alg(void);
 int test_tls12_no_null_compression(void);
 int test_tls12_etm_failed_resumption(void);
 int test_tls_set_session_min_downgrade(void);
+int test_tls12_session_id_resumption_sni_mismatch(void);
+int test_tls13_session_resumption_sni_mismatch(void);
+int test_tls13_resumption_with_alpn(void);
 int test_tls_set_curves_list_ecc_fallback(void);
 int test_tls12_corrupted_finished(void);
 int test_tls12_peerauth_failsafe(void);
 int test_wolfSSL_alert_type_string(void);
 int test_wolfSSL_alert_desc_string(void);
+int test_record_size_matches_build_message(void);
+int test_record_size_cache_invalidated_on_renegotiation(void);
 
 #define TEST_TLS_DECLS                                                         \
         TEST_DECL_GROUP("tls", test_utils_memio_move_message),                 \
@@ -51,10 +56,17 @@ int test_wolfSSL_alert_desc_string(void);
         TEST_DECL_GROUP("tls", test_tls12_no_null_compression),                \
         TEST_DECL_GROUP("tls", test_tls12_etm_failed_resumption),              \
         TEST_DECL_GROUP("tls", test_tls_set_session_min_downgrade),            \
+        TEST_DECL_GROUP("tls", test_tls12_session_id_resumption_sni_mismatch), \
+        TEST_DECL_GROUP("tls", test_tls13_session_resumption_sni_mismatch),    \
+        TEST_DECL_GROUP("tls", test_tls13_resumption_with_alpn),              \
         TEST_DECL_GROUP("tls", test_tls_set_curves_list_ecc_fallback),         \
         TEST_DECL_GROUP("tls", test_tls12_corrupted_finished),                 \
         TEST_DECL_GROUP("tls", test_tls12_peerauth_failsafe),                  \
         TEST_DECL_GROUP("tls", test_wolfSSL_alert_type_string),                \
-        TEST_DECL_GROUP("tls", test_wolfSSL_alert_desc_string)
+        TEST_DECL_GROUP("tls", test_wolfSSL_alert_desc_string),                \
+        TEST_DECL_GROUP("tls", test_tls12_peerauth_failsafe),                  \
+        TEST_DECL_GROUP("tls", test_record_size_matches_build_message),        \
+        TEST_DECL_GROUP("tls",                                                 \
+            test_record_size_cache_invalidated_on_renegotiation)
 
 #endif /* TESTS_API_TEST_TLS_H */

@@ -3294,7 +3294,8 @@ int wolfSSL_UseSupportedCurve(WOLFSSL* ssl, word16 name)
 #if defined(NO_TLS)
     return WOLFSSL_FAILURE;
 #else
-    return TLSX_UseSupportedCurve(&ssl->extensions, name, ssl->heap);
+    return TLSX_UseSupportedCurve(&ssl->extensions, name, ssl->heap,
+                                  ssl->options.side);
 #endif /* NO_TLS */
 }
 
@@ -3308,7 +3309,8 @@ int wolfSSL_CTX_UseSupportedCurve(WOLFSSL_CTX* ctx, word16 name)
 #if defined(NO_TLS)
     return WOLFSSL_FAILURE;
 #else
-    return TLSX_UseSupportedCurve(&ctx->extensions, name, ctx->heap);
+    return TLSX_UseSupportedCurve(&ctx->extensions, name, ctx->heap,
+                                  ctx->method->side);
 #endif /* NO_TLS */
 }
 
@@ -3319,8 +3321,8 @@ int  wolfSSL_CTX_set1_groups(WOLFSSL_CTX* ctx, int* groups,
     int i;
     int _groups[WOLFSSL_MAX_GROUP_COUNT];
     WOLFSSL_ENTER("wolfSSL_CTX_set1_groups");
-    if (count == 0) {
-        WOLFSSL_MSG("Group count is zero");
+    if (count <= 0) {
+        WOLFSSL_MSG("Group count is not positive");
         return WOLFSSL_FAILURE;
     }
     if (count > WOLFSSL_MAX_GROUP_COUNT) {
@@ -3358,8 +3360,8 @@ int  wolfSSL_set1_groups(WOLFSSL* ssl, int* groups, int count)
     int i;
     int _groups[WOLFSSL_MAX_GROUP_COUNT];
     WOLFSSL_ENTER("wolfSSL_CTX_set1_groups");
-    if (count == 0) {
-        WOLFSSL_MSG("Group count is zero");
+    if (count <= 0) {
+        WOLFSSL_MSG("Group count is not positive");
         return WOLFSSL_FAILURE;
     }
     if (count > WOLFSSL_MAX_GROUP_COUNT) {
@@ -10107,7 +10109,6 @@ size_t wolfSSL_get_client_random(const WOLFSSL* ssl, unsigned char* out,
     }
 #endif
 
-#if defined(OPENSSL_EXTRA) || defined(WOLFSSL_WPAS_SMALL)
     int wolfSSL_clear(WOLFSSL* ssl)
     {
         WOLFSSL_ENTER("wolfSSL_clear");
@@ -10140,6 +10141,7 @@ size_t wolfSSL_get_client_random(const WOLFSSL* ssl, unsigned char* out,
         ssl->options.acceptState  = ACCEPT_BEGIN;
         ssl->options.handShakeState  = NULL_STATE;
         ssl->options.handShakeDone = 0;
+        ssl->recordSzOverhead = 0;
         ssl->options.processReply = 0; /* doProcessInit */
         ssl->options.havePeerVerify = 0;
         ssl->options.havePeerCert = 0;
@@ -10223,8 +10225,6 @@ size_t wolfSSL_get_client_random(const WOLFSSL* ssl, unsigned char* out,
 #endif
         return WOLFSSL_SUCCESS;
     }
-
-#endif /* OPENSSL_EXTRA || WOLFSSL_WPAS_SMALL */
 
 #if defined(OPENSSL_EXTRA) || defined(HAVE_WEBSERVER) || defined(HAVE_MEMCACHED)
     long wolfSSL_CTX_set_mode(WOLFSSL_CTX* ctx, long mode)
@@ -13043,7 +13043,10 @@ size_t wolfSSL_get_peer_finished(const WOLFSSL *ssl, void *buf, size_t count)
 long wolfSSL_get_verify_result(const WOLFSSL *ssl)
 {
     if (ssl == NULL) {
-        return WOLFSSL_FAILURE;
+        /* Return a non-zero error so the OpenSSL-idiomatic
+         * "!= X509_V_OK" check does not mistake a NULL ssl for a
+         * successful verification (X509_V_OK is 0). */
+        return WOLFSSL_X509_V_ERR_APPLICATION_VERIFICATION;
     }
 
     return (long)ssl->peerVerifyRet;
@@ -16071,6 +16074,9 @@ WOLFSSL_CTX* wolfSSL_set_SSL_CTX(WOLFSSL* ssl, WOLFSSL_CTX* ctx)
 #endif
 #else
     if (ctx->privateKey != NULL) {
+        if (ssl->buffers.key != NULL && ssl->buffers.weOwnKey) {
+            FreeDer(&ssl->buffers.key);
+        }
         ret = AllocCopyDer(&ssl->buffers.key, ctx->privateKey->buffer,
             ctx->privateKey->length, ctx->privateKey->type,
             ctx->privateKey->heap);
@@ -16217,9 +16223,24 @@ int wolfSSL_CTX_set_servername_arg(WOLFSSL_CTX* ctx, void* arg)
 
 int wolfSSL_CRYPTO_memcmp(const void *a, const void *b, size_t size)
 {
+    int ret = 0;
+    int chunk;
+    const byte* pa = (const byte*)a;
+    const byte* pb = (const byte*)b;
+
     if (!a || !b)
         return -1;
-    return ConstantCompare((const byte*)a, (const byte*)b, (int)size);
+    /* ConstantCompare takes an int length. Compare in chunks of at most
+     * INT_MAX so a size that does not fit in an int is not narrowed into a
+     * negative or truncated length, which could wrongly report equality. */
+    while (size > 0) {
+        chunk = (size > (size_t)INT_MAX) ? INT_MAX : (int)size;
+        ret |= ConstantCompare(pa, pb, chunk);
+        pa += chunk;
+        pb += chunk;
+        size -= (size_t)chunk;
+    }
+    return ret;
 }
 
 unsigned long wolfSSL_ERR_peek_last_error(void)

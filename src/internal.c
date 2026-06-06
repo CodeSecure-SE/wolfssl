@@ -535,6 +535,12 @@ void wolfssl_priv_der_unblind_free(DerBuffer* key)
      #define SSC_TLS13_EES      "EARLY_EXPORTER_SECRET"
      /* Label string for exporter secret. */
      #define SSC_TLS13_ES       "EXPORTER_SECRET"
+#ifdef HAVE_ECH
+     /* Label string for ECH KEM shared secret. */
+     #define SSC_TLS13_ECH_S    "ECH_SECRET"
+     /* Label string for ECHConfig used to construct ECH. */
+     #define SSC_TLS13_ECH_C    "ECH_CONFIG"
+#endif
 
     /*
      * This function builds up string for key-logging then call user's
@@ -593,6 +599,18 @@ void wolfssl_priv_der_unblind_free(DerBuffer* key)
                 labelSz = sizeof(SSC_TLS13_ES);
                 label = SSC_TLS13_ES;
                 break;
+
+#ifdef HAVE_ECH
+            case ECH_SECRET:
+                labelSz = sizeof(SSC_TLS13_ECH_S);
+                label = SSC_TLS13_ECH_S;
+                break;
+
+            case ECH_CONFIG:
+                labelSz = sizeof(SSC_TLS13_ECH_C);
+                label = SSC_TLS13_ECH_C;
+                break;
+#endif
 
             default:
                 return BAD_FUNC_ARG;
@@ -3282,6 +3300,7 @@ static void FreeCiphersSide(Ciphers *cipher, void* heap)
     cipher->aria = NULL;
 #endif
 #ifdef HAVE_CAMELLIA
+    wc_CamelliaFree(cipher->cam);
     XFREE(cipher->cam, heap, DYNAMIC_TYPE_CIPHER);
     cipher->cam = NULL;
 #endif
@@ -7329,6 +7348,9 @@ int SetSSL_CTX(WOLFSSL* ssl, WOLFSSL_CTX* ctx, int writeDup)
 #endif
 #else
     if (ctx->privateKey != NULL) {
+        if (ssl->buffers.key != NULL) {
+            FreeDer(&ssl->buffers.key);
+        }
         ret = AllocCopyDer(&ssl->buffers.key, ctx->privateKey->buffer,
             ctx->privateKey->length, ctx->privateKey->type,
             ctx->privateKey->heap);
@@ -22468,6 +22490,9 @@ static int DoAlert(WOLFSSL* ssl, byte* input, word32* inOutIdx, int* type)
     byte level;
     byte code;
     word32 dataSz = (word32)ssl->curSize;
+#ifdef WOLFSSL_TLS13_IGNORE_PT_ALERT_ON_ENC
+    int ignorePtAlert;
+#endif
 
 #if defined(WOLFSSL_CALLBACKS) || defined(OPENSSL_EXTRA)
     if (ssl->hsInfoOn)
@@ -22496,9 +22521,19 @@ static int DoAlert(WOLFSSL* ssl, byte* input, word32* inOutIdx, int* type)
     code  = input[(*inOutIdx)++];
     *type = code;
 #ifdef WOLFSSL_TLS13_IGNORE_PT_ALERT_ON_ENC
-    /* Don't process alert when TLS 1.3 and encrypting but plaintext alert. */
-    if (!IsAtLeastTLSv1_3(ssl->version) || !IsEncryptionOn(ssl, 0) ||
-                                                       ssl->keys.decryptedCur)
+    /* A plaintext alert received in TLS 1.3 once we are decrypting is only
+     * tolerated while still in the handshake and before the peer has sent an
+     * encrypted message. The peer sequence number is reset to zero each time
+     * decryption keys are installed and incremented for each record decrypted,
+     * so a non-zero value means the peer has sent an encrypted message and a
+     * plaintext alert is treated as an error. */
+    ignorePtAlert = IsAtLeastTLSv1_3(ssl->version) && IsEncryptionOn(ssl, 0) &&
+        !ssl->keys.decryptedCur && !ssl->options.handShakeDone &&
+        ssl->keys.peer_sequence_number_hi == 0 &&
+        ssl->keys.peer_sequence_number_lo == 0;
+
+    /* Don't record an ignored plaintext alert in the alert history. */
+    if (!ignorePtAlert)
 #endif
     {
         ssl->alert_history.last_rx.code = code;
@@ -22529,16 +22564,21 @@ static int DoAlert(WOLFSSL* ssl, byte* input, word32* inOutIdx, int* type)
                                                       !ssl->keys.decryptedCur)
     {
 #ifdef WOLFSSL_TLS13_IGNORE_PT_ALERT_ON_ENC
-        /* Ignore alert if TLS 1.3 and encrypting but was plaintext alert. */
-        *type = invalid_alert;
-        level = alert_none;
-
-#else
-        /* Unexpected message when encryption is on and alert not encrypted. */
-        SendAlert(ssl, alert_fatal, unexpected_message);
-        WOLFSSL_ERROR_VERBOSE(PARSE_ERROR);
-        return PARSE_ERROR;
+        if (ignorePtAlert) {
+            /* Ignore plaintext alert: TLS 1.3, decrypting, and the peer has
+             * not yet sent an encrypted handshake message. */
+            *type = invalid_alert;
+            level = alert_none;
+        }
+        else
 #endif
+        {
+            /* Unexpected message when encryption is on and alert not
+             * encrypted. */
+            SendAlert(ssl, alert_fatal, unexpected_message);
+            WOLFSSL_ERROR_VERBOSE(PARSE_ERROR);
+            return PARSE_ERROR;
+        }
     }
     else {
         if (*type == close_notify) {
@@ -38134,6 +38174,32 @@ static int AddPSKtoPreMasterSecret(WOLFSSL* ssl)
             ssl->options.resuming = 0;
             return ret;
         }
+#if defined(HAVE_SESSION_TICKET) && \
+    (defined(HAVE_SNI) || defined(HAVE_ALPN))
+        /* Do not resume session if sniHash/alpnHash do not match. */
+        if (!ssl->options.useTicket) {
+            byte curHash[TICKET_BINDING_HASH_SZ];
+#ifdef HAVE_SNI
+            if (TicketSniHash(ssl, curHash) != 0 ||
+                    XMEMCMP(curHash, session->sniHash,
+                            TICKET_BINDING_HASH_SZ) != 0) {
+                WOLFSSL_MSG("Resumed session SNI mismatch, full handshake");
+                ssl->options.resuming = 0;
+                return ret;
+            }
+#endif
+#ifdef HAVE_ALPN
+            if (ssl->options.resuming &&
+                    (TicketAlpnHash(ssl, curHash) != 0 ||
+                     XMEMCMP(curHash, session->alpnHash,
+                             TICKET_BINDING_HASH_SZ) != 0)) {
+                WOLFSSL_MSG("Resumed session ALPN mismatch, full handshake");
+                ssl->options.resuming = 0;
+                return ret;
+            }
+#endif
+        }
+#endif /* HAVE_SESSION_TICKET && (HAVE_SNI || HAVE_ALPN) */
 #if !defined(WOLFSSL_NO_TICKET_EXPIRE) && !defined(NO_ASN_TIME)
         /* check if the ticket is valid */
         if (LowResTimer() > session->bornOn + ssl->timeout) {
@@ -38715,8 +38781,22 @@ static int AddPSKtoPreMasterSecret(WOLFSSL* ssl)
     #endif
     #if defined(HAVE_SESSION_TICKET) && \
         (defined(HAVE_SNI) || defined(HAVE_ALPN))
-                if((ret=VerifyTicketBinding(ssl)))
-                    goto out;
+                /* Only verify here for TLS 1.2 ticket-based resumption.
+                 * For stateful (session-ID) resumption ssl->session is
+                 * not loaded until HandleTlsResumption runs below, which
+                 * performs its own binding check against the cached
+                 * session. On mismatch decline the resumption (RFC 6066
+                 * Section 3) but proceed with a full handshake; leave
+                 * useTicket set so the server still issues a fresh
+                 * ticket to the client. */
+                if (ssl->options.useTicket &&
+                        VerifyTicketBinding(ssl) != 0) {
+                    WOLFSSL_MSG("Ticket binding mismatch, "
+                                "declining resumption and falling back "
+                                "to full handshake");
+                    ssl->options.resuming = 0;
+                    ssl->options.peerAuthGood = 0;
+                }
     #endif
 
                 i += totalExtSz;
@@ -39498,7 +39578,7 @@ static int AddPSKtoPreMasterSecret(WOLFSSL* ssl)
 
 #ifdef HAVE_SNI
     /* Hash server-selected SNI; zeros dst when none. */
-    static int TicketSniHash(WOLFSSL* ssl, byte* dst)
+    int TicketSniHash(WOLFSSL* ssl, byte* dst)
     {
         char* name = NULL;
         word16 nameLen;
@@ -39518,16 +39598,23 @@ static int AddPSKtoPreMasterSecret(WOLFSSL* ssl)
 
 #ifdef HAVE_ALPN
     /* Hash negotiated ALPN; zeros dst when none. */
-    static int TicketAlpnHash(WOLFSSL* ssl, byte* dst)
+    int TicketAlpnHash(WOLFSSL* ssl, byte* dst)
     {
-        char* proto = NULL;
-        word16 protoLen = 0;
+        TLSX* extension;
+        ALPN* alpn;
 
-        if (TLSX_ALPN_GetRequest(ssl->extensions, (void**)&proto,
-                                 &protoLen) == WOLFSSL_SUCCESS &&
-                proto != NULL && protoLen > 0) {
-            return wc_Hash(TICKET_BINDING_HASH_TYPE, (const byte*)proto,
-                           protoLen, dst, TICKET_BINDING_HASH_SZ);
+        extension = TLSX_Find(ssl->extensions, TLSX_APPLICATION_LAYER_PROTOCOL);
+        if (extension != NULL) {
+            alpn = (ALPN*)extension->data;
+            if (alpn != NULL && alpn->negotiated == 1 &&
+                    alpn->protocol_name != NULL) {
+                word32 protoLen = (word32)XSTRLEN(alpn->protocol_name);
+                if (protoLen > 0) {
+                    return wc_Hash(TICKET_BINDING_HASH_TYPE,
+                                   (const byte*)alpn->protocol_name,
+                                   protoLen, dst, TICKET_BINDING_HASH_SZ);
+                }
+            }
         }
 
         XMEMSET(dst, 0, TICKET_BINDING_HASH_SZ);
@@ -39536,15 +39623,30 @@ static int AddPSKtoPreMasterSecret(WOLFSSL* ssl)
 #endif
 
 #if defined(HAVE_SNI) || defined(HAVE_ALPN)
-    /* Server-side: verify the SNI/ALPN bindings carried on a resumed
-     * session match what was negotiated for the current connection.
-     * Must be called after extension parsing and ALPN_Select.
-     * Returns 0 on match, WOLFSSL_FATAL_ERROR on mismatch. */
+    /* Server-side TLS 1.2 ticket-resumption binding check. Confirms the
+     * SNI/ALPN bound to the resumed session matches what was negotiated
+     * for the current connection. Must be called after extension
+     * parsing and ALPN_Select so the negotiated values are available,
+     * and only once DoClientTicketFinalize has populated
+     * ssl->session->sniHash/alpnHash from the decrypted ticket.
+     *
+     * Other resumption paths handle the same check themselves and do
+     * not use this function:
+     *   - TLS 1.2 session-ID (stateful): HandleTlsResumption compares
+     *     against the cached session at lookup time.
+     *   - TLS 1.3 PSK: DoPreSharedKeys compares against each candidate
+     *     ticket's bound hashes before committing, allowing the server
+     *     to skip mismatching PSKs and pick the next one.
+     *
+     * Returns 0 on match, WOLFSSL_FATAL_ERROR on mismatch. The caller
+     * is responsible for the policy on mismatch -- RFC 6066 Section 3
+     * mandates declining the resumption and proceeding with a full
+     * handshake rather than aborting. */
     int VerifyTicketBinding(WOLFSSL* ssl)
     {
         byte curHash[TICKET_BINDING_HASH_SZ];
 
-        if (!ssl->options.resuming || !ssl->options.useTicket)
+        if (!ssl->options.resuming)
             return 0;
 
 #ifdef HAVE_SNI
@@ -40053,8 +40155,9 @@ static int AddPSKtoPreMasterSecret(WOLFSSL* ssl)
                         ssl->sessionCtxSz) != 0))
             return WOLFSSL_FATAL_ERROR;
 #endif
-        /* SNI/ALPN binding is verified after ALPN_Select via
-         * VerifyTicketBinding(). */
+        /* SNI/ALPN binding is checked by the per-PSK loop in
+         * DoPreSharedKeys, not here, so that mismatching PSKs can be
+         * skipped in favor of the next candidate. */
         return 0;
     }
 #endif /* WOLFSSL_SLT13 */
@@ -40150,8 +40253,13 @@ static int AddPSKtoPreMasterSecret(WOLFSSL* ssl)
             }
         }
 #endif
-        /* Carry the ticket bindings on the session for the deferred
-         * VerifyTicketBinding() check. */
+        /* Carry the ticket bindings on the session. TLS 1.2 uses these
+         * for the deferred VerifyTicketBinding() check in DoClientHello
+         * (SNI/ALPN aren't known when DoClientTicket runs during
+         * extension parsing). TLS 1.3 checks bindings per-PSK before
+         * reaching this point, but still copies them so a subsequent
+         * SetupSession on a resumed session preserves them in the cache
+         * for future resumptions. */
 #ifdef HAVE_SNI
         XMEMCPY(ssl->session->sniHash, it->sniHash, TICKET_BINDING_HASH_SZ);
 #endif
@@ -40517,8 +40625,9 @@ static int AddPSKtoPreMasterSecret(WOLFSSL* ssl)
             goto cleanup;
         }
 
-        /* SNI/ALPN binding is verified after ALPN_Select via
-         * VerifyTicketBinding(). */
+        /* SNI/ALPN binding is verified later in DoClientHello via
+         * VerifyTicketBinding(), once extension parsing and ALPN_Select
+         * have run and the negotiated values are available. */
         DoClientTicketFinalize(ssl, it, NULL);
 
 cleanup:
@@ -42642,6 +42751,27 @@ int wolfssl_local_GetRecordSize(WOLFSSL *ssl, int payloadSz, int isEncrypted)
         return BAD_FUNC_ARG;
 
     if (isEncrypted) {
+        /* AEAD overhead is constant per cache key (cipher, version, CID, DTLS
+         * 1.3 epoch); use the cached value when available. DTLS 1.3 pads
+         * records up to Dtls13MinimumRecordLength() (RFC 9147 5.5), so:
+         *   - on read: only return the cached overhead when the resulting
+         *     record would not be padded;
+         *   - on populate: only store the overhead when BuildMessage returned
+         *     a record strictly above the minimum, which guarantees no
+         *     padding was applied. */
+#ifdef WOLFSSL_DTLS13
+        int isDtls13 = ssl->options.dtls && ssl->options.tls1_3;
+#endif
+
+        if (ssl->specs.cipher_type == aead && ssl->recordSzOverhead != 0
+#ifdef WOLFSSL_DTLS13
+                && (!isDtls13 || payloadSz + (int)ssl->recordSzOverhead
+                                    >= Dtls13MinimumRecordLength(ssl))
+#endif
+                ) {
+            return payloadSz + (int)ssl->recordSzOverhead;
+        }
+
         recordSz = BuildMessage(ssl, NULL, 0, NULL, payloadSz, application_data,
              0, 1, 0, CUR_ORDER);
         /* use a safe upper bound in case of error */
@@ -42651,6 +42781,14 @@ int wolfssl_local_GetRecordSize(WOLFSSL *ssl, int payloadSz, int isEncrypted)
             if (ssl->options.dtls) {
                 recordSz += DTLS_RECORD_EXTRA;
             }
+        }
+        else if (ssl->specs.cipher_type == aead && recordSz > payloadSz
+#ifdef WOLFSSL_DTLS13
+                && (!isDtls13 || recordSz > Dtls13MinimumRecordLength(ssl))
+#endif
+                ) {
+            /* Populate cache only on success; never from the fallback. */
+            ssl->recordSzOverhead = (word32)(recordSz - payloadSz);
         }
     }
     else {

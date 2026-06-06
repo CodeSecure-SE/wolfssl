@@ -3114,6 +3114,7 @@ typedef struct RpkState {
 
 #if defined(WOLFSSL_TLS13) && defined(HAVE_ECH)
 #define ECH_ACCEPT_CONFIRMATION_SZ 8
+#define ECH_PADDING_TO_32(length) (31 - (((length) - 1) % 32))
 
 typedef enum {
     ECH_TYPE_OUTER = 0,
@@ -3181,7 +3182,8 @@ typedef struct WOLFSSL_ECH {
 
 WOLFSSL_LOCAL int EchConfigGetSupportedCipherSuite(WOLFSSL_EchConfig* config);
 
-WOLFSSL_LOCAL int TLSX_FinalizeEch(WOLFSSL_ECH* ech, byte* aad, word32 aadLen);
+WOLFSSL_LOCAL int TLSX_FinalizeEch(WOLFSSL* ssl, WOLFSSL_ECH* ech, byte* aad,
+    word32 aadLen);
 
 
 WOLFSSL_LOCAL int SetEchConfigsEx(WOLFSSL_EchConfig** outputConfigs, void* heap,
@@ -3462,11 +3464,11 @@ typedef struct PointFormat {
 
 WOLFSSL_LOCAL int TLSX_SupportedCurve_Copy(TLSX* src, TLSX** dst, void* heap);
 WOLFSSL_LOCAL int TLSX_UseSupportedCurve(TLSX** extensions, word16 name,
-                                                                    void* heap);
+                                                          void* heap, int side);
 
 WOLFSSL_LOCAL int TLSX_UsePointFormat(TLSX** extensions, byte point,
                                                                     void* heap);
-WOLFSSL_LOCAL int TLSX_IsGroupSupported(int namedGroup);
+WOLFSSL_LOCAL int TLSX_IsGroupSupported(int namedGroup, int side);
 
 #ifndef NO_WOLFSSL_SERVER
 WOLFSSL_LOCAL int TLSX_ValidateSupportedCurves(const WOLFSSL* ssl, byte first,
@@ -5948,6 +5950,11 @@ enum  {
     DTLS13_EPOCH_TRAFFIC0 = 3
 };
 
+/* RFC 9147 Section 4.2.1: the DTLS 1.3 epoch is a 48-bit value and must not
+ * exceed 2^48-1. Expressed as the high/low 32-bit halves of a w64wrapper. */
+#define DTLS13_EPOCH_MAX_HI32 0x0000FFFFU
+#define DTLS13_EPOCH_MAX_LO32 0xFFFFFFFFU
+
 /* 64-bit epoch + 64-bit sequence number */
 #define DTLS13_RN_SIZE (OPAQUE64_LEN + OPAQUE64_LEN)
 /* Maximum number of ACK records allowed in an ACK message */
@@ -6615,6 +6622,10 @@ struct WOLFSSL {
 #endif
 #endif
 #endif
+    /* Cached BuildMessage(sizeOnly) overhead (recordSz - payloadSz) for AEAD
+     * ciphers; 0 means uncached and is never a valid AEAD overhead. EtM does
+     * not apply to AEAD. */
+    word32 recordSzOverhead;
 };
 
 #if defined(WOLFSSL_SYS_CRYPTO_POLICY)
@@ -6829,9 +6840,21 @@ WOLFSSL_LOCAL int DoClientTicket_ex(const WOLFSSL* ssl, PreSharedKey* psk,
 #endif
 
 WOLFSSL_LOCAL int DoClientTicket(WOLFSSL* ssl, const byte* input, word32 len);
+/* TicketSniHash, TicketAlpnHash, and VerifyTicketBinding are defined in
+ * internal.c only when !NO_WOLFSSL_SERVER && !NO_TLS - gate the
+ * declarations to match so client-only or no-TLS builds don't compile in
+ * call sites that would fail to link. */
+#if !defined(NO_WOLFSSL_SERVER) && !defined(NO_TLS)
+#ifdef HAVE_SNI
+WOLFSSL_LOCAL int TicketSniHash(WOLFSSL* ssl, byte* dst);
+#endif
+#ifdef HAVE_ALPN
+WOLFSSL_LOCAL int TicketAlpnHash(WOLFSSL* ssl, byte* dst);
+#endif
 #if defined(HAVE_SNI) || defined(HAVE_ALPN)
 WOLFSSL_LOCAL int VerifyTicketBinding(WOLFSSL* ssl);
 #endif
+#endif /* !NO_WOLFSSL_SERVER && !NO_TLS */
 #endif /* HAVE_SESSION_TICKET */
 WOLFSSL_LOCAL int SendData(WOLFSSL* ssl, const void* data, size_t sz);
 #ifdef WOLFSSL_THREADED_CRYPT
@@ -6889,7 +6912,7 @@ WOLFSSL_LOCAL int VerifyClientSuite(word16 havePSK, byte cipherSuite0,
                                     byte cipherSuite);
 
 WOLFSSL_LOCAL int SetTicket(WOLFSSL* ssl, const byte* ticket, word32 length);
-WOLFSSL_LOCAL int wolfssl_local_GetRecordSize(WOLFSSL *ssl, int payloadSz,
+WOLFSSL_TEST_VIS int wolfssl_local_GetRecordSize(WOLFSSL *ssl, int payloadSz,
         int isEncrypted);
 WOLFSSL_LOCAL int wolfssl_local_GetMaxPlaintextSize(WOLFSSL *ssl);
 WOLFSSL_LOCAL int wolfSSL_GetMaxFragSize(WOLFSSL* ssl);
@@ -7180,8 +7203,12 @@ typedef struct CipherSuiteInfo {
     byte flags;
 } CipherSuiteInfo;
 
-WOLFSSL_LOCAL const CipherSuiteInfo* GetCipherNames(void);
-WOLFSSL_LOCAL int GetCipherNamesSize(void);
+#ifdef WOLFSSL_API_PREFIX_MAP
+    #define GetCipherNames wolfSSL_GetCipherNames
+    #define GetCipherNamesSize wolfSSL_GetCipherNamesSize
+#endif
+WOLFSSL_TEST_VIS const CipherSuiteInfo* GetCipherNames(void);
+WOLFSSL_TEST_VIS int GetCipherNamesSize(void);
 WOLFSSL_LOCAL const char* GetCipherNameInternal(byte cipherSuite0, byte cipherSuite);
 #if defined(OPENSSL_ALL) || defined(WOLFSSL_QT)
 /* used in wolfSSL_sk_CIPHER_description */
@@ -7261,7 +7288,10 @@ WOLFSSL_LOCAL int InitHandshakeHashesAndCopy(WOLFSSL* ssl, HS_Hashes* source,
 #ifndef WOLFSSL_NO_TLS12
 WOLFSSL_LOCAL void FreeBuildMsgArgs(WOLFSSL* ssl, BuildMsgArgs* args);
 #endif
-WOLFSSL_LOCAL int BuildMessage(WOLFSSL* ssl, byte* output, int outSz,
+#ifdef WOLFSSL_API_PREFIX_MAP
+    #define BuildMessage wolfSSL_BuildMessage
+#endif
+WOLFSSL_TEST_VIS int BuildMessage(WOLFSSL* ssl, byte* output, int outSz,
                         const byte* input, int inSz, int type, int hashOutput,
                         int sizeOnly, int asyncOkay, int epochOrder);
 
