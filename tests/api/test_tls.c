@@ -401,6 +401,110 @@ int test_tls_certreq_order(void)
     return EXPECT_RESULT();
 }
 
+/* A TLS 1.2 CertificateRequest carrying a supported_signature_algorithms
+ * vector whose length is not a multiple of the 2-byte element size must be
+ * rejected. We run a real handshake, locate the server's CertificateRequest
+ * in the memio queue and make the sig-algs length odd before the client parses
+ * it. The vector is shrunk by one byte and the
+ * record, handshake and sig-algs length fields are all decremented so the
+ * message stays self-consistent (only the sig-algs length parity is wrong).
+ * Without the fix the client would silently ignore the odd trailing byte and
+ * accept the message; with the fix it is rejected with BUFFER_ERROR. */
+int test_tls12_certreq_odd_sigalgs(void)
+{
+    EXPECT_DECLS;
+#if defined(HAVE_MANUAL_MEMIO_TESTS_DEPENDENCIES) && \
+    !defined(WOLFSSL_NO_TLS12) && !defined(NO_RSA) && defined(HAVE_ECC) && \
+    !defined(NO_WOLFSSL_CLIENT) && !defined(NO_WOLFSSL_SERVER)
+    WOLFSSL_CTX *ctx_c = NULL, *ctx_s = NULL;
+    WOLFSSL *ssl_c = NULL, *ssl_s = NULL;
+    struct test_memio_ctx test_ctx;
+    const char* msg = NULL;
+    int msgSz = 0;
+    int i = 0;
+    int certReqIdx = -1;
+    int certTypesCnt = 0;
+    int sigAlgsLenOff = 0;
+    int sigAlgsLen = 0;
+    int recAbs = 0;
+    int removeAbs = 0;
+    word32 val = 0;
+    byte* b = NULL;
+
+    XMEMSET(&test_ctx, 0, sizeof(test_ctx));
+    ExpectIntEQ(test_memio_setup(&test_ctx, &ctx_c, &ctx_s, &ssl_c, &ssl_s,
+        wolfTLSv1_2_client_method, wolfTLSv1_2_server_method), 0);
+    /* Make the server send a CertificateRequest. */
+    wolfSSL_set_verify(ssl_s, WOLFSSL_VERIFY_PEER, NULL);
+    /* Send each handshake message in its own record so the CertificateRequest
+     * can be located and tampered with individually. */
+    ExpectIntEQ(wolfSSL_clear_group_messages(ssl_s), 1);
+
+    /* Client sends ClientHello. */
+    ExpectIntEQ(wolfSSL_connect(ssl_c), -1);
+    ExpectIntEQ(wolfSSL_get_error(ssl_c, -1), WOLFSSL_ERROR_WANT_READ);
+    /* Server sends ServerHello..CertificateRequest..ServerHelloDone. */
+    ExpectIntEQ(wolfSSL_accept(ssl_s), -1);
+    ExpectIntEQ(wolfSSL_get_error(ssl_s, -1), WOLFSSL_ERROR_WANT_READ);
+
+    /* Locate the CertificateRequest record in the server->client queue. */
+    for (i = 0; test_memio_get_message(&test_ctx, 1, &msg, &msgSz, i) == 0;
+            i++) {
+        if (msgSz > 12 && (byte)msg[5] == certificate_request) {
+            certReqIdx = i;
+            break;
+        }
+    }
+    ExpectIntGE(certReqIdx, 0);
+
+    if (EXPECT_SUCCESS()) {
+        /* Layout: record hdr[5] | hs hdr[4] | certTypesCount[1] | certTypes |
+         * sigAlgsLen[2] | certTypes... The sig-algs length is even; shrink the
+         * vector by one byte to make it odd while keeping all length fields
+         * consistent. */
+        certTypesCnt = (byte)msg[9];
+        sigAlgsLenOff = 10 + certTypesCnt;
+        ExpectIntLT(sigAlgsLenOff + 2, msgSz);
+        if (EXPECT_SUCCESS()) {
+            sigAlgsLen = ((byte)msg[sigAlgsLenOff] << 8) |
+                          (byte)msg[sigAlgsLenOff + 1];
+            /* Need at least two pairs so a valid pair remains after shrinking. */
+            ExpectIntGE(sigAlgsLen, 2 * HELLO_EXT_SIGALGO_SZ);
+        }
+        if (EXPECT_SUCCESS()) {
+            b = (byte*)msg;
+            /* Decrement record length (bytes 3..4). */
+            val = ((word32)b[3] << 8) | b[4];
+            val--;
+            b[3] = (byte)(val >> 8); b[4] = (byte)val;
+            /* Decrement handshake length (bytes 6..8). */
+            val = ((word32)b[6] << 16) | ((word32)b[7] << 8) | b[8];
+            val--;
+            b[6] = (byte)(val >> 16); b[7] = (byte)(val >> 8); b[8] = (byte)val;
+            /* Decrement sig-algs length, making it odd. */
+            val = (word32)sigAlgsLen - 1;
+            b[sigAlgsLenOff] = (byte)(val >> 8);
+            b[sigAlgsLenOff + 1] = (byte)val;
+            /* Drop the last byte of the sig-algs vector from the buffer. */
+            recAbs = (int)((const byte*)msg - test_ctx.c_buff);
+            removeAbs = recAbs + 12 + certTypesCnt + sigAlgsLen - 1;
+            ExpectIntEQ(test_memio_remove_from_buffer(&test_ctx, 1, removeAbs,
+                1), 0);
+        }
+    }
+
+    /* Client must reject the malformed CertificateRequest. */
+    ExpectIntEQ(wolfSSL_connect(ssl_c), -1);
+    ExpectIntEQ(wolfSSL_get_error(ssl_c, -1), WC_NO_ERR_TRACE(BUFFER_ERROR));
+
+    wolfSSL_free(ssl_c);
+    wolfSSL_free(ssl_s);
+    wolfSSL_CTX_free(ctx_c);
+    wolfSSL_CTX_free(ctx_s);
+#endif
+    return EXPECT_RESULT();
+}
+
 #if !defined(WOLFSSL_NO_TLS12) && !defined(NO_RSA) && defined(HAVE_ECC) && \
     !defined(NO_WOLFSSL_SERVER) && !defined(WOLFSSL_NO_CLIENT_AUTH) && \
     !defined(NO_FILESYSTEM)
@@ -1140,6 +1244,159 @@ int test_tls13_resumption_with_alpn(void)
     return EXPECT_RESULT();
 }
 
+/* TLS 1.2 stateful (session-ID) resumption must fall back to a full
+ * handshake if the ALPN protocol negotiated for the resumed connection
+ * does not match the ALPN bound to the original session. Mirrors
+ * test_tls12_session_id_resumption_sni_mismatch but varies ALPN instead
+ * of SNI. */
+int test_tls12_session_id_resumption_alpn_mismatch(void)
+{
+    EXPECT_DECLS;
+#if defined(HAVE_MANUAL_MEMIO_TESTS_DEPENDENCIES) && \
+    !defined(WOLFSSL_NO_TLS12) && defined(HAVE_ALPN) && \
+    defined(HAVE_SESSION_TICKET) && !defined(NO_SESSION_CACHE)
+    WOLFSSL_CTX *ctx_c = NULL, *ctx_s = NULL;
+    WOLFSSL *ssl_c = NULL, *ssl_s = NULL;
+    WOLFSSL_SESSION *sess = NULL;
+    struct test_memio_ctx test_ctx;
+    const char alpnA[] = "h2";
+    const char alpnB[] = "http/1.1";
+
+    /* Step 1: full TLS 1.2 handshake negotiating ALPN=h2, with the
+     * session ticket path disabled so resumption can only happen via the
+     * server's session-ID cache. The negotiated ALPN is retained on
+     * ssl->extensions by ALPN_Select, so SetupSession binds its hash to
+     * the cached session. */
+    XMEMSET(&test_ctx, 0, sizeof(test_ctx));
+    ExpectIntEQ(test_memio_setup(&test_ctx, &ctx_c, &ctx_s, &ssl_c, &ssl_s,
+                    wolfTLSv1_2_client_method, wolfTLSv1_2_server_method), 0);
+    ExpectIntEQ(wolfSSL_NoTicketTLSv12(ssl_c), WOLFSSL_SUCCESS);
+    ExpectIntEQ(wolfSSL_NoTicketTLSv12(ssl_s), WOLFSSL_SUCCESS);
+    ExpectIntEQ(wolfSSL_UseALPN(ssl_c, (char*)alpnA, (word32)XSTRLEN(alpnA),
+                    WOLFSSL_ALPN_FAILED_ON_MISMATCH), WOLFSSL_SUCCESS);
+    ExpectIntEQ(wolfSSL_UseALPN(ssl_s, (char*)alpnA, (word32)XSTRLEN(alpnA),
+                    WOLFSSL_ALPN_FAILED_ON_MISMATCH), WOLFSSL_SUCCESS);
+    ExpectIntEQ(test_memio_do_handshake(ssl_c, ssl_s, 10, NULL), 0);
+    /* Sanity: the first handshake was not a resumption. */
+    ExpectIntEQ(wolfSSL_session_reused(ssl_s), 0);
+    ExpectNotNull(sess = wolfSSL_get1_session(ssl_c));
+
+    wolfSSL_free(ssl_c); ssl_c = NULL;
+    wolfSSL_free(ssl_s); ssl_s = NULL;
+
+    /* Step 2: new SSL objects on the SAME WOLFSSL_CTX (so the server's
+     * session cache still holds the entry from step 1). The client offers
+     * the saved session but both sides now advertise a *different* ALPN
+     * (http/1.1), so the handshake negotiates http/1.1. The server's cache
+     * lookup matches by session ID, but the server MUST NOT resume because
+     * the negotiated ALPN differs from the one bound to the original
+     * session. */
+    XMEMSET(&test_ctx, 0, sizeof(test_ctx));
+    ExpectNotNull(ssl_c = wolfSSL_new(ctx_c));
+    wolfSSL_SetIOReadCtx(ssl_c, &test_ctx);
+    wolfSSL_SetIOWriteCtx(ssl_c, &test_ctx);
+    ExpectNotNull(ssl_s = wolfSSL_new(ctx_s));
+    wolfSSL_SetIOReadCtx(ssl_s, &test_ctx);
+    wolfSSL_SetIOWriteCtx(ssl_s, &test_ctx);
+    ExpectIntEQ(wolfSSL_NoTicketTLSv12(ssl_c), WOLFSSL_SUCCESS);
+    ExpectIntEQ(wolfSSL_NoTicketTLSv12(ssl_s), WOLFSSL_SUCCESS);
+    ExpectIntEQ(wolfSSL_UseALPN(ssl_c, (char*)alpnB, (word32)XSTRLEN(alpnB),
+                    WOLFSSL_ALPN_FAILED_ON_MISMATCH), WOLFSSL_SUCCESS);
+    ExpectIntEQ(wolfSSL_UseALPN(ssl_s, (char*)alpnB, (word32)XSTRLEN(alpnB),
+                    WOLFSSL_ALPN_FAILED_ON_MISMATCH), WOLFSSL_SUCCESS);
+    ExpectIntEQ(wolfSSL_set_session(ssl_c, sess), WOLFSSL_SUCCESS);
+    ExpectIntEQ(test_memio_do_handshake(ssl_c, ssl_s, 10, NULL), 0);
+
+    /* Expected behavior: server falls back to a full handshake because the
+     * negotiated ALPN does not match the ALPN bound to the cached session.
+     * Both sides should report no resumption. */
+    ExpectIntEQ(wolfSSL_session_reused(ssl_s), 0);
+    ExpectIntEQ(wolfSSL_session_reused(ssl_c), 0);
+
+    wolfSSL_SESSION_free(sess);
+    wolfSSL_free(ssl_c);
+    wolfSSL_free(ssl_s);
+    wolfSSL_CTX_free(ctx_c);
+    wolfSSL_CTX_free(ctx_s);
+#endif
+    return EXPECT_RESULT();
+}
+
+/* TLS 1.3 PSK resumption must fall back to a full handshake if the ALPN
+ * protocol negotiated for the resumed connection does not match the ALPN
+ * bound to the original session. Mirrors
+ * test_tls13_session_resumption_sni_mismatch but varies ALPN instead of
+ * SNI. */
+int test_tls13_session_resumption_alpn_mismatch(void)
+{
+    EXPECT_DECLS;
+#if defined(HAVE_MANUAL_MEMIO_TESTS_DEPENDENCIES) && defined(WOLFSSL_TLS13) && \
+    defined(HAVE_ALPN) && defined(HAVE_SESSION_TICKET) && \
+    !defined(NO_SESSION_CACHE)
+    WOLFSSL_CTX *ctx_c = NULL, *ctx_s = NULL;
+    WOLFSSL *ssl_c = NULL, *ssl_s = NULL;
+    WOLFSSL_SESSION *sess = NULL;
+    struct test_memio_ctx test_ctx;
+    const char alpnA[] = "h2";
+    const char alpnB[] = "http/1.1";
+    byte readBuf[16];
+
+    /* Step 1: full TLS 1.3 handshake negotiating ALPN=h2 to obtain a
+     * session ticket. The negotiated ALPN is retained on ssl->extensions
+     * by ALPN_Select and bound to the ticket. */
+    XMEMSET(&test_ctx, 0, sizeof(test_ctx));
+    ExpectIntEQ(test_memio_setup(&test_ctx, &ctx_c, &ctx_s, &ssl_c, &ssl_s,
+                    wolfTLSv1_3_client_method, wolfTLSv1_3_server_method), 0);
+    ExpectIntEQ(wolfSSL_UseALPN(ssl_c, (char*)alpnA, (word32)XSTRLEN(alpnA),
+                    WOLFSSL_ALPN_FAILED_ON_MISMATCH), WOLFSSL_SUCCESS);
+    ExpectIntEQ(wolfSSL_UseALPN(ssl_s, (char*)alpnA, (word32)XSTRLEN(alpnA),
+                    WOLFSSL_ALPN_FAILED_ON_MISMATCH), WOLFSSL_SUCCESS);
+    ExpectIntEQ(test_memio_do_handshake(ssl_c, ssl_s, 10, NULL), 0);
+    /* Sanity: the first handshake was not a resumption. */
+    ExpectIntEQ(wolfSSL_session_reused(ssl_s), 0);
+    /* Drive the post-handshake NewSessionTicket through to the client so
+     * the saved session is a real resumption ticket. */
+    ExpectIntEQ(wolfSSL_read(ssl_c, readBuf, sizeof(readBuf)), -1);
+    ExpectIntEQ(wolfSSL_get_error(ssl_c, -1), WOLFSSL_ERROR_WANT_READ);
+    ExpectNotNull(sess = wolfSSL_get1_session(ssl_c));
+
+    wolfSSL_free(ssl_c); ssl_c = NULL;
+    wolfSSL_free(ssl_s); ssl_s = NULL;
+
+    /* Step 2: new SSL objects on the SAME WOLFSSL_CTX (so the server's
+     * ticket key still matches). The client offers the saved session but
+     * both sides now advertise a *different* ALPN (http/1.1). The server
+     * MUST NOT resume because the negotiated ALPN differs from the one
+     * bound to the original ticket. */
+    XMEMSET(&test_ctx, 0, sizeof(test_ctx));
+    ExpectNotNull(ssl_c = wolfSSL_new(ctx_c));
+    wolfSSL_SetIOReadCtx(ssl_c, &test_ctx);
+    wolfSSL_SetIOWriteCtx(ssl_c, &test_ctx);
+    ExpectNotNull(ssl_s = wolfSSL_new(ctx_s));
+    wolfSSL_SetIOReadCtx(ssl_s, &test_ctx);
+    wolfSSL_SetIOWriteCtx(ssl_s, &test_ctx);
+    ExpectIntEQ(wolfSSL_UseALPN(ssl_c, (char*)alpnB, (word32)XSTRLEN(alpnB),
+                    WOLFSSL_ALPN_FAILED_ON_MISMATCH), WOLFSSL_SUCCESS);
+    ExpectIntEQ(wolfSSL_UseALPN(ssl_s, (char*)alpnB, (word32)XSTRLEN(alpnB),
+                    WOLFSSL_ALPN_FAILED_ON_MISMATCH), WOLFSSL_SUCCESS);
+    ExpectIntEQ(wolfSSL_set_session(ssl_c, sess), WOLFSSL_SUCCESS);
+    ExpectIntEQ(test_memio_do_handshake(ssl_c, ssl_s, 10, NULL), 0);
+
+    /* Expected behavior: server falls back to a full handshake because the
+     * negotiated ALPN does not match the ALPN bound to the cached ticket.
+     * Both sides should report no resumption. */
+    ExpectIntEQ(wolfSSL_session_reused(ssl_s), 0);
+    ExpectIntEQ(wolfSSL_session_reused(ssl_c), 0);
+
+    wolfSSL_SESSION_free(sess);
+    wolfSSL_free(ssl_c);
+    wolfSSL_free(ssl_s);
+    wolfSSL_CTX_free(ctx_c);
+    wolfSSL_CTX_free(ctx_s);
+#endif
+    return EXPECT_RESULT();
+}
+
 int test_tls_set_curves_list_ecc_fallback(void)
 {
     EXPECT_DECLS;
@@ -1409,6 +1666,116 @@ int test_tls12_peerauth_failsafe(void)
     wolfSSL_free(ssl_c);
     wolfSSL_CTX_free(ctx_c);
     wolfSSL_free(ssl_s);
+    wolfSSL_CTX_free(ctx_s);
+#endif
+    return EXPECT_RESULT();
+}
+
+/* TLS 1.2 mutual auth: an ECDHE-ECDSA server (ECDSA certificate) accepting an
+ * RSA client certificate. */
+int test_tls12_ecdhe_ecdsa_rsa_client_cert(void)
+{
+    EXPECT_DECLS;
+#if defined(HAVE_MANUAL_MEMIO_TESTS_DEPENDENCIES) && !defined(WOLFSSL_NO_TLS12) \
+    && defined(HAVE_ECC) && !defined(NO_RSA) && !defined(NO_SHA256) \
+    && defined(HAVE_AESGCM) && defined(KEEP_PEER_CERT) \
+    && !defined(NO_WOLFSSL_CLIENT) && !defined(NO_WOLFSSL_SERVER) \
+    && !defined(WOLFSSL_NO_CLIENT_AUTH) \
+    && !defined(NO_FILESYSTEM) && !defined(NO_CERTS)
+    WOLFSSL_CTX *ctx_c = NULL, *ctx_s = NULL;
+    WOLFSSL *ssl_c = NULL, *ssl_s = NULL;
+    struct test_memio_ctx test_ctx;
+    WOLFSSL_X509* peer = NULL;
+    const char* cipher = "ECDHE-ECDSA-AES128-GCM-SHA256";
+
+    XMEMSET(&test_ctx, 0, sizeof(test_ctx));
+    ExpectIntEQ(test_memio_setup(&test_ctx, &ctx_c, &ctx_s, &ssl_c, &ssl_s,
+                    wolfTLSv1_2_client_method, wolfTLSv1_2_server_method), 0);
+
+    /* Server: ECDSA certificate (=> ECDHE-ECDSA suite), require client
+     * authentication, and trust the (self-signed) RSA client certificate. */
+    ExpectIntEQ(wolfSSL_use_certificate_file(ssl_s, eccCertFile,
+                    WOLFSSL_FILETYPE_PEM), WOLFSSL_SUCCESS);
+    ExpectIntEQ(wolfSSL_use_PrivateKey_file(ssl_s, eccKeyFile,
+                    WOLFSSL_FILETYPE_PEM), WOLFSSL_SUCCESS);
+    ExpectIntEQ(wolfSSL_CTX_load_verify_locations(ctx_s, cliCertFile, NULL),
+                    WOLFSSL_SUCCESS);
+    wolfSSL_set_verify(ssl_s, WOLFSSL_VERIFY_PEER |
+                    WOLFSSL_VERIFY_FAIL_IF_NO_PEER_CERT, NULL);
+    ExpectIntEQ(wolfSSL_set_cipher_list(ssl_s, cipher), WOLFSSL_SUCCESS);
+
+    /* Client: RSA certificate/key, and trust the ECC CA that signed the
+     * server's ECDSA certificate. */
+    ExpectIntEQ(wolfSSL_use_certificate_file(ssl_c, cliCertFile,
+                    WOLFSSL_FILETYPE_PEM), WOLFSSL_SUCCESS);
+    ExpectIntEQ(wolfSSL_use_PrivateKey_file(ssl_c, cliKeyFile,
+                    WOLFSSL_FILETYPE_PEM), WOLFSSL_SUCCESS);
+    ExpectIntEQ(wolfSSL_CTX_load_verify_locations(ctx_c, caEccCertFile, NULL),
+                    WOLFSSL_SUCCESS);
+    ExpectIntEQ(wolfSSL_set_cipher_list(ssl_c, cipher), WOLFSSL_SUCCESS);
+
+    /* Mutual authentication completes and the server obtains the client's
+     * RSA certificate even though the negotiated suite is ECDHE-ECDSA. */
+    ExpectIntEQ(test_memio_do_handshake(ssl_c, ssl_s, 10, NULL), 0);
+    ExpectStrEQ(wolfSSL_get_cipher_name(ssl_c), cipher);
+    ExpectNotNull(peer = wolfSSL_get_peer_certificate(ssl_s));
+    wolfSSL_X509_free(peer);
+
+    wolfSSL_free(ssl_c);
+    wolfSSL_free(ssl_s);
+    wolfSSL_CTX_free(ctx_c);
+    wolfSSL_CTX_free(ctx_s);
+#endif
+    return EXPECT_RESULT();
+}
+
+/* TLS 1.2 mutual auth: an ECDHE-RSA server (RSA certificate) accepting an
+ * ECDSA client certificate. */
+int test_tls12_ecdhe_rsa_ecdsa_client_cert(void)
+{
+    EXPECT_DECLS;
+#if defined(HAVE_MANUAL_MEMIO_TESTS_DEPENDENCIES) && !defined(WOLFSSL_NO_TLS12) \
+    && defined(HAVE_ECC) && !defined(NO_RSA) && !defined(NO_SHA256) \
+    && defined(HAVE_AESGCM) && defined(KEEP_PEER_CERT) \
+    && !defined(NO_WOLFSSL_CLIENT) && !defined(NO_WOLFSSL_SERVER) \
+    && !defined(WOLFSSL_NO_CLIENT_AUTH) \
+    && !defined(NO_FILESYSTEM) && !defined(NO_CERTS)
+    WOLFSSL_CTX *ctx_c = NULL, *ctx_s = NULL;
+    WOLFSSL *ssl_c = NULL, *ssl_s = NULL;
+    struct test_memio_ctx test_ctx;
+    WOLFSSL_X509* peer = NULL;
+    const char* cipher = "ECDHE-RSA-AES128-GCM-SHA256";
+
+    XMEMSET(&test_ctx, 0, sizeof(test_ctx));
+    ExpectIntEQ(test_memio_setup(&test_ctx, &ctx_c, &ctx_s, &ssl_c, &ssl_s,
+                    wolfTLSv1_2_client_method, wolfTLSv1_2_server_method), 0);
+
+    /* Server: default RSA certificate (=> ECDHE-RSA), require client
+     * authentication, and trust the (self-signed) ECDSA client certificate. */
+    ExpectIntEQ(wolfSSL_CTX_load_verify_locations(ctx_s, cliEccCertFile, NULL),
+                    WOLFSSL_SUCCESS);
+    wolfSSL_set_verify(ssl_s, WOLFSSL_VERIFY_PEER |
+                    WOLFSSL_VERIFY_FAIL_IF_NO_PEER_CERT, NULL);
+    ExpectIntEQ(wolfSSL_set_cipher_list(ssl_s, cipher), WOLFSSL_SUCCESS);
+
+    /* Client: ECDSA certificate/key. The default client CTX already trusts
+     * the RSA CA that signed the server's certificate. */
+    ExpectIntEQ(wolfSSL_use_certificate_file(ssl_c, cliEccCertFile,
+                    WOLFSSL_FILETYPE_PEM), WOLFSSL_SUCCESS);
+    ExpectIntEQ(wolfSSL_use_PrivateKey_file(ssl_c, cliEccKeyFile,
+                    WOLFSSL_FILETYPE_PEM), WOLFSSL_SUCCESS);
+    ExpectIntEQ(wolfSSL_set_cipher_list(ssl_c, cipher), WOLFSSL_SUCCESS);
+
+    /* Mutual authentication completes and the server obtains the client's
+     * ECDSA certificate even though the negotiated suite is ECDHE-RSA. */
+    ExpectIntEQ(test_memio_do_handshake(ssl_c, ssl_s, 10, NULL), 0);
+    ExpectStrEQ(wolfSSL_get_cipher_name(ssl_c), cipher);
+    ExpectNotNull(peer = wolfSSL_get_peer_certificate(ssl_s));
+    wolfSSL_X509_free(peer);
+
+    wolfSSL_free(ssl_c);
+    wolfSSL_free(ssl_s);
+    wolfSSL_CTX_free(ctx_c);
     wolfSSL_CTX_free(ctx_s);
 #endif
     return EXPECT_RESULT();

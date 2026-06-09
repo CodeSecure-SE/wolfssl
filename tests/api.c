@@ -2520,6 +2520,28 @@ static int test_wolfSSL_CTX_use_certificate_buffer(void)
 
 } /* END test_wolfSSL_CTX_use_certificate_buffer */
 
+static int test_ProcessBuffer_negative_size(void)
+{
+    EXPECT_DECLS;
+#if !defined(NO_CERTS) && !defined(NO_TLS) && !defined(NO_WOLFSSL_SERVER) && \
+    defined(USE_CERT_BUFFERS_2048) && !defined(NO_RSA)
+    WOLFSSL_CTX* ctx = NULL;
+
+    ExpectNotNull(ctx = wolfSSL_CTX_new(wolfSSLv23_server_method()));
+
+    ExpectIntEQ(wolfSSL_CTX_use_certificate_buffer(ctx,
+        server_cert_der_2048, -1, WOLFSSL_FILETYPE_ASN1),
+        WC_NO_ERR_TRACE(BAD_FUNC_ARG));
+
+    ExpectIntEQ(wolfSSL_CTX_use_certificate_buffer(ctx,
+        server_cert_der_2048, sizeof_server_cert_der_2048,
+        WOLFSSL_FILETYPE_ASN1), WOLFSSL_SUCCESS);
+
+    wolfSSL_CTX_free(ctx);
+#endif
+    return EXPECT_RESULT();
+}
+
 static int test_wolfSSL_use_certificate_buffer(void)
 {
     EXPECT_DECLS;
@@ -10955,6 +10977,12 @@ static int test_wc_PemToDer(void)
 
     XMEMSET(&info, 0, sizeof(info));
 
+    {
+        const byte dummy = 'X';
+        ExpectIntEQ(wc_PemToDer(&dummy, -1, CERT_TYPE, &pDer, NULL,
+            &info, &eccKey), WC_NO_ERR_TRACE(BAD_FUNC_ARG));
+    }
+
     ExpectIntEQ(ret = load_file(ca_cert, &cert_buf, &cert_sz), 0);
     ExpectIntEQ(ret = wc_PemToDer(cert_buf, (long int)cert_sz, CERT_TYPE, &pDer, NULL,
         &info, &eccKey), 0);
@@ -11126,6 +11154,10 @@ static int test_wc_KeyPemToDer(void)
     ExpectIntEQ(wc_KeyPemToDer(cert_buf, -1, (byte*)&cert_der, cert_sz, ""),
         WC_NO_ERR_TRACE(BAD_FUNC_ARG));
     ExpectIntEQ(wc_KeyPemToDer(cert_buf, 0, (byte*)&cert_der, cert_sz, ""),
+        WC_NO_ERR_TRACE(BAD_FUNC_ARG));
+
+    /* Bad arg: NULL der buffer with negative pemSz (NULL-deref guard). */
+    ExpectIntEQ(wc_KeyPemToDer(cert_buf, -1, NULL, 0, ""),
         WC_NO_ERR_TRACE(BAD_FUNC_ARG));
 
     /* Test normal operation */
@@ -21883,6 +21915,13 @@ static int test_wc_SetIssueBuffer(void)
 
     ExpectIntEQ(0, wc_SetIssuerBuffer(&forgedCert, peerCertBuf, peerCertSz));
 
+    /* Negative-size rejection: pin both wc_SetIssuerBuffer and
+     * wc_SetSubjectBuffer (representatives for the seven wc_Set* siblings). */
+    ExpectIntEQ(wc_SetIssuerBuffer(&forgedCert, peerCertBuf, -1),
+        WC_NO_ERR_TRACE(BAD_FUNC_ARG));
+    ExpectIntEQ(wc_SetSubjectBuffer(&forgedCert, peerCertBuf, -1),
+        WC_NO_ERR_TRACE(BAD_FUNC_ARG));
+
     wolfSSL_FreeX509(x509);
 #endif
     return EXPECT_RESULT();
@@ -26055,6 +26094,9 @@ static int test_wolfSSL_CTX_LoadCRL_largeCRLnum(void)
         WOLFSSL_SUCCESS);
     AssertIntEQ(XMEMCMP(
         crlInfo.crlNumber, exp_crlnum, XSTRLEN(exp_crlnum)), 0);
+    ExpectIntEQ(wolfSSL_CertManagerGetCRLInfo(
+        cm, &crlInfo, crlLrgCrlNumBuff, -1, WOLFSSL_FILETYPE_PEM),
+        WC_NO_ERR_TRACE(BAD_FUNC_ARG));
     /* Expect to fail loading CRL because of >21 octets CRL number */
     ExpectIntEQ(wolfSSL_CertManagerLoadCRLFile(cm, crl_lrgcrlnum2,
                                                 WOLFSSL_FILETYPE_PEM),
@@ -28174,7 +28216,8 @@ static int test_SSL_CIPHER_get_xxx(void)
 
 #if defined(WOLF_CRYPTO_CB) && defined(HAVE_IO_TESTS_DEPENDENCIES) && \
     (!defined(WOLF_CRYPTO_CB_ONLY_SHA256) && !defined(WOLF_CRYPTO_CB_ONLY_AES) && \
-     !defined(WOLF_CRYPTO_CB_ONLY_ECC) && !defined(WOLF_CRYPTO_CB_ONLY_RSA))
+     !defined(WOLF_CRYPTO_CB_ONLY_ECC) && !defined(WOLF_CRYPTO_CB_ONLY_RSA) && \
+     !defined(WOLF_CRYPTO_CB_ONLY_SHA512))
 
 static int load_pem_key_file_as_der(const char* privKeyFile, DerBuffer** pDer,
     int* keyFormat)
@@ -29178,7 +29221,8 @@ static int test_wc_CryptoCb(void)
     EXPECT_DECLS;
 #if defined(WOLF_CRYPTO_CB) && \
     (!defined(WOLF_CRYPTO_CB_ONLY_SHA256) && !defined(WOLF_CRYPTO_CB_ONLY_AES) && \
-     !defined(WOLF_CRYPTO_CB_ONLY_ECC) && !defined(WOLF_CRYPTO_CB_ONLY_RSA))
+     !defined(WOLF_CRYPTO_CB_ONLY_ECC) && !defined(WOLF_CRYPTO_CB_ONLY_RSA) && \
+     !defined(WOLF_CRYPTO_CB_ONLY_SHA512))
     /* TODO: Add crypto callback API tests */
 
 #ifdef HAVE_IO_TESTS_DEPENDENCIES
@@ -31598,8 +31642,9 @@ static int test_session_ticket_hs_update(void)
 
 
 /**
- * Make sure we don't send RSA Signature Hash Algorithms in the
- * CertificateRequest when we don't have any such ciphers set.
+ * Make sure the CertificateRequest advertises ECDSA signature hash algorithms
+ * for an ECDHE-ECDSA server, and also includes RSA algorithms so that RSA
+ * clients can authenticate (the certificate_type advertised covers both).
  * @return EXPECT_RESULT()
  */
 static int test_certreq_sighash_algos(void)
@@ -31660,17 +31705,24 @@ static int test_certreq_sighash_algos(void)
             idx += OPAQUE16_LEN;
             maxIdx = idx + (int)len;
             for (; idx < maxIdx && EXPECT_SUCCESS(); idx += OPAQUE16_LEN) {
-                if (test_ctx.c_buff[idx+1] == ED25519_SA_MINOR ||
-                        test_ctx.c_buff[idx+1] == ED448_SA_MINOR ||
-                        test_ctx.c_buff[idx+1] ==
-                                      ECDSA_BRAINPOOLP256R1TLS13_SHA256_MINOR ||
-                        test_ctx.c_buff[idx+1] ==
-                                      ECDSA_BRAINPOOLP384R1TLS13_SHA384_MINOR ||
-                        test_ctx.c_buff[idx+1] ==
-                                      ECDSA_BRAINPOOLP512R1TLS13_SHA512_MINOR)
-                    ExpectIntEQ(test_ctx.c_buff[idx], NEW_SA_MAJOR);
-                else
-                    ExpectIntEQ(test_ctx.c_buff[idx+1], ecc_dsa_sa_algo);
+                byte first = test_ctx.c_buff[idx];
+                byte second = test_ctx.c_buff[idx+1];
+                if (second == ED25519_SA_MINOR ||
+                        second == ED448_SA_MINOR ||
+                        second == ECDSA_BRAINPOOLP256R1TLS13_SHA256_MINOR ||
+                        second == ECDSA_BRAINPOOLP384R1TLS13_SHA384_MINOR ||
+                        second == ECDSA_BRAINPOOLP512R1TLS13_SHA512_MINOR) {
+                    ExpectIntEQ(first, NEW_SA_MAJOR);
+                }
+                else {
+                    /* ECDHE-ECDSA suites advertise ECDSA so the negotiated
+                     * cipher can be used, and also RSA / RSA-PSS so RSA
+                     * clients can authenticate via mutual auth. Note that
+                     * RSA-PSS is encoded with sigAlgo first then mac. */
+                    ExpectTrue(second == ecc_dsa_sa_algo ||
+                               second == rsa_sa_algo ||
+                               first == rsa_pss_sa_algo);
+                }
             }
             break;
         }
@@ -34965,6 +35017,7 @@ TEST_CASE testCases[] = {
     TEST_DECL(test_wolfSSL_CTX_use_certificate),
     TEST_DECL(test_wolfSSL_CTX_use_certificate_file),
     TEST_DECL(test_wolfSSL_CTX_use_certificate_buffer),
+    TEST_DECL(test_ProcessBuffer_negative_size),
     TEST_DECL(test_wolfSSL_use_certificate_buffer),
     TEST_DECL(test_wolfSSL_CTX_use_PrivateKey_file),
     TEST_DECL(test_wolfSSL_CTX_use_RSAPrivateKey_file),
