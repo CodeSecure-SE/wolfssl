@@ -23304,6 +23304,11 @@ static int test_wc_SignCert_cb(void)
         /* Invalid keyType for ECC signature */
         ExpectIntEQ(wc_SignCert_cb(cert.bodySz, cert.sigType, der,
             FOURK_BUF, ED25519_TYPE, mockSignCb, &signCtx, &rng), BAD_FUNC_ARG);
+        /* sigType/key family mismatch: an RSA signature OID against an ECC
+         * key must be rejected with ALGO_ID_E before any signing happens. */
+        ExpectIntEQ(wc_SignCert_cb(cert.bodySz, CTC_SHA256wRSA, der,
+            FOURK_BUF, ECC_TYPE, mockSignCb, &signCtx, &rng),
+            WC_NO_ERR_TRACE(ALGO_ID_E));
     #endif
 
         ret = wc_ecc_free(&key);
@@ -23390,6 +23395,11 @@ static int test_wc_SignCert_cb(void)
         /* Invalid keyType */
         ExpectIntEQ(wc_SignCert_cb(cert.bodySz, cert.sigType, der,
             FOURK_BUF, ED448_TYPE, mockSignCb, &signCtx, &rng), BAD_FUNC_ARG);
+        /* sigType/key family mismatch: an ECDSA signature OID against an RSA
+         * key must be rejected with ALGO_ID_E before any signing happens. */
+        ExpectIntEQ(wc_SignCert_cb(cert.bodySz, CTC_SHA256wECDSA, der,
+            FOURK_BUF, RSA_TYPE, mockSignCb, &signCtx, &rng),
+            WC_NO_ERR_TRACE(ALGO_ID_E));
     #endif
 
         ret = wc_FreeRsaKey(&key);
@@ -24327,6 +24337,15 @@ static int test_wc_MakeCRL_max_crlnum(void)
         crlSz = wc_SignCRL_ex(tbsBuf, tbsSz, CTC_SHA256wRSA,
             crlBuf, (word32)bufSz, &rsaKey, NULL, &rng);
         ExpectIntGT(crlSz, 0);
+    }
+
+    /* --- Negative: a sigType whose family does not match the signing key
+     * must be rejected before any signature is produced. The RSA key here
+     * paired with an ECDSA OID must return ALGO_ID_E. --- */
+    if (EXPECT_SUCCESS()) {
+        ExpectIntEQ(wc_SignCRL_ex(tbsBuf, tbsSz, CTC_SHA256wECDSA,
+            crlBuf, (word32)bufSz, &rsaKey, NULL, &rng),
+            WC_NO_ERR_TRACE(ALGO_ID_E));
     }
 
     /* --- Decode the CRL and verify CRL number --- */
@@ -28212,6 +28231,51 @@ static int test_SSL_CIPHER_get_xxx(void)
 
     SSL_CTX_free(ctx);
     SSL_free(ssl);
+#endif
+
+    return EXPECT_RESULT();
+}
+
+/* Cipher property helpers must report the negotiated cipher when it is
+ * obtained via SSL_get_current_cipher(), which does not populate
+ * cipher->offset. */
+static int test_SSL_CIPHER_get_current_kx(void)
+{
+    EXPECT_DECLS;
+#if defined(OPENSSL_ALL) && !defined(NO_TLS) && \
+    defined(BUILD_TLS_PSK_WITH_AES_128_GCM_SHA256)
+    SSL_CTX* ctx = NULL;
+    SSL*     ssl = NULL;
+    const SSL_CIPHER* cipher = NULL;
+
+#ifndef NO_WOLFSSL_CLIENT
+    ExpectNotNull(ctx = wolfSSL_CTX_new(wolfSSLv23_client_method()));
+#else
+    ExpectNotNull(ctx = wolfSSL_CTX_new(wolfSSLv23_server_method()));
+#endif
+    ExpectNotNull(ssl = SSL_new(ctx));
+
+    /* Set a negotiated plain-PSK suite without a full handshake. */
+    if (ssl != NULL) {
+        ssl->options.cipherSuite0 = CIPHER_BYTE;
+        ssl->options.cipherSuite  = TLS_PSK_WITH_AES_128_GCM_SHA256;
+    }
+
+    ExpectNotNull(cipher = SSL_get_current_cipher(ssl));
+#if !defined(WOLFSSL_CIPHER_INTERNALNAME) && !defined(NO_ERROR_STRINGS) && \
+    !defined(WOLFSSL_QT)
+    ExpectStrEQ(SSL_CIPHER_get_name(cipher), "TLS_PSK_WITH_AES_128_GCM_SHA256");
+#else
+    ExpectStrEQ(SSL_CIPHER_get_name(cipher), "PSK-AES128-GCM-SHA256");
+#endif
+    ExpectIntEQ(wolfSSL_CIPHER_get_kx_nid(cipher), NID_kx_psk);
+    ExpectIntEQ(wolfSSL_CIPHER_get_auth_nid(cipher), NID_auth_psk);
+    ExpectIntEQ(wolfSSL_CIPHER_get_cipher_nid(cipher), NID_aes_128_gcm);
+    ExpectIntEQ(wolfSSL_CIPHER_get_digest_nid(cipher), NID_sha256);
+    ExpectIntEQ(wolfSSL_CIPHER_is_aead(cipher), 1);
+
+    SSL_free(ssl);
+    SSL_CTX_free(ctx);
 #endif
 
     return EXPECT_RESULT();
@@ -35010,6 +35074,7 @@ TEST_CASE testCases[] = {
     TEST_DECL(test_wolfSSL_get_peer_finished_overrun),
 #endif
     TEST_DECL(test_SSL_CIPHER_get_xxx),
+    TEST_DECL(test_SSL_CIPHER_get_current_kx),
     TEST_DECL(test_wolfSSL_ERR_strings),
     TEST_DECL(test_wolfSSL_CTX_set_cipher_list_bytes),
     TEST_DECL(test_wolfSSL_set_cipher_list_tls12_keeps_tls13),
@@ -35141,6 +35206,8 @@ TEST_CASE testCases[] = {
     TEST_DECL(test_TLSX_ECH_msg_type_validation),
     TEST_DECL(test_TLSX_SRTP_msg_type_validation),
     TEST_DECL(test_TLSX_ALPN_server_response_count),
+    TEST_DECL(test_TLSX_SupportedCurve_empty_or_unsupported),
+    TEST_DECL(test_TLSX_PointFormat_uncompressed_required),
     TEST_DECL(test_wolfSSL_wolfSSL_UseSecureRenegotiation),
     TEST_DECL(test_wolfSSL_clear_secure_renegotiation),
     TEST_DECL(test_wolfSSL_SCR_Reconnect),

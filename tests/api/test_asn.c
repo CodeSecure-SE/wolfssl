@@ -1318,6 +1318,61 @@ int test_wc_DecodeRsaPssParams(void)
             &hash, &mgf, &saltLen), WC_NO_ERR_TRACE(ASN_PARSE_E));
     }
 
+    /* --- Test 9: trailerField = 1 (trailerFieldBC) => valid in all modes --- */
+    /* SEQUENCE { [3] CONSTRUCTED { INTEGER 1 } } = 30 05 a3 03 02 01 01 */
+    {
+        static const byte trailerValid[] = {
+            0x30, 0x05, 0xa3, 0x03, 0x02, 0x01, 0x01
+        };
+        hash    = WC_HASH_TYPE_NONE;
+        mgf     = 0;
+        saltLen = 0;
+        ExpectIntEQ(wc_DecodeRsaPssParams(trailerValid,
+            (word32)sizeof(trailerValid), &hash, &mgf, &saltLen), 0);
+        ExpectIntEQ((int)hash, (int)WC_HASH_TYPE_SHA);
+        ExpectIntEQ(mgf, WC_MGF1SHA1);
+        ExpectIntEQ(saltLen, 20);
+    }
+
+#ifndef WOLFSSL_NO_ASN_STRICT
+    /* --- Test 10: trailerField = 2 => ASN_PARSE_E (strict mode) --- */
+    /* RFC 8017 A.2.3: trailerField SHALL be trailerFieldBC(1). */
+    /* SEQUENCE { [3] CONSTRUCTED { INTEGER 2 } } = 30 05 a3 03 02 01 02 */
+    {
+        static const byte trailerTwo[] = {
+            0x30, 0x05, 0xa3, 0x03, 0x02, 0x01, 0x02
+        };
+        ExpectIntEQ(wc_DecodeRsaPssParams(trailerTwo,
+            (word32)sizeof(trailerTwo), &hash, &mgf, &saltLen),
+            WC_NO_ERR_TRACE(ASN_PARSE_E));
+    }
+
+    /* --- Test 11: trailerField = 0 => ASN_PARSE_E (strict mode) --- */
+    /* SEQUENCE { [3] CONSTRUCTED { INTEGER 0 } } = 30 05 a3 03 02 01 00 */
+    {
+        static const byte trailerZero[] = {
+            0x30, 0x05, 0xa3, 0x03, 0x02, 0x01, 0x00
+        };
+        ExpectIntEQ(wc_DecodeRsaPssParams(trailerZero,
+            (word32)sizeof(trailerZero), &hash, &mgf, &saltLen),
+            WC_NO_ERR_TRACE(ASN_PARSE_E));
+    }
+
+    /* --- Test 12: trailerField = 256 (multi-byte INTEGER) => ASN_PARSE_E ---
+     * Exercises the 2-byte integer branch in GetInteger16Bit (non-template)
+     * and the len==2 case of ASN_DATA_TYPE_WORD16 (template path).
+     * SEQUENCE { [3] CONSTRUCTED { INTEGER 256 } } = 30 06 a3 04 02 02 01 00
+     */
+    {
+        static const byte trailerMultiByte[] = {
+            0x30, 0x06, 0xa3, 0x04, 0x02, 0x02, 0x01, 0x00
+        };
+        ExpectIntEQ(wc_DecodeRsaPssParams(trailerMultiByte,
+            (word32)sizeof(trailerMultiByte), &hash, &mgf, &saltLen),
+            WC_NO_ERR_TRACE(ASN_PARSE_E));
+    }
+#endif /* !WOLFSSL_NO_ASN_STRICT */
+
 #endif /* WC_RSA_PSS && !NO_RSA && !NO_ASN */
     return EXPECT_RESULT();
 }
@@ -1437,6 +1492,58 @@ int test_DecodeAltNames_length_underflow(void)
     wc_FreeDecodedCert(&cert);
 
 #endif /* !NO_CERTS && !NO_RSA && !NO_ASN */
+    return EXPECT_RESULT();
+}
+
+int test_ParseCert_SM3wSM2_short_pubkey(void)
+{
+    EXPECT_DECLS;
+
+#if !defined(NO_CERTS) && !defined(NO_ASN) && !defined(NO_SKID) && \
+    defined(WOLFSSL_SM2) && defined(WOLFSSL_SM3)
+    /* Malformed cert: the SubjectPublicKeyInfo is an id-ecPublicKey key on the
+     * sm2p256v1 curve with only a 4-byte public key body, whole SPKI is 30
+     * bytes with no subjectKeyIdentifier extension and SKID derived from the
+     * key. */
+    static const byte sm2ShortKeyCert[] = {
+        0x30, 0x81, 0xa7,
+          0x30, 0x56,
+            0xa0, 0x03, 0x02, 0x01, 0x02,
+            0x02, 0x01, 0x01,
+            0x30, 0x0a, 0x06, 0x08,
+              0x2a, 0x81, 0x1c, 0xcf, 0x55, 0x01, 0x83, 0x75,
+            0x30, 0x00,
+            0x30, 0x1e,
+              0x17, 0x0d, 0x32, 0x35, 0x31, 0x31, 0x31, 0x33,
+              0x32, 0x30, 0x34, 0x31, 0x32, 0x31, 0x5a,
+              0x17, 0x0d, 0x32, 0x38, 0x30, 0x38, 0x30, 0x39,
+              0x32, 0x30, 0x34, 0x31, 0x32, 0x31, 0x5a,
+            0x30, 0x00,
+            0x30, 0x1c,
+              0x30, 0x13,
+                0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01,
+                0x06, 0x08, 0x2a, 0x81, 0x1c, 0xcf, 0x55, 0x01, 0x82, 0x2d,
+              0x03, 0x05, 0x00, 0x04, 0x11, 0x22, 0x33,
+          0x30, 0x0a, 0x06, 0x08,
+            0x2a, 0x81, 0x1c, 0xcf, 0x55, 0x01, 0x83, 0x75,
+          0x03, 0x41, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+    };
+    DecodedCert cert;
+
+    wc_InitDecodedCert(&cert, sm2ShortKeyCert, (word32)sizeof(sm2ShortKeyCert),
+        NULL);
+    ExpectIntEQ(wc_ParseCert(&cert, CERT_TYPE, NO_VERIFY, NULL),
+        WC_NO_ERR_TRACE(BUFFER_E));
+    wc_FreeDecodedCert(&cert);
+#endif
     return EXPECT_RESULT();
 }
 

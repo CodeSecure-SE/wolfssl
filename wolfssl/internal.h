@@ -3466,7 +3466,12 @@ WOLFSSL_LOCAL int TLSX_SupportedCurve_Copy(TLSX* src, TLSX** dst, void* heap);
 WOLFSSL_LOCAL int TLSX_UseSupportedCurve(TLSX** extensions, word16 name,
                                                           void* heap, int side);
 
-WOLFSSL_LOCAL int TLSX_UsePointFormat(TLSX** extensions, byte point,
+#ifdef WOLFSSL_API_PREFIX_MAP
+    #define TLSX_UsePointFormat wolfSSL_TLSX_UsePointFormat
+#endif
+/* WOLFSSL_TEST_VIS so the API tests can seed a client's ec_point_formats
+ * extension (the point-format negotiation has no public API). */
+WOLFSSL_TEST_VIS int TLSX_UsePointFormat(TLSX** extensions, byte point,
                                                                     void* heap);
 WOLFSSL_LOCAL int TLSX_IsGroupSupported(int namedGroup, int side);
 
@@ -5197,6 +5202,8 @@ struct Options {
 #endif /* WOLFSSL_DTLS */
 #if defined(HAVE_TLS_EXTENSIONS) && defined(HAVE_SUPPORTED_CURVES)
     word16            userCurves:1;       /* indicates user called wolfSSL_UseSupportedCurve */
+    word16            peerNoUncompPF:1;   /* peer sent ec_point_formats without
+                                           * the uncompressed (0) format */
 #endif
     word16            keepResources:1;    /* Keep resources after handshake */
     word16            useClientOrder:1;   /* Use client's cipher order */
@@ -5954,8 +5961,10 @@ enum  {
     DTLS13_EPOCH_TRAFFIC0 = 3
 };
 
-/* RFC 9147 Section 4.2.1: the DTLS 1.3 epoch is a 48-bit value and must not
- * exceed 2^48-1. Expressed as the high/low 32-bit halves of a w64wrapper. */
+/* Sender-side DTLS 1.3 epoch ceiling: we MUST NOT advance our own epoch past
+ * 2^48-1 (RFC 9147 Section 4.2.1). This gates only the sending epoch; receivers
+ * MUST NOT enforce it on the peer epoch (RFC 9147 Section 8). Expressed as the
+ * high/low 32-bit halves of a w64wrapper. */
 #define DTLS13_EPOCH_MAX_HI32 0x0000FFFFU
 #define DTLS13_EPOCH_MAX_LO32 0xFFFFFFFFU
 
