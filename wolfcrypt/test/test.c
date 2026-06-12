@@ -16604,7 +16604,6 @@ static wc_test_ret_t aes_xts_partial_test_common(XtsAes *aes,
  * structurally identical and only differ in the key constants and expected
  * ciphertext.
  */
-#ifndef HAVE_FIPS
 static wc_test_ret_t aes_xts_inplace_test_common(XtsAes *aes,
     const unsigned char *k3, word32 k3Sz,
     const unsigned char *i3, word32 i3Sz,
@@ -16707,7 +16706,6 @@ static wc_test_ret_t aes_xts_inplace_test_common(XtsAes *aes,
   out:
     return ret;
 }
-#endif /* !HAVE_FIPS */
 
 /* test vectors from http://csrc.nist.gov/groups/STM/cavp/block-cipher-modes.html */
 #ifdef WOLFSSL_AES_128
@@ -16933,14 +16931,13 @@ static wc_test_ret_t aes_xts_128_partial_test(XtsAes *aes)
         p2, sizeof(p2), c2, sizeof(c2));
 }
 
-#ifndef HAVE_FIPS
 static wc_test_ret_t aes_xts_128_inplace_test(XtsAes *aes)
 {
     WOLFSSL_SMALL_STACK_STATIC const unsigned char k3[] = {
         0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20,
         0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20,
         0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20,
-        0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20,
+        0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x21
     };
     WOLFSSL_SMALL_STACK_STATIC const unsigned char i3[] = {
         0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20,
@@ -16954,17 +16951,16 @@ static wc_test_ret_t aes_xts_128_inplace_test(XtsAes *aes)
         0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20
     };
     WOLFSSL_SMALL_STACK_STATIC const unsigned char c3[] = {
-        0xA2, 0x07, 0x47, 0x76, 0x3F, 0xEC, 0x0C, 0x23,
-        0x1B, 0xD0, 0xBD, 0x46, 0x9A, 0x27, 0x38, 0x12,
-        0x95, 0x02, 0x3D, 0x5D, 0xC6, 0x94, 0x51, 0x36,
-        0xA0, 0x85, 0xD2, 0x69, 0x6E, 0x87, 0x0A, 0xBF,
-        0xB5, 0x5A, 0xDD, 0xCB, 0x80, 0xE0, 0xFC, 0xCD
+        0x39, 0x06, 0xE7, 0xF3, 0x33, 0x0B, 0x1B, 0x1D,
+        0x2B, 0x11, 0xB0, 0xB7, 0xAF, 0x43, 0xB1, 0x8F,
+        0xE6, 0xBE, 0x79, 0x34, 0xBD, 0x31, 0x64, 0x3D,
+        0xA1, 0x16, 0xB5, 0xF0, 0x9B, 0x1D, 0x41, 0xF2,
+        0x3F, 0xED, 0x11, 0x37, 0xCB, 0x4D, 0xAD, 0xA4
     };
     return aes_xts_inplace_test_common(aes,
         k3, sizeof(k3), i3, sizeof(i3),
         p3, sizeof(p3), c3, sizeof(c3));
 }
-#endif /* !HAVE_FIPS */
 
 #if !defined(BENCH_EMBEDDED) && !defined(HAVE_CAVIUM) && \
     !defined(WOLFSSL_AFALG)
@@ -17047,11 +17043,9 @@ static wc_test_ret_t aes_xts_128_test(void)
     if (ret != 0)
         ERROR_OUT(ret, out);
 
-#ifndef HAVE_FIPS
     ret = aes_xts_128_inplace_test(aes);
     if (ret != 0)
         ERROR_OUT(ret, out);
-#endif /* !HAVE_FIPS */
 
 #if !defined(BENCH_EMBEDDED) && !defined(HAVE_CAVIUM) && \
     !defined(WOLFSSL_AFALG)
@@ -17313,7 +17307,7 @@ static wc_test_ret_t aes_xts_192_inplace_test(XtsAes *aes)
         0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20,
         0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20,
         0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20,
-        0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20
+        0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x21
     };
     WOLFSSL_SMALL_STACK_STATIC const unsigned char i3[] = {
         0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20,
@@ -17327,11 +17321,11 @@ static wc_test_ret_t aes_xts_192_inplace_test(XtsAes *aes)
         0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20
     };
     WOLFSSL_SMALL_STACK_STATIC const unsigned char c3[] = {
-        0xa4, 0xf2, 0x71, 0x5d, 0x80, 0x60, 0x68, 0xa0,
-        0x80, 0x61, 0xd7, 0xc1, 0x55, 0xc8, 0x3a, 0x2e,
-        0xd7, 0xf4, 0x62, 0xaf, 0xbd, 0x2d, 0xf9, 0x5f,
-        0xe8, 0xc5, 0x99, 0x3d, 0x58, 0x3c, 0xeb, 0xba,
-        0x86, 0xea, 0x2c, 0x7e, 0x1f, 0xba, 0x81, 0xde
+        0x72, 0x7A, 0xBC, 0x25, 0x37, 0x20, 0x65, 0x1E,
+        0xF8, 0x45, 0xB0, 0x16, 0xE7, 0xEE, 0xDA, 0x36,
+        0xAB, 0x4F, 0xF4, 0xDB, 0x3C, 0xFB, 0x75, 0x19,
+        0xA3, 0x01, 0x74, 0x28, 0xD5, 0x92, 0x09, 0x7A,
+        0xDB, 0x0D, 0x96, 0x9F, 0xB7, 0xA2, 0xB7, 0x57
     };
     return aes_xts_inplace_test_common(aes,
         k3, sizeof(k3), i3, sizeof(i3),
@@ -52299,8 +52293,22 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t mlkem_test(void)
         if (ret != 0)
             ERROR_OUT(WC_TEST_RET_ENC_I(i), out);
 
-        if (XMEMCMP(priv, priv2, testData[i][2]) != 0)
+        if (XMEMCMP(priv, priv2, testData[i][1]) != 0)
             ERROR_OUT(WC_TEST_RET_ENC_I(i), out);
+
+        /* FIPS 203 modulus check: a private key whose first coefficient is
+         * not reduced (>= q) must be rejected on decode. Free first so the
+         * reinit does not leak the decoded dynamic priv/pub buffers. */
+        wc_MlKemKey_Free(key);
+        ret = wc_MlKemKey_Init(key, testData[i][0], HEAP_HINT, devId);
+        if (ret != 0)
+            ERROR_OUT(WC_TEST_RET_ENC_I(i), out);
+        priv[0] = 0xff;
+        priv[1] |= 0x0f;
+        ret = wc_MlKemKey_DecodePrivateKey(key, priv, testData[i][1]);
+        if (ret != WC_NO_ERR_TRACE(PUBLIC_KEY_E))
+            ERROR_OUT(WC_TEST_RET_ENC_I(i), out);
+        ret = 0;
 
 #if !defined(WOLFSSL_NO_MALLOC) && !defined(WC_NO_CONSTRUCTORS)
         tmpKey = wc_MlKemKey_New(testData[i][0], HEAP_HINT, devId);
@@ -55846,6 +55854,26 @@ static wc_test_ret_t test_mldsa_decode_level(const byte* rawKey,
         ret = WC_TEST_RET_ENC_NC;
     }
 #endif /* !WOLFSSL_MLDSA_FIPS204_DRAFT */
+
+#ifdef WOLFSSL_MLDSA_PRIVATE_KEY
+    /* Negative: a private key with an out-of-range s1 coefficient must be
+     * rejected. s1 follows rho || K || tr; force its first byte out of range. */
+    if ((ret == 0) && (!isPublicOnlyKey)) {
+        XMEMCPY(der, rawKey, rawKeySz);
+        der[MLDSA_PUB_SEED_SZ + MLDSA_K_SZ + MLDSA_TR_SZ] = 0xff;
+        wc_MlDsaKey_Free(key);
+        ret = wc_MlDsaKey_Init(key, NULL, devId);
+        if (ret == 0) {
+            ret = wc_MlDsaKey_SetParams(key, expectedLevel);
+        }
+        if (ret == 0) {
+            if (wc_MlDsaKey_ImportPrivRaw(key, der, rawKeySz) !=
+                    WC_NO_ERR_TRACE(PUBLIC_KEY_E)) {
+                ret = WC_TEST_RET_ENC_NC;
+            }
+        }
+    }
+#endif
 #endif /* !WOLFSSL_MLDSA_NO_ASN1 && WOLFSSL_ASN_TEMPLATE */
 
     /* Cleanup */
