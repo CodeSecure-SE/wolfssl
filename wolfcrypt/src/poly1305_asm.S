@@ -46,6 +46,16 @@
 #define HAVE_INTEL_AVX2
 #endif /* HAVE_INTEL_AVX2 */
 #endif /* NO_AVX2_SUPPORT */
+#ifndef NO_VAES_SUPPORT
+#ifndef HAVE_INTEL_VAES
+#define HAVE_INTEL_VAES
+#endif /* HAVE_INTEL_VAES */
+#endif /* NO_VAES_SUPPORT */
+#ifndef NO_AVX512_SUPPORT
+#ifndef HAVE_INTEL_AVX512
+#define HAVE_INTEL_AVX512
+#endif /* HAVE_INTEL_AVX512 */
+#endif /* NO_AVX512_SUPPORT */
 
 #ifdef WOLFSSL_X86_64_BUILD
 #ifdef HAVE_INTEL_AVX1
@@ -504,7 +514,6 @@ _poly1305_calc_powers_avx2:
         # Reduce 260-bit to 130-bit
         movq	%r15, %rax
         movq	%rsi, %rdx
-        movq	%rbx, %rbx
         andq	$-4, %rax
         andq	$3, %r15
         addq	%rax, %r13

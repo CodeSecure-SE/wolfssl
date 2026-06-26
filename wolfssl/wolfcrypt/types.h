@@ -1449,8 +1449,10 @@ enum wc_AlgoType {
 enum wc_KdfType {
     WC_KDF_TYPE_NONE = 0,
     WC_KDF_TYPE_HKDF = 1,
-    WC_KDF_TYPE_TWOSTEP_CMAC = 2 /* NIST SP 800-56C two-step cmac kdf. */
-    /* Future: WC_KDF_TYPE_PBKDF2 = 3, WC_KDF_TYPE_SCRYPT = 4, etc. */
+    WC_KDF_TYPE_TWOSTEP_CMAC = 2, /* NIST SP 800-56C two-step cmac kdf. */
+    WC_KDF_TYPE_HKDF_EXTRACT = 3,
+    WC_KDF_TYPE_HKDF_EXPAND = 4
+    /* Future: WC_KDF_TYPE_PBKDF2 = 5, WC_KDF_TYPE_SCRYPT = 6, etc. */
 };
 
 /* hash types */
@@ -1798,6 +1800,17 @@ WOLFSSL_API word32 CheckRunTimeSettings(void);
 #endif
 #ifndef ALIGN256
     #define ALIGN256 WOLFSSL_ALIGN(256)
+#endif
+
+/* Define the unaligned type modifier across different compilers */
+#if defined(__GNUC__) || defined(__clang__)
+    /* Works on GCC 2.0+ and all versions of Clang */
+    #define MAYBE_UNALIGNED __attribute__((aligned(1)))
+#elif defined(_MSC_VER)
+    /* MSVC handles unaligned reads via hardware or __unaligned keyword */
+    #define MAYBE_UNALIGNED __unaligned
+#else
+    #define MAYBE_UNALIGNED
 #endif
 
 #if !defined(PEDANTIC_EXTENSION)
