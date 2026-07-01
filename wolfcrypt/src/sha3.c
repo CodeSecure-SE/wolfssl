@@ -38,6 +38,8 @@
  * PSOC6_HASH_SHA3:          PSoC6 hardware SHA-3                  default: off
  */
 
+#define _WC_BUILDING_SHA3_C
+
 #include <wolfssl/wolfcrypt/libwolfssl_sources.h>
 
 #ifdef WC_SHA3_NO_ASM
@@ -124,7 +126,8 @@
 #endif
 #endif
 
-#if !defined(WOLFSSL_ARMASM) && !defined(WOLFSSL_RISCV_ASM)
+#if !defined(WOLFSSL_ARMASM) && !defined(WOLFSSL_RISCV_ASM) && \
+    !defined(WOLFSSL_PPC64_ASM) && !defined(WOLFSSL_PPC32_ASM)
 
 #ifdef WOLFSSL_SHA3_SMALL
 /* Rotate a 64-bit value left.
@@ -604,7 +607,52 @@ void BlockSha3(word64* s)
 }
 #endif /* WC_SHA3_SW_KECCAK */
 #endif /* !WOLFSSL_SHA3_SMALL */
-#endif /* !WOLFSSL_ARMASM && !WOLFSSL_RISCV_ASM */
+#endif /* !WOLFSSL_ARMASM && !WOLFSSL_RISCV_ASM && !WOLFSSL_PPC64_ASM &&
+        * !WOLFSSL_PPC32_ASM */
+
+#if defined(WOLFSSL_PPC64_ASM)
+#if defined(WOLFSSL_PPC64_ASM_POWER8)
+/* PowerPC64 provides two Keccak-f[1600] implementations: the scalar
+ * BlockSha3_base and a POWER8 (PowerISA 2.07) VSX BlockSha3_power8 (which uses
+ * vrld/mtvsrd).  Select the POWER8 one at run time when the CPU is POWER8 or
+ * later.
+ *
+ * A run-time flag with direct calls is used rather than a function pointer: an
+ * indirect call would require an ELFv1 function descriptor, whereas direct
+ * calls work under both the ELFv1 and ELFv2 ABIs. */
+#include <wolfssl/wolfcrypt/cpuid.h>
+
+/* -1 = not yet determined, 0 = base, 1 = POWER8 */
+static int sha3_use_power8 = -1;
+
+void BlockSha3(word64* s)
+{
+    if (sha3_use_power8 < 0) {
+        word32 f = cpuid_get_flags();
+        /* The VSX permutation is only worthwhile where the scalar issue width
+         * does not already win.  POWER9 (PowerISA 3.0 but not 3.1) has enough
+         * scalar throughput that BlockSha3_base is faster, so use the VSX path
+         * only on POWER8 and on POWER10 (3.1) or later. */
+        sha3_use_power8 = IS_PPC64_ARCH_2_07(f) &&
+            (!IS_PPC64_ARCH_3_00(f) || IS_PPC64_ARCH_3_1(f));
+    }
+
+    if (sha3_use_power8)
+        BlockSha3_power8(s);
+    else
+        BlockSha3_base(s);
+}
+#else
+/* Only the scalar implementation is built; call it directly (no run-time
+ * dispatch, no function pointer). */
+void BlockSha3(word64* s)
+{
+    BlockSha3_base(s);
+}
+#endif
+#endif
+/* Scalar PowerPC32 assembly provides BlockSha3 directly (see
+ * wolfcrypt/src/port/ppc32/ppc32-sha3-asm.S), so nothing is needed here. */
 
 #ifdef WC_SHA3_SW_KECCAK
 #if defined(BIG_ENDIAN_ORDER)
@@ -752,12 +800,26 @@ static int Sha3Update(wc_Sha3* sha3, const byte* data, word32 len, byte p)
     word32 check = 0;
     word32 total_check = 0;
 #endif
-
-#if defined(WOLFSSL_USE_SAVE_VECTOR_REGISTERS) && defined(USE_INTEL_SPEEDUP)
-    if (SHA3_BLOCK == sha3_block_avx2) {
-        SAVE_VECTOR_REGISTERS(return _svr_ret;);
-    }
+#ifdef USE_INTEL_SPEEDUP
+#ifdef WC_C_DYNAMIC_FALLBACK
+    void (*sha3_block)(word64 *s) = SHA3_BLOCK;
+    void (*sha3_block_n)(word64 *s, const byte* data, word32 n,
+        word64 c) = SHA3_BLOCK_N;
 #endif
+
+    if (sha3_block == sha3_block_avx2) {
+        int ret = SAVE_VECTOR_REGISTERS2();
+        if (ret != 0) {
+#ifdef WC_C_DYNAMIC_FALLBACK
+            sha3_block = BlockSha3;
+            sha3_block_n = NULL;
+#else
+            return ret;
+#endif
+        }
+    }
+#endif /* USE_INTEL_SPEEDUP */
+
     if (sha3->i > 0) {
         byte *t;
         byte l = (byte)(p * 8 - sha3->i);
@@ -800,7 +862,7 @@ static int Sha3Update(wc_Sha3* sha3, const byte* data, word32 len, byte p)
         #endif
     #endif
         #ifdef SHA3_FUNC_PTR
-            (*SHA3_BLOCK)(sha3->s);
+            (*sha3_block)(sha3->s);
         #else
             BlockSha3(sha3->s);
         #endif
@@ -809,8 +871,8 @@ static int Sha3Update(wc_Sha3* sha3, const byte* data, word32 len, byte p)
     }
     blocks = len / (p * 8U);
     #ifdef SHA3_FUNC_PTR
-    if ((SHA3_BLOCK_N != NULL) && (blocks > 0)) {
-        (*SHA3_BLOCK_N)(sha3->s, data, blocks, p * 8U);
+    if ((sha3_block_n != NULL) && (blocks > 0)) {
+        (*sha3_block_n)(sha3->s, data, blocks, p * 8U);
         len -= blocks * (p * 8U);
         data += blocks * (p * 8U);
         blocks = 0;
@@ -836,7 +898,7 @@ static int Sha3Update(wc_Sha3* sha3, const byte* data, word32 len, byte p)
     #endif
 #endif
     #ifdef SHA3_FUNC_PTR
-        (*SHA3_BLOCK)(sha3->s);
+        (*sha3_block)(sha3->s);
     #else
         BlockSha3(sha3->s);
     #endif
@@ -848,8 +910,8 @@ static int Sha3Update(wc_Sha3* sha3, const byte* data, word32 len, byte p)
         return BAD_COND_E;
     }
 #endif
-#if defined(WOLFSSL_USE_SAVE_VECTOR_REGISTERS) && defined(USE_INTEL_SPEEDUP)
-    if (SHA3_BLOCK == sha3_block_avx2) {
+#ifdef USE_INTEL_SPEEDUP
+    if (sha3_block == sha3_block_avx2) {
         RESTORE_VECTOR_REGISTERS();
     }
 #endif
@@ -878,6 +940,9 @@ static int Sha3Final(wc_Sha3* sha3, byte padChar, byte* hash, byte p, word32 l)
 #endif
 #ifdef WC_SHA3_FAULT_HARDEN
     int check = 0;
+#endif
+#if defined(WC_C_DYNAMIC_FALLBACK) && defined(USE_INTEL_SPEEDUP)
+    void (*sha3_block)(word64 *s) = SHA3_BLOCK;
 #endif
 
 #if !defined(BIG_ENDIAN_ORDER) && !defined(WC_SHA3_FAULT_HARDEN)
@@ -914,14 +979,22 @@ static int Sha3Final(wc_Sha3* sha3, byte padChar, byte* hash, byte p, word32 l)
 #endif
 #endif
 
-#if defined(WOLFSSL_USE_SAVE_VECTOR_REGISTERS) && defined(USE_INTEL_SPEEDUP)
-    if (SHA3_BLOCK == sha3_block_avx2)
-        SAVE_VECTOR_REGISTERS(return _svr_ret;);
+#ifdef USE_INTEL_SPEEDUP
+    if (sha3_block == sha3_block_avx2) {
+        int ret = SAVE_VECTOR_REGISTERS2();
+        if (ret != 0) {
+#ifdef WC_C_DYNAMIC_FALLBACK
+            sha3_block = BlockSha3;
+#else
+            return ret;
+#endif
+        }
+    }
 #endif
 
     for (j = 0; l - j >= rate; j += rate) {
     #ifdef SHA3_FUNC_PTR
-        (*SHA3_BLOCK)(sha3->s);
+        (*sha3_block)(sha3->s);
     #else
         BlockSha3(sha3->s);
     #endif
@@ -933,7 +1006,7 @@ static int Sha3Final(wc_Sha3* sha3, byte padChar, byte* hash, byte p, word32 l)
     }
     if (j != l) {
     #ifdef SHA3_FUNC_PTR
-        (*SHA3_BLOCK)(sha3->s);
+        (*sha3_block)(sha3->s);
     #else
         BlockSha3(sha3->s);
     #endif
@@ -942,8 +1015,8 @@ static int Sha3Final(wc_Sha3* sha3, byte padChar, byte* hash, byte p, word32 l)
     #endif
         XMEMCPY(hash + j, sha3->s, l - j);
     }
-#if defined(WOLFSSL_USE_SAVE_VECTOR_REGISTERS) && defined(USE_INTEL_SPEEDUP)
-    if (SHA3_BLOCK == sha3_block_avx2) {
+#ifdef USE_INTEL_SPEEDUP
+    if (sha3_block == sha3_block_avx2) {
         RESTORE_VECTOR_REGISTERS();
     }
 #endif
@@ -1904,16 +1977,34 @@ int wc_Shake128_Absorb(wc_Shake* shake, const byte* data, word32 len)
  */
 int wc_Shake128_SqueezeBlocks(wc_Shake* shake, byte* out, word32 blockCnt)
 {
+#if defined(WC_C_DYNAMIC_FALLBACK) && defined(USE_INTEL_SPEEDUP)
+    void (*sha3_block)(word64 *s);
+#endif
+
     if ((shake == NULL) || (out == NULL && blockCnt != 0)) {
         return BAD_FUNC_ARG;
     }
-#if defined(WOLFSSL_USE_SAVE_VECTOR_REGISTERS) && defined(USE_INTEL_SPEEDUP)
-    if (SHA3_BLOCK == sha3_block_avx2)
-        SAVE_VECTOR_REGISTERS(return _svr_ret;);
+
+#ifdef USE_INTEL_SPEEDUP
+#ifdef WC_C_DYNAMIC_FALLBACK
+    sha3_block = SHA3_BLOCK;
 #endif
+
+    if (sha3_block == sha3_block_avx2) {
+        int ret = SAVE_VECTOR_REGISTERS2();
+        if (ret != 0) {
+#ifdef WC_C_DYNAMIC_FALLBACK
+            sha3_block = BlockSha3;
+#else
+            return ret;
+#endif
+        }
+    }
+#endif /* USE_INTEL_SPEEDUP */
+
     for (; (blockCnt > 0); blockCnt--) {
     #ifdef SHA3_FUNC_PTR
-        (*SHA3_BLOCK)(shake->s);
+        (*sha3_block)(shake->s);
     #else
         BlockSha3(shake->s);
     #endif
@@ -1924,8 +2015,9 @@ int wc_Shake128_SqueezeBlocks(wc_Shake* shake, byte* out, word32 blockCnt)
     #endif
         out += WC_SHA3_128_COUNT * 8;
     }
-#if defined(WOLFSSL_USE_SAVE_VECTOR_REGISTERS) && defined(USE_INTEL_SPEEDUP)
-    if (SHA3_BLOCK == sha3_block_avx2)
+
+#ifdef USE_INTEL_SPEEDUP
+    if (sha3_block == sha3_block_avx2)
         RESTORE_VECTOR_REGISTERS();
 #endif
 
@@ -2145,16 +2237,34 @@ int wc_Shake256_Absorb(wc_Shake* shake, const byte* data, word32 len)
  */
 int wc_Shake256_SqueezeBlocks(wc_Shake* shake, byte* out, word32 blockCnt)
 {
+#if defined(WC_C_DYNAMIC_FALLBACK) && defined(USE_INTEL_SPEEDUP)
+    void (*sha3_block)(word64 *s);
+#endif
+
     if ((shake == NULL) || (out == NULL && blockCnt != 0)) {
         return BAD_FUNC_ARG;
     }
-#if defined(WOLFSSL_USE_SAVE_VECTOR_REGISTERS) && defined(USE_INTEL_SPEEDUP)
-    if (SHA3_BLOCK == sha3_block_avx2)
-        SAVE_VECTOR_REGISTERS(return _svr_ret;);
+
+#ifdef USE_INTEL_SPEEDUP
+#ifdef WC_C_DYNAMIC_FALLBACK
+    sha3_block = SHA3_BLOCK;
 #endif
+
+    if (sha3_block == sha3_block_avx2) {
+        int ret = SAVE_VECTOR_REGISTERS2();
+        if (ret != 0) {
+#ifdef WC_C_DYNAMIC_FALLBACK
+            sha3_block = BlockSha3;
+#else
+            return ret;
+#endif
+        }
+    }
+#endif /* USE_INTEL_SPEEDUP */
+
     for (; (blockCnt > 0); blockCnt--) {
     #ifdef SHA3_FUNC_PTR
-        (*SHA3_BLOCK)(shake->s);
+        (*sha3_block)(shake->s);
     #else
         BlockSha3(shake->s);
     #endif
@@ -2165,8 +2275,9 @@ int wc_Shake256_SqueezeBlocks(wc_Shake* shake, byte* out, word32 blockCnt)
     #endif
         out += WC_SHA3_256_COUNT * 8;
     }
-#if defined(WOLFSSL_USE_SAVE_VECTOR_REGISTERS) && defined(USE_INTEL_SPEEDUP)
-    if (SHA3_BLOCK == sha3_block_avx2)
+
+#ifdef USE_INTEL_SPEEDUP
+    if (sha3_block == sha3_block_avx2)
         RESTORE_VECTOR_REGISTERS();
 #endif
 

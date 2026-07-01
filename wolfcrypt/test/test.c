@@ -1127,7 +1127,7 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t aes_cts_test(void);
         do { \
             ret = (err); \
             ESP_LOGE(ESPIDF_TAG, "Failed: Error = %d during %s, line %d", \
-                                    err, __FUNCTION__, __LINE__); \
+                                    err, __func__, __LINE__); \
             ESP_LOGI(ESPIDF_TAG, "Extended system info:"); \
             esp_ShowExtendedSystemInfo(); \
             ESP_LOGW(ESPIDF_TAG, "Paused for %d seconds! " \
@@ -4130,12 +4130,18 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t base64_test(void)
     static const byte goodChar[] =
         "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
         "abcdefghijklmnopqrstuvwxyz"
-        "0123456789+/;";
+        "0123456789+/";
     static const byte charTest[] = "A+Gd\0\0\0";
     static const byte oneByteTest[] = "YQ==";
     static const byte twoByteTest[] = "YWE=";
     static const byte threeByteTest[] = "YWFh";
     static const byte fourByteTest[] = "YWFhYQ==";
+    static const byte trailingLFTest[] = "YWFhYQ==\n\n";
+    static const byte trailingSpaceTest[] = "YWFhYQ==  ";
+    static const byte trailingCodesTest1[] = "YWFhY";
+    static const byte trailingCodesTest2[] = "YWFhYW";
+    static const byte trailingCodesTest3[] = "YWFhYWF";
+    static const byte trailingJunkTest[] = "YWFhYQ==X";
     static const byte byteTestOutput[] = "aaaa";
     int        i;
     WOLFSSL_ENTER("base64_test");
@@ -4255,6 +4261,26 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t base64_test(void)
     N_BYTE_TEST(Base64_Decode, 3, threeByteTest);
     N_BYTE_TEST(Base64_Decode, 4, fourByteTest);
 
+#define N_BYTE_TRAILING_TEST(f, n, t, e) do {                   \
+    outLen = (n);                                               \
+    ret = (f)(t, sizeof(t), out, &outLen);                      \
+    if (ret != (e))                                             \
+        return WC_TEST_RET_ENC_EC(ret);                         \
+    else if (ret == 0) {                                        \
+        if (outLen != (n))                                      \
+            return WC_TEST_RET_ENC_I(outLen);                   \
+        if (XMEMCMP(out, byteTestOutput, n) != 0)               \
+            return WC_TEST_RET_ENC_NC;                          \
+    }                                                           \
+    } while (0)
+
+    N_BYTE_TRAILING_TEST(Base64_Decode, 4, trailingLFTest, 0);
+    N_BYTE_TRAILING_TEST(Base64_Decode, 4, trailingSpaceTest, 0);
+    N_BYTE_TRAILING_TEST(Base64_Decode, 4, trailingCodesTest1, WC_NO_ERR_TRACE(ASN_INPUT_E));
+    N_BYTE_TRAILING_TEST(Base64_Decode, 4, trailingCodesTest2, WC_NO_ERR_TRACE(ASN_INPUT_E));
+    N_BYTE_TRAILING_TEST(Base64_Decode, 4, trailingCodesTest3, WC_NO_ERR_TRACE(ASN_INPUT_E));
+    N_BYTE_TRAILING_TEST(Base64_Decode, 4, trailingJunkTest, WC_NO_ERR_TRACE(ASN_INPUT_E));
+
     /* Same tests again, using Base64_Decode_nonCT() */
 
     /* Good Base64 encodings. */
@@ -4334,6 +4360,13 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t base64_test(void)
     N_BYTE_TEST(Base64_Decode_nonCT, 2, twoByteTest);
     N_BYTE_TEST(Base64_Decode_nonCT, 3, threeByteTest);
     N_BYTE_TEST(Base64_Decode_nonCT, 4, fourByteTest);
+
+    N_BYTE_TRAILING_TEST(Base64_Decode_nonCT, 4, trailingLFTest, 0);
+    N_BYTE_TRAILING_TEST(Base64_Decode_nonCT, 4, trailingSpaceTest, 0);
+    N_BYTE_TRAILING_TEST(Base64_Decode_nonCT, 4, trailingCodesTest1, WC_NO_ERR_TRACE(ASN_INPUT_E));
+    N_BYTE_TRAILING_TEST(Base64_Decode_nonCT, 4, trailingCodesTest2, WC_NO_ERR_TRACE(ASN_INPUT_E));
+    N_BYTE_TRAILING_TEST(Base64_Decode_nonCT, 4, trailingCodesTest3, WC_NO_ERR_TRACE(ASN_INPUT_E));
+    N_BYTE_TRAILING_TEST(Base64_Decode_nonCT, 4, trailingJunkTest, WC_NO_ERR_TRACE(ASN_INPUT_E));
 
 #ifdef WOLFSSL_BASE64_ENCODE
     /* Decode and encode all symbols - non-alphanumeric. */
@@ -19580,8 +19613,23 @@ static wc_test_ret_t aesgcm_non12iv_test(Aes* enc, Aes* dec)
         ERROR_OUT(WC_TEST_RET_ENC_NC, out);
 #endif /* HAVE_AES_DECRYPT */
 
-    for (tlen = WOLFSSL_MIN_AUTH_TAG_SZ; tlen < 16; tlen++) {
+    for (tlen = WOLFSSL_MIN_AUTH_TAG_SZ; tlen <= WC_AES_BLOCK_SIZE; tlen++) {
         int ii;
+
+#ifndef WC_AES_GCM_ALLOW_NONSTANDARD_TAG_LENGTH
+        switch (tlen) {
+        case 4:
+        case 8:
+        case 12:
+        case 13:
+        case 14:
+        case 15:
+        case 16:
+            break;
+        default:
+            continue;
+        }
+#endif
 
         XMEMSET(resultT, 0, sizeof(resultT));
         wc_AesGcmSetKey(enc, k3, (word32)k3Sz);
@@ -57775,7 +57823,7 @@ static wc_test_ret_t slhdsa_keygen_kat(enum SlhDsaParam param,
         DYNAMIC_TYPE_TMP_BUFFER, return WC_TEST_RET_ENC_EC(MEMORY_E));
     XMEMSET(key, 0, sizeof(*key));
 
-    ret = wc_SlhDsaKey_Init(key, param, NULL, INVALID_DEVID);
+    ret = wc_SlhDsaKey_Init(key, param, NULL, devId);
     if (ret != 0) {
         ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
     }
@@ -58058,30 +58106,30 @@ static wc_test_ret_t slhdsa_id_label_test(void)
 
     /* NULL key rejected. */
     ret = wc_SlhDsaKey_Init_id(NULL, param, id, (int)sizeof(id), HEAP_HINT,
-        INVALID_DEVID);
+        devId);
     if (ret != WC_NO_ERR_TRACE(BAD_FUNC_ARG))
         return WC_TEST_RET_ENC_EC(ret);
 
     /* (id == NULL, len > 0) is the silent-contradiction case the original
      * review flagged; must be rejected. */
-    ret = wc_SlhDsaKey_Init_id(&key, param, NULL, 8, HEAP_HINT, INVALID_DEVID);
+    ret = wc_SlhDsaKey_Init_id(&key, param, NULL, 8, HEAP_HINT, devId);
     if (ret != WC_NO_ERR_TRACE(BAD_FUNC_ARG))
         return WC_TEST_RET_ENC_EC(ret);
 
     /* Length over the cap rejected with BUFFER_E. */
     ret = wc_SlhDsaKey_Init_id(&key, param, id, SLHDSA_MAX_ID_LEN + 1,
-        HEAP_HINT, INVALID_DEVID);
+        HEAP_HINT, devId);
     if (ret != WC_NO_ERR_TRACE(BUFFER_E))
         return WC_TEST_RET_ENC_EC(ret);
 
     /* Negative length rejected. */
-    ret = wc_SlhDsaKey_Init_id(&key, param, id, -1, HEAP_HINT, INVALID_DEVID);
+    ret = wc_SlhDsaKey_Init_id(&key, param, id, -1, HEAP_HINT, devId);
     if (ret != WC_NO_ERR_TRACE(BUFFER_E))
         return WC_TEST_RET_ENC_EC(ret);
 
     /* Successful init copies the id and stores its length. */
     ret = wc_SlhDsaKey_Init_id(&key, param, id, (int)sizeof(id), HEAP_HINT,
-        INVALID_DEVID);
+        devId);
     if (ret != 0)
         return WC_TEST_RET_ENC_EC(ret);
     if (key.idLen != (int)sizeof(id))
@@ -58094,7 +58142,7 @@ static wc_test_ret_t slhdsa_id_label_test(void)
     XMEMSET(&key, 0, sizeof(key));
 
     /* (id != NULL, len == 0) is accepted as a no-op. */
-    ret = wc_SlhDsaKey_Init_id(&key, param, id, 0, HEAP_HINT, INVALID_DEVID);
+    ret = wc_SlhDsaKey_Init_id(&key, param, id, 0, HEAP_HINT, devId);
     if (ret != 0)
         return WC_TEST_RET_ENC_EC(ret);
     if (key.idLen != 0)
@@ -58112,7 +58160,7 @@ static wc_test_ret_t slhdsa_id_label_test(void)
         for (i = 0; i < SLHDSA_MAX_ID_LEN; i++)
             id_max[i] = (unsigned char)(0x40 + i);
         ret = wc_SlhDsaKey_Init_id(&key, param, id_max, SLHDSA_MAX_ID_LEN,
-            HEAP_HINT, INVALID_DEVID);
+            HEAP_HINT, devId);
         if (ret != 0)
             return WC_TEST_RET_ENC_EC(ret);
         if (key.idLen != SLHDSA_MAX_ID_LEN)
@@ -58128,22 +58176,22 @@ static wc_test_ret_t slhdsa_id_label_test(void)
 
     /* Init_label: NULL label / NULL key rejected. */
     ret = wc_SlhDsaKey_Init_label(NULL, param, label, HEAP_HINT,
-        INVALID_DEVID);
+        devId);
     if (ret != WC_NO_ERR_TRACE(BAD_FUNC_ARG))
         return WC_TEST_RET_ENC_EC(ret);
     ret = wc_SlhDsaKey_Init_label(&key, param, NULL, HEAP_HINT,
-        INVALID_DEVID);
+        devId);
     if (ret != WC_NO_ERR_TRACE(BAD_FUNC_ARG))
         return WC_TEST_RET_ENC_EC(ret);
 
     /* Empty label is rejected. */
-    ret = wc_SlhDsaKey_Init_label(&key, param, "", HEAP_HINT, INVALID_DEVID);
+    ret = wc_SlhDsaKey_Init_label(&key, param, "", HEAP_HINT, devId);
     if (ret != WC_NO_ERR_TRACE(BUFFER_E))
         return WC_TEST_RET_ENC_EC(ret);
 
     /* Successful init copies the label and stores its length. */
     ret = wc_SlhDsaKey_Init_label(&key, param, label, HEAP_HINT,
-        INVALID_DEVID);
+        devId);
     if (ret != 0)
         return WC_TEST_RET_ENC_EC(ret);
     if (key.labelLen != (int)XSTRLEN(label))
@@ -58167,7 +58215,7 @@ static wc_test_ret_t slhdsa_id_label_test(void)
             label_max[i] = 'L';
         label_max[SLHDSA_MAX_LABEL_LEN] = '\0';
         ret = wc_SlhDsaKey_Init_label(&key, param, label_max, HEAP_HINT,
-            INVALID_DEVID);
+            devId);
         if (ret != 0)
             return WC_TEST_RET_ENC_EC(ret);
         if (key.labelLen != SLHDSA_MAX_LABEL_LEN)
@@ -59234,7 +59282,7 @@ wc_test_ret_t slhdsa_test(void)
 #endif
 
 #ifndef WOLFSSL_SLHDSA_VERIFY_ONLY
-    ret = wc_SlhDsaKey_Init(key, SLHDSA_SHAKE128S, NULL, INVALID_DEVID);
+    ret = wc_SlhDsaKey_Init(key, SLHDSA_SHAKE128S, NULL, devId);
     if (ret != 0) {
         ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
     }
@@ -74914,11 +74962,16 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t cryptocb_test(void)
          *
          * Only enforce when slhdsa_test() actually runs a cb-routed op:
          * !VERIFY_ONLY runs slhdsa_test_param (uses devId), or
-         * PARAM_128S enables the in-tree KAT verify (also uses devId). */
+         * PARAM_128S enables the in-tree KAT verify (also uses devId).
+         *
+         * The FIPS wrappers force the devId to FIPS_INVALID_DEVID, so we skip
+         * the check for FIPS.
+         */
         int baseline = myCtx.exampleVar;
         ret = slhdsa_test();
-    #if !defined(WOLFSSL_SLHDSA_VERIFY_ONLY) || \
-        defined(WOLFSSL_SLHDSA_PARAM_128S)
+    #if (!defined(WOLFSSL_SLHDSA_VERIFY_ONLY) || \
+         defined(WOLFSSL_SLHDSA_PARAM_128S)) && \
+        !defined(HAVE_FIPS)
         if ((ret == 0) && (myCtx.exampleVar == baseline))
             ret = WC_TEST_RET_ENC_NC;
     #endif
