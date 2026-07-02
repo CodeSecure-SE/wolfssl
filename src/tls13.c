@@ -4888,10 +4888,12 @@ int SendTls13ClientHello(WOLFSSL* ssl)
 #endif /* WOLFSSL_DTLS13 */
 
 #ifdef WOLFSSL_DTLS_CH_FRAG
+        /* Only empty the key share on the first CH; this avoids first CH
+         * fragmentation (wolfSSL refuses them) */
         if (ssl->options.dtls && args->sendSz > maxFrag &&
-                TLSX_Find(ssl->extensions, TLSX_COOKIE) == NULL) {
-            /* Try again with an empty key share if we would be fragmenting
-             * without a cookie */
+                ssl->options.serverState !=
+                    SERVER_HELLO_RETRY_REQUEST_COMPLETE) {
+            /* Try again with an empty key share if we would be fragmenting */
             ret = TLSX_KeyShare_Empty(ssl);
             if (ret != 0)
                 return ret;
@@ -10802,8 +10804,9 @@ static int DoTls13Certificate(WOLFSSL* ssl, byte* input, word32* inOutIdx,
 }
 #endif
 
-#if !defined(NO_RSA) || defined(HAVE_ECC) || defined(HAVE_ED25519) || \
-                                                             defined(HAVE_ED448)
+#if (!defined(NO_RSA) || defined(HAVE_ECC) || defined(HAVE_ED25519) || \
+     defined(HAVE_ED448) || defined(HAVE_FALCON) || \
+     defined(WOLFSSL_HAVE_MLDSA)) && !defined(NO_CERTS)
 
 typedef struct Dcv13Args {
     byte*  output; /* not allocated */
@@ -13844,8 +13847,9 @@ int DoTls13HandShakeMsgType(WOLFSSL* ssl, byte* input, word32* inOutIdx,
         break;
 #endif
 
-#if !defined(NO_RSA) || defined(HAVE_ECC) || defined(HAVE_ED25519) || \
-    defined(HAVE_ED448) || defined(HAVE_FALCON) || defined(WOLFSSL_HAVE_MLDSA)
+#if (!defined(NO_RSA) || defined(HAVE_ECC) || defined(HAVE_ED25519) || \
+     defined(HAVE_ED448) || defined(HAVE_FALCON) || \
+     defined(WOLFSSL_HAVE_MLDSA)) && !defined(NO_CERTS)
     case certificate_verify:
         WOLFSSL_MSG("processing certificate verify");
         ret = DoTls13CertificateVerify(ssl, input, inOutIdx, size);

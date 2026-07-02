@@ -3424,9 +3424,9 @@ static int test_wolfSSL_CheckOCSPResponse(void)
         byte serial[] = {0x02};
 
         byte issuerHash[] = {
-            0x44, 0xA8, 0xDB, 0xD1, 0xBC, 0x97, 0x0A, 0x83,
-            0x3B, 0x5B, 0x31, 0x9A, 0x4C, 0xB8, 0xD2, 0x52,
-            0x37, 0x15, 0x8A, 0x88
+            0x7A, 0x34, 0xEC, 0xB3, 0x2B, 0x4F, 0x1B, 0xA2,
+            0x72, 0x22, 0x92, 0xA8, 0x4C, 0xC0, 0x12, 0xC7,
+            0x7A, 0x56, 0x9E, 0x20
         };
         byte issuerKeyHash[] = {
             0x73, 0xB0, 0x1C, 0xA4, 0x2F, 0x82, 0xCB, 0xCF,
@@ -12610,12 +12610,7 @@ static int test_wolfSSL_tmp_dh(void)
 #endif
     static const unsigned char g[] = { 0x02 };
     int gSz = (int)sizeof(g);
-#if !defined(NO_DSA)
-    char file[] = "./certs/dsaparams.pem";
-    DSA* dsa = NULL;
-#else
     char file[] = "./certs/dh2048.pem";
-#endif
     XFILE f = XBADFILE;
     int  bytes = 0;
     DH*  dh = NULL;
@@ -12657,14 +12652,7 @@ static int test_wolfSSL_tmp_dh(void)
 
     ExpectNotNull(bio = BIO_new_mem_buf((void*)buff, bytes));
 
-#if !defined(NO_DSA)
-    dsa = wolfSSL_PEM_read_bio_DSAparams(bio, NULL, NULL, NULL);
-    ExpectNotNull(dsa);
-
-    dh = wolfSSL_DSA_dup_DH(dsa);
-#else
     dh = wolfSSL_PEM_read_bio_DHparams(bio, NULL, NULL, NULL);
-#endif
     ExpectNotNull(dh);
 #if defined(WOLFSSL_DH_EXTRA) && \
     (defined(WOLFSSL_QT) || defined(OPENSSL_ALL) || defined(WOLFSSL_OPENSSH))
@@ -12750,9 +12738,6 @@ static int test_wolfSSL_tmp_dh(void)
 #endif
 
     BIO_free(bio);
-#if !defined(NO_DSA)
-    DSA_free(dsa);
-#endif
     DH_free(dh);
     dh = NULL;
 #ifndef NO_WOLFSSL_CLIENT
@@ -15260,18 +15245,26 @@ static int ech_seek_extensions(byte* buf, word16* innerExtLen)
     word16 cipherSuitesLen;
     byte compressionLen;
 
+    *innerExtLen = 0;
+
     idx = OPAQUE16_LEN + RAN_LEN;
 
     sessionIdLen = buf[idx++];
     idx += sessionIdLen;
 
     ato16(buf + idx, &cipherSuitesLen);
+    if (cipherSuitesLen > MAX_RECORD_SIZE) {
+        return BAD_FUNC_ARG;
+    }
     idx += OPAQUE16_LEN + cipherSuitesLen;
 
     compressionLen = buf[idx++];
     idx += compressionLen;
 
     ato16(buf + idx, innerExtLen);
+    if (*innerExtLen > MAX_RECORD_SIZE) {
+        return BAD_FUNC_ARG;
+    }
     idx += OPAQUE16_LEN;
 
     return idx;
@@ -15282,8 +15275,13 @@ static int ech_find_extension(byte* buf, word16* idx_p, word16 extType)
     word16 idx;
     word16 innerExtIdx;
     word16 innerExtLen;
+    int    seekRet;
 
-    innerExtIdx = ech_seek_extensions(buf + *idx_p, &innerExtLen) + *idx_p;
+    seekRet = ech_seek_extensions(buf + *idx_p, &innerExtLen);
+    if (seekRet < 0) {
+        return BAD_FUNC_ARG;
+    }
+    innerExtIdx = (word16)seekRet + *idx_p;
     idx = innerExtIdx;
 
     while (idx - innerExtIdx < innerExtLen) {
@@ -15298,6 +15296,10 @@ static int ech_find_extension(byte* buf, word16* idx_p, word16 extType)
 
         idx += OPAQUE16_LEN;
         ato16(buf + idx, &len);
+        if (len > MAX_RECORD_SIZE ||
+            (word16)(idx + OPAQUE16_LEN + len) < idx) {
+            break;
+        }
         idx += OPAQUE16_LEN + len;
     }
 
@@ -15706,20 +15708,23 @@ static int ech_tamper_padding(byte* innerCh, word32 innerChLen)
 {
     word16 idx;
     word16 innerExtLen;
+    int    seekRet;
 
     /* get the unpadded length */
-    idx = ech_seek_extensions(innerCh, &innerExtLen);
+    seekRet = ech_seek_extensions(innerCh, &innerExtLen);
+    if (seekRet < 0) {
+        return BAD_FUNC_ARG;
+    }
+    idx = (word16)seekRet;
     idx += innerExtLen;
 
     /* no padding, but the test would fail if the message is not incorrect...
      * so fail the callback */
-    if (idx == innerChLen) {
+    if (idx >= innerChLen) {
         return BAD_FUNC_ARG;
     }
-    else {
-        innerCh[idx] = '\x01';
-        return 0;
-    }
+    innerCh[idx] = '\x01';
+    return 0;
 }
 
 static int ech_tamper_type(byte* innerCh, word32 innerChLen)
@@ -19233,8 +19238,8 @@ static int test_wolfSSL_GENERAL_NAME_print(void)
                             {0x20, 0x21, 0x0d, 0xb8, 0x00, 0x00, 0x00, 0x00,
                              0x00, 0x00, 0xff, 0x00, 0x00, 0x42, 0x77, 0x77};
     const unsigned char email[]  =
-                             {'i', 'n', 'f', 'o', '@', 'w', 'o', 'l',
-                              'f', 's', 's', 'l', '.', 'c', 'o', 'm'};
+                             {'f', 'a', 'c', 't', 's', '@', 'w', 'o',
+                              'l', 'f', 's', 's', 'l', '.', 'c', 'o', 'm'};
     const unsigned char ridData[] = { 0x06, 0x04, 0x2a, 0x03, 0x04, 0x05 };
     const unsigned char* p;
     unsigned long len;
@@ -19243,7 +19248,7 @@ static int test_wolfSSL_GENERAL_NAME_print(void)
     const char* uriStr     = "URI:http://127.0.0.1:22220";
     const char* v4addStr   = "IP Address:192.168.53.1";
     const char* v6addStr   = "IP Address:2021:DB8:0:0:0:FF00:42:7777";
-    const char* emailStr   = "email:info@wolfssl.com";
+    const char* emailStr   = "email:facts@wolfssl.com";
     const char* othrStr    = "othername:<unsupported>";
     const char* x400Str    = "X400Name:<unsupported>";
     const char* ediStr     = "EdiPartyName:<unsupported>";
@@ -20525,13 +20530,12 @@ static int test_wolfSSL_CTX_ctrl(void)
     char clientFile[] = "./certs/client-cert.pem";
     SSL_CTX* ctx = NULL;
     X509* x509 = NULL;
-#if !defined(NO_DH) && !defined(NO_DSA) && !defined(NO_BIO)
+#if !defined(NO_DH) && !defined(NO_BIO)
     byte buf[6000];
-    char file[] = "./certs/dsaparams.pem";
+    char file[] = "./certs/dh2048.pem";
     XFILE f = XBADFILE;
     int  bytes = 0;
     BIO* bio = NULL;
-    DSA* dsa = NULL;
     DH*  dh = NULL;
 #endif
 #ifdef HAVE_ECC
@@ -20550,7 +20554,7 @@ static int test_wolfSSL_CTX_ctrl(void)
     ExpectNotNull(x509 = wolfSSL_X509_load_certificate_file(clientFile,
          WOLFSSL_FILETYPE_PEM));
 
-#if !defined(NO_DH) && !defined(NO_DSA) && !defined(NO_BIO)
+#if !defined(NO_DH) && !defined(NO_BIO)
     /* Initialize DH */
     ExpectTrue((f = XFOPEN(file, "rb")) != XBADFILE);
     ExpectIntGT(bytes = (int)XFREAD(buf, 1, sizeof(buf), f), 0);
@@ -20559,9 +20563,7 @@ static int test_wolfSSL_CTX_ctrl(void)
 
     ExpectNotNull(bio = BIO_new_mem_buf((void*)buf, bytes));
 
-    ExpectNotNull(dsa = wolfSSL_PEM_read_bio_DSAparams(bio, NULL, NULL, NULL));
-
-    ExpectNotNull(dh = wolfSSL_DSA_dup_DH(dsa));
+    ExpectNotNull(dh = wolfSSL_PEM_read_bio_DHparams(bio, NULL, NULL, NULL));
 #endif
 #ifdef HAVE_ECC
     /* Initialize WOLFSSL_EC_KEY */
@@ -20606,7 +20608,7 @@ static int test_wolfSSL_CTX_ctrl(void)
     /* Tests should fail with passed in NULL pointer */
     ExpectIntEQ((int)wolfSSL_CTX_ctrl(ctx, SSL_CTRL_EXTRA_CHAIN_CERT, 0, NULL),
         WC_NO_ERR_TRACE(WOLFSSL_FAILURE));
-#if !defined(NO_DH) && !defined(NO_DSA)
+#if !defined(NO_DH)
     ExpectIntEQ((int)wolfSSL_CTX_ctrl(ctx, SSL_CTRL_SET_TMP_DH, 0, NULL),
         WC_NO_ERR_TRACE(WOLFSSL_FAILURE));
 #endif
@@ -20634,7 +20636,7 @@ static int test_wolfSSL_CTX_ctrl(void)
     /* Test with SSL_CTRL_SET_TMP_DH
      * wolfSSL_CTX_ctrl should succesffuly call wolfSSL_SSL_CTX_set_tmp_dh
      */
-#if !defined(NO_DH) && !defined(NO_DSA) && !defined(NO_BIO)
+#if !defined(NO_DH) && !defined(NO_BIO)
     ExpectIntEQ((int)wolfSSL_CTX_ctrl(ctx, SSL_CTRL_SET_TMP_DH, 0, dh),
         SSL_SUCCESS);
 #endif
@@ -20674,13 +20676,10 @@ static int test_wolfSSL_CTX_ctrl(void)
 #endif
 #endif
     /* Cleanup and Pass */
-#if !defined(NO_DH) && !defined(NO_DSA)
-#ifndef NO_BIO
+#if !defined(NO_DH) && !defined(NO_BIO)
     BIO_free(bio);
-    DSA_free(dsa);
     DH_free(dh);
     dh = NULL;
-#endif
 #endif
 #ifdef HAVE_ECC
     wolfSSL_EC_KEY_free(ecKey);
@@ -23208,6 +23207,47 @@ static word32 build_simple_nameConstraints(byte* out, word32 outSz,
     XMEMCPY(out + 8, val, vlen);
     return n1 + 2;
 }
+
+/* Build a NameConstraints extension value with a single subtree ([0]
+ * permitted or [1] excluded) whose GeneralSubtree carries a base GeneralName
+ * of context tag `gnTag` plus optional minimum ([0]) and maximum ([1])
+ * BaseDistance fields. Used to confirm that a non-zero minimum or any
+ * maximum is rejected (RFC 5280 4.2.1.10 requires minimum 0, maximum absent
+ * within this profile). */
+static word32 build_minmax_nameConstraints(byte* out, word32 outSz,
+    int excluded, byte gnTag, const char* val, int minPresent, byte minVal,
+    int maxPresent, byte maxVal)
+{
+    word32 vlen = (word32)XSTRLEN(val);
+    word32 extra = (word32)((minPresent ? 3 : 0) + (maxPresent ? 3 : 0));
+    word32 n3 = vlen + 2 + extra; /* GeneralSubtree content: base GN + min/max */
+    word32 n2 = n3 + 2;           /* subtrees list content: one GeneralSubtree */
+    word32 n1 = n2 + 2;           /* SEQUENCE content: the subtrees list */
+    word32 idx;
+    if (vlen > 0x7F || n3 > 0x7F || outSz < n1 + 2)
+        return 0;
+    out[0] = 0x30;                              /* SEQUENCE */
+    out[1] = (byte)n1;
+    out[2] = excluded ? 0xA1 : 0xA0;            /* [1] excluded / [0] permitted */
+    out[3] = (byte)n2;
+    out[4] = 0x30;                              /* GeneralSubtree */
+    out[5] = (byte)n3;
+    out[6] = gnTag;                             /* base GeneralName */
+    out[7] = (byte)vlen;
+    XMEMCPY(out + 8, val, vlen);
+    idx = 8 + vlen;
+    if (minPresent) {
+        out[idx++] = 0x80;                      /* [0] minimum BaseDistance */
+        out[idx++] = 0x01;
+        out[idx++] = minVal;
+    }
+    if (maxPresent) {
+        out[idx++] = 0x81;                      /* [1] maximum BaseDistance */
+        out[idx++] = 0x01;
+        out[idx++] = maxVal;
+    }
+    return n1 + 2;
+}
 #endif
 
 /* End-to-end enforcement of DNS and URI nameConstraints against wildcard and
@@ -23325,6 +23365,100 @@ static int test_NameConstraints_DnsUriWildcard(void)
     sanSz = build_simple_san(san, sizeof(san), URI, "https://www.host.com/");
     ExpectIntGT((int)sanSz, 0);
     ExpectIntEQ(verify_with_otherName_chain(nc, ncSz, 1, san, sanSz), 0);
+
+    /* (11) RFC 5280 requires a DNS host when URI constraints are applied.
+     *      Fail closed even for excluded-only constraints where a boolean
+     *      non-match would otherwise pass. */
+    ncSz  = build_simple_nameConstraints(nc, sizeof(nc), 1, URI,
+                "blocked.com");
+    sanSz = build_simple_san(san, sizeof(san), URI, "https://12.31.2.3/");
+    ExpectIntGT((int)ncSz, 0);
+    ExpectIntGT((int)sanSz, 0);
+    ExpectIntEQ(verify_with_otherName_chain(nc, ncSz, 1, san, sanSz),
+        WC_NO_ERR_TRACE(ASN_NAME_INVALID_E));
+
+    sanSz = build_simple_san(san, sizeof(san), URI, "https://[v1.addr.]/");
+    ExpectIntGT((int)sanSz, 0);
+    ExpectIntEQ(verify_with_otherName_chain(nc, ncSz, 1, san, sanSz),
+        WC_NO_ERR_TRACE(ASN_NAME_INVALID_E));
+
+    /* An IPv4address host with the absolute-FQDN trailing dot is still not
+     * a DNS host. */
+    sanSz = build_simple_san(san, sizeof(san), URI, "https://12.31.2.3./");
+    ExpectIntGT((int)sanSz, 0);
+    ExpectIntEQ(verify_with_otherName_chain(nc, ncSz, 1, san, sanSz),
+        WC_NO_ERR_TRACE(ASN_NAME_INVALID_E));
+
+    /* (12) One trailing dot on the constraint base is the absolute-FQDN
+     *      marker: DNS:example.com. denotes the same subtree as
+     *      DNS:example.com, so the permitted form accepts the bare SAN and
+     *      the excluded form rejects it. */
+    ncSz  = build_simple_nameConstraints(nc, sizeof(nc), 0, DNS,
+                "example.com.");
+    sanSz = build_simple_san(san, sizeof(san), DNS, "example.com");
+    ExpectIntGT((int)ncSz, 0);
+    ExpectIntGT((int)sanSz, 0);
+    ExpectIntEQ(verify_with_otherName_chain(nc, ncSz, 1, san, sanSz), 0);
+
+    ncSz  = build_simple_nameConstraints(nc, sizeof(nc), 1, DNS,
+                "example.com.");
+    ExpectIntGT((int)ncSz, 0);
+    ExpectIntEQ(verify_with_otherName_chain(nc, ncSz, 1, san, sanSz),
+        WC_NO_ERR_TRACE(ASN_NAME_INVALID_E));
+#endif
+    return EXPECT_RESULT();
+}
+
+/* A GeneralSubtree's minimum/maximum BaseDistance fields were parsed but
+ * never stored or checked, so a subtree carrying a non-zero minimum or any
+ * maximum was silently accepted and then enforced as if it were minimum 0 /
+ * maximum absent. RFC 5280 4.2.1.10 requires minimum 0 and maximum absent
+ * within this profile, so such a constraint must be rejected. The bad
+ * constraint rides on the issuing CA, so a rejection surfaces as a failure
+ * to build the chain rather than a specific leaf error code. */
+static int test_NameConstraints_SubtreeMinMax(void)
+{
+    EXPECT_DECLS;
+#if defined(WOLFSSL_ASN_TEMPLATE) && \
+    defined(WOLFSSL_CERT_REQ) && !defined(NO_ASN_TIME) && \
+    defined(WOLFSSL_CERT_GEN) && defined(HAVE_ECC) && \
+    defined(WOLFSSL_CERT_EXT) && !defined(NO_CERTS) && \
+    defined(WOLFSSL_ALT_NAMES) && defined(WOLFSSL_CUSTOM_OID) && \
+    defined(HAVE_OID_ENCODING) && !defined(IGNORE_NAME_CONSTRAINTS)
+    byte nc[64];
+    word32 ncSz;
+    const byte DNS = 0x82;  /* [2] dnsName */
+
+    /* (1) Control: minimum and maximum both absent -> conformant, accepts. */
+    ncSz = build_minmax_nameConstraints(nc, sizeof(nc), 1, DNS, "example.com",
+                0, 0, 0, 0);
+    ExpectIntGT((int)ncSz, 0);
+    ExpectIntEQ(verify_with_otherName_chain(nc, ncSz, 1, NULL, 0), 0);
+
+    /* (2) Control: explicit minimum == 0 is conformant -> accepts. Pins the
+     *     rejection below to a non-zero minimum, not to any minimum field. */
+    ncSz = build_minmax_nameConstraints(nc, sizeof(nc), 1, DNS, "example.com",
+                1, 0, 0, 0);
+    ExpectIntGT((int)ncSz, 0);
+    ExpectIntEQ(verify_with_otherName_chain(nc, ncSz, 1, NULL, 0), 0);
+
+    /* (3) minimum == 1 must be rejected. */
+    ncSz = build_minmax_nameConstraints(nc, sizeof(nc), 1, DNS, "example.com",
+                1, 1, 0, 0);
+    ExpectIntGT((int)ncSz, 0);
+    ExpectIntNE(verify_with_otherName_chain(nc, ncSz, 1, NULL, 0), 0);
+
+    /* (4) maximum present (== 0) must be rejected. */
+    ncSz = build_minmax_nameConstraints(nc, sizeof(nc), 1, DNS, "example.com",
+                0, 0, 1, 0);
+    ExpectIntGT((int)ncSz, 0);
+    ExpectIntNE(verify_with_otherName_chain(nc, ncSz, 1, NULL, 0), 0);
+
+    /* (5) maximum present (== 5) must be rejected. */
+    ncSz = build_minmax_nameConstraints(nc, sizeof(nc), 0, DNS, "example.com",
+                0, 0, 1, 5);
+    ExpectIntGT((int)ncSz, 0);
+    ExpectIntNE(verify_with_otherName_chain(nc, ncSz, 1, NULL, 0), 0);
 #endif
     return EXPECT_RESULT();
 }
@@ -23827,9 +23961,9 @@ static int test_sk_X509_CRL_decode(void)
     ExpectIntEQ(wolfSSL_X509_CRL_print(bio, &empty), WOLFSSL_FAILURE);
     ExpectIntEQ(wolfSSL_X509_CRL_print(bio, crl), WOLFSSL_SUCCESS);
 #ifndef NO_ASN_TIME
-    ExpectIntEQ(BIO_get_mem_data(bio, NULL), 1466);
+    ExpectIntEQ(BIO_get_mem_data(bio, NULL), 1467);
 #else
-    ExpectIntEQ(BIO_get_mem_data(bio, NULL), 1324);
+    ExpectIntEQ(BIO_get_mem_data(bio, NULL), 1325);
 #endif
     BIO_free(bio);
     bio = NULL;
@@ -23863,7 +23997,7 @@ static int test_sk_X509_CRL_decode(void)
     crl = NULL;
 
     ExpectTrue((fp = XFOPEN("./certs/crl/crl.der", "rb")) != XBADFILE);
-    ExpectIntEQ(len = (int)XFREAD(buff, 1, sizeof(buff), fp), 520);
+    ExpectIntEQ(len = (int)XFREAD(buff, 1, sizeof(buff), fp), 521);
     if (fp != XBADFILE) {
         XFCLOSE(fp);
         fp = XBADFILE;
@@ -25791,33 +25925,33 @@ static int test_wolfSSL_X509_print(void)
 #if defined(OPENSSL_ALL) || defined(WOLFSSL_IP_ALT_NAME)
   #if defined(WC_DISABLE_RADIX_ZERO_PAD)
      /* Will print IP address subject alt name. */
-     ExpectIntEQ(BIO_get_mem_data(bio, NULL), 3349);
+     ExpectIntEQ(BIO_get_mem_data(bio, NULL), 3351);
   #elif defined(NO_ASN_TIME)
       /* Will print IP address subject alt name but not Validity. */
-     ExpectIntEQ(BIO_get_mem_data(bio, NULL), 3235);
+     ExpectIntEQ(BIO_get_mem_data(bio, NULL), 3237);
   #else
       /* Will print IP address subject alt name. */
-     ExpectIntEQ(BIO_get_mem_data(bio, NULL), 3350);
+     ExpectIntEQ(BIO_get_mem_data(bio, NULL), 3352);
   #endif
 #elif defined(IGNORE_NAME_CONSTRAINTS)
     /* DecodeGeneralName skips iPAddress entries when name constraints
      * are disabled, so the IP SAN never reaches the print path. */
   #if defined(NO_ASN_TIME)
-    ExpectIntEQ(BIO_get_mem_data(bio, NULL), 3213);
+    ExpectIntEQ(BIO_get_mem_data(bio, NULL), 3215);
   #else
-    ExpectIntEQ(BIO_get_mem_data(bio, NULL), 3328);
+    ExpectIntEQ(BIO_get_mem_data(bio, NULL), 3330);
   #endif
 #elif defined(NO_ASN_TIME)
     /* With NO_ASN_TIME defined, X509_print skips printing Validity.
      * iPAddress SAN now always parsed; prints as
      * "IP Address:<unavailable>" (+26 bytes) without
      * WOLFSSL_IP_ALT_NAME. */
-    ExpectIntEQ(BIO_get_mem_data(bio, NULL), 3239);
+    ExpectIntEQ(BIO_get_mem_data(bio, NULL), 3241);
 #else
     /* iPAddress SAN now always parsed; prints as
      * "IP Address:<unavailable>" (+26 bytes) without
      * WOLFSSL_IP_ALT_NAME. */
-    ExpectIntEQ(BIO_get_mem_data(bio, NULL), 3354);
+    ExpectIntEQ(BIO_get_mem_data(bio, NULL), 3356);
 #endif
     BIO_free(bio);
     bio = NULL;
@@ -34948,6 +35082,7 @@ TEST_CASE testCases[] = {
     TEST_DECL(test_PathLenNoKeyUsage),
     TEST_DECL(test_NameConstraints_OtherName),
     TEST_DECL(test_NameConstraints_DnsUriWildcard),
+    TEST_DECL(test_NameConstraints_SubtreeMinMax),
     TEST_DECL(test_ParseSerial0FixtureMatrix),
     TEST_DECL(test_MakeCertWithCaFalse),
 #ifdef WOLFSSL_CERT_SIGN_CB

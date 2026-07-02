@@ -1231,10 +1231,8 @@ enum {
         #elif WOLFSSL_HARDEN_TLS >= 112
             #define WOLFSSL_MIN_DHKEY_BITS 2048
         #endif
-    #elif defined(WOLFSSL_MAX_STRENGTH)
-        #define WOLFSSL_MIN_DHKEY_BITS 2048
     #else
-        #define WOLFSSL_MIN_DHKEY_BITS 1024
+        #define WOLFSSL_MIN_DHKEY_BITS DH_MIN_SIZE
     #endif
 #endif
 #if defined(WOLFSSL_HARDEN_TLS) && WOLFSSL_MIN_DHKEY_BITS < 2048 && \
@@ -1251,6 +1249,12 @@ enum {
 #endif
 #if (WOLFSSL_MIN_DHKEY_BITS > 16000)
     #error DH minimum bit size must not be greater than 16000
+#endif
+#if (WOLFSSL_MIN_DHKEY_BITS < DH_MIN_SIZE)
+    /* The TLS-layer minimum must not be looser than the wolfCrypt DH primitive
+     * minimum (DH_MIN_SIZE), otherwise a key size accepted during negotiation
+     * is later rejected by wc_DhAgree with WC_KEY_SIZE_E. */
+    #error "WOLFSSL_MIN_DHKEY_BITS must be >= DH_MIN_SIZE"
 #endif
 #define MIN_DHKEY_SZ (WOLFSSL_MIN_DHKEY_BITS / 8)
 /* set maximum DH key size allowed */
@@ -4152,7 +4156,8 @@ struct WOLFSSL_CTX {
 #ifdef HAVE_ECC
     word16          eccTempKeySz;       /* in octets 20 - 66 */
 #endif
-#if defined(HAVE_ECC) || defined(HAVE_ED25519) || defined(HAVE_ED448)
+#if defined(HAVE_ECC) || defined(HAVE_ED25519) || defined(HAVE_ED448) || \
+    defined(HAVE_FALCON) || defined(WOLFSSL_HAVE_MLDSA)
     word32          pkCurveOID;         /* curve Ecc_Sum */
 #endif
 #if defined(HAVE_SESSION_TICKET) || !defined(NO_PSK)
@@ -6267,7 +6272,8 @@ struct WOLFSSL {
     byte            peerEccDsaKeyPresent;
 #endif
 #if defined(HAVE_ECC) || defined(HAVE_ED25519) || \
-    defined(HAVE_CURVE448) || defined(HAVE_ED448)
+    defined(HAVE_CURVE448) || defined(HAVE_ED448) || \
+    defined(HAVE_FALCON) || defined(WOLFSSL_HAVE_MLDSA)
     word32          pkCurveOID;              /* curve Ecc_Sum     */
 #endif
 #ifdef HAVE_ED25519
@@ -6963,7 +6969,6 @@ WOLFSSL_LOCAL WC_RNG* WOLFSSL_RSA_GetRNG(WOLFSSL_RSA *rsa, WC_RNG **tmpRNG,
                                          int *initTmpRng);
 #endif /* OPENSSL_EXTRA || OPENSSL_EXTRA_X509_SMALL */
 
-#ifndef NO_CERTS
     #ifndef NO_RSA
         #ifdef WC_RSA_PSS
             WOLFSSL_LOCAL int CheckRsaPssPadding(const byte* plain, word32 plainSz,
@@ -7020,7 +7025,7 @@ WOLFSSL_LOCAL WC_RNG* WOLFSSL_RSA_GetRNG(WOLFSSL_RSA *rsa, WC_RNG **tmpRNG,
             buffer* keyBufInfo);
     #endif /* HAVE_ED448 */
 
-
+#ifndef NO_CERTS
     #ifdef WOLFSSL_TRUST_PEER_CERT
 
         /* options for searching hash table for a matching trusted peer cert */

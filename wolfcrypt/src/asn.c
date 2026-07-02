@@ -18121,19 +18121,92 @@ int wolfssl_local_MatchBaseName(int type, const char* name, int nameSz,
     return 1;
 }
 
-int wolfssl_local_MatchUriNameConstraint(const char* uri, int uriSz,
-    const char* base, int baseSz)
+/* RFC 3986 host classification for URI name-constraint checks. */
+typedef enum UriHostType {
+    URI_HOST_REG_NAME = 0,
+    URI_HOST_IP_LITERAL,
+    URI_HOST_IPV4
+} UriHostType;
+
+static int UriHostIsDecOctet(const char* s, int sSz)
+{
+    int i;
+    int val = 0;
+
+    if (s == NULL || sSz <= 0 || sSz > 3) {
+        return 0;
+    }
+    if (sSz > 1 && s[0] == '0') {
+        return 0;
+    }
+
+    for (i = 0; i < sSz; i++) {
+        if (s[i] < '0' || s[i] > '9') {
+            return 0;
+        }
+        val = (val * 10) + (s[i] - '0');
+    }
+
+    return val <= 255;
+}
+
+static int UriHostIsIpv4Address(const char* host, int hostSz)
+{
+    int i;
+    int partStart = 0;
+    int partCount = 0;
+
+    if (host == NULL || hostSz <= 0) {
+        return 0;
+    }
+
+    for (i = 0; i <= hostSz; i++) {
+        if (i == hostSz || host[i] == '.') {
+            if (!UriHostIsDecOctet(host + partStart, i - partStart)) {
+                return 0;
+            }
+            partCount++;
+            partStart = i + 1;
+        }
+        else if (host[i] < '0' || host[i] > '9') {
+            return 0;
+        }
+    }
+
+    return partCount == 4;
+}
+
+static int UriRegNameHasNonEmptyLabels(const char* host, int hostSz)
+{
+    int i;
+
+    if (host == NULL || hostSz <= 0 || host[0] == '.' ||
+            host[hostSz - 1] == '.') {
+        return 0;
+    }
+
+    for (i = 1; i < hostSz; i++) {
+        if (host[i] == '.' && host[i - 1] == '.') {
+            return 0;
+        }
+    }
+
+    return 1;
+}
+
+static int GetUriHost(const char* uri, int uriSz, const char** host,
+    int* hostSz, UriHostType* hostType)
 {
     const char* hostStart;
     const char* hostEnd;
     const char* p;
     const char* uriEnd;
-    int hostSz;
 
     /* Need at least 3 bytes for the "://" scheme separator; rejecting short
      * inputs early also keeps the loop bound (uriEnd - 2) from forming a
      * pointer before `uri`. */
-    if (uri == NULL || uriSz < 3 || base == NULL || baseSz <= 0) {
+    if (uri == NULL || uriSz < 3 || host == NULL || hostSz == NULL ||
+            hostType == NULL) {
         return 0;
     }
 
@@ -18174,7 +18247,8 @@ int wolfssl_local_MatchUriNameConstraint(const char* uri, int uriSz,
         if (hostEnd >= uriEnd) {
             return 0;
         }
-        hostSz = (int)(hostEnd - hostStart);
+        *hostSz = (int)(hostEnd - hostStart);
+        *hostType = URI_HOST_IP_LITERAL;
     }
     else {
         hostEnd = hostStart;
@@ -18182,10 +18256,63 @@ int wolfssl_local_MatchUriNameConstraint(const char* uri, int uriSz,
                *hostEnd != '?' && *hostEnd != '#') {
             hostEnd++;
         }
-        hostSz = (int)(hostEnd - hostStart);
+        *hostSz = (int)(hostEnd - hostStart);
+        /* One trailing dot is the absolute-FQDN marker and not part of the
+         * host: strip it before classifying so that "12.31.2.3." is
+         * recognized as an IPv4 address and "host.com." denotes the same
+         * reg-name as "host.com". */
+        if (*hostSz > 0 && hostStart[*hostSz - 1] == '.') {
+            (*hostSz)--;
+            if (*hostSz <= 0 || hostStart[*hostSz - 1] == '.') {
+                return 0;
+            }
+        }
+        *hostType = UriHostIsIpv4Address(hostStart, *hostSz) ?
+            URI_HOST_IPV4 : URI_HOST_REG_NAME;
+        if (*hostType == URI_HOST_REG_NAME &&
+                !UriRegNameHasNonEmptyLabels(hostStart, *hostSz)) {
+            return 0;
+        }
     }
 
-    if (hostSz <= 0) {
+    if (*hostSz <= 0) {
+        return 0;
+    }
+    *host = hostStart;
+
+    return 1;
+}
+
+int wolfssl_local_UriNameHasDnsHost(const char* uri, int uriSz)
+{
+    const char* host = NULL;
+    int hostSz = 0;
+    UriHostType hostType = URI_HOST_REG_NAME;
+
+    if (!GetUriHost(uri, uriSz, &host, &hostSz, &hostType)) {
+        return 0;
+    }
+
+    (void)host;
+    (void)hostSz;
+    return hostType == URI_HOST_REG_NAME;
+}
+
+int wolfssl_local_MatchUriNameConstraint(const char* uri, int uriSz,
+    const char* base, int baseSz)
+{
+    const char* hostStart = NULL;
+    int hostSz = 0;
+    UriHostType hostType = URI_HOST_REG_NAME;
+
+    if (base == NULL || baseSz <= 0 ||
+            !GetUriHost(uri, uriSz, &hostStart, &hostSz, &hostType)) {
+        return 0;
+    }
+    /* RFC 5280 URI constraints apply only to host names specified as fully
+     * qualified domain names. RFC 3986 IP-literals and IPv4address hosts are
+     * not DNS reg-names. */
+    if (hostType != URI_HOST_REG_NAME) {
         return 0;
     }
 
@@ -18200,6 +18327,15 @@ int wolfssl_local_MatchUriNameConstraint(const char* uri, int uriSz,
     }
     else {
         int i;
+        /* GetUriHost already stripped the host's absolute-FQDN trailing dot;
+         * treat one trailing dot on the base the same way so that "host.com."
+         * and "host.com" compare equal. */
+        if (base[baseSz - 1] == '.') {
+            baseSz--;
+        }
+        if (baseSz <= 0) {
+            return 0;
+        }
         if (hostSz != baseSz) {
             return 0;
         }
@@ -18415,6 +18551,23 @@ static int DnsNameHasWildcard(const char* name, int nameSz)
     return 0;
 }
 
+/* Match a DNS name against a DNS name-constraint base. A wildcard name
+ * denotes a set of names: permitted subtrees require containment, excluded
+ * subtrees intersection (selected by `permitted`). Literal names use plain
+ * base-name matching, which normalizes the absolute-FQDN trailing dot
+ * before its own length check.
+ * Returns 1 on match, 0 otherwise. */
+int wolfssl_local_MatchDnsNameConstraint(const char* name, int nameSz,
+    const char* base, int baseSz, int permitted)
+{
+    if (DnsNameHasWildcard(name, nameSz)) {
+        return wolfssl_local_MatchDnsConstraintWildcard(name, nameSz,
+            base, baseSz, permitted);
+    }
+    return wolfssl_local_MatchBaseName(ASN_DNS_TYPE, name, nameSz, base,
+        baseSz);
+}
+
 /* Search through the list to find if the name is permitted.
  * name     The DNS name to search for
  * dnsList  The list to search through
@@ -18465,12 +18618,10 @@ static int PermittedListOk(DNS_entry* name, Base_entry* dnsList, byte nameType)
                     break;
                 }
             }
-            else if (nameType == ASN_DNS_TYPE &&
-                     DnsNameHasWildcard(name->name, name->len)) {
-                /* Wildcard DNS SAN: a '*' can expand to a longer label, so the
-                 * byte-length guard used for literal names below is invalid.
-                 * Permit only if every expansion stays inside the subtree. */
-                if (wolfssl_local_MatchDnsConstraintWildcard(name->name,
+            else if (nameType == ASN_DNS_TYPE) {
+                /* Permit only if every expansion of a wildcard stays inside
+                 * the subtree. */
+                if (wolfssl_local_MatchDnsNameConstraint(name->name,
                         name->len, current->name, current->nameSz, 1)) {
                     match = 1;
                     break;
@@ -18539,12 +18690,10 @@ static int IsInExcludedList(DNS_entry* name, Base_entry* dnsList, byte nameType)
                     break;
                 }
             }
-            else if (nameType == ASN_DNS_TYPE &&
-                     DnsNameHasWildcard(name->name, name->len)) {
-                /* Wildcard DNS SAN: a '*' can expand to a longer label, so the
-                 * byte-length guard used for literal names below is invalid.
-                 * Exclude if any expansion can fall inside the subtree. */
-                if (wolfssl_local_MatchDnsConstraintWildcard(name->name,
+            else if (nameType == ASN_DNS_TYPE) {
+                /* Exclude if any expansion of a wildcard can fall inside the
+                 * subtree. */
+                if (wolfssl_local_MatchDnsNameConstraint(name->name,
                         name->len, current->name, current->nameSz, 0)) {
                     ret = 1;
                     break;
@@ -18564,12 +18713,25 @@ static int IsInExcludedList(DNS_entry* name, Base_entry* dnsList, byte nameType)
 }
 
 
+static int NameConstraintListHasType(Base_entry* list, byte nameType)
+{
+    while (list != NULL) {
+        if (list->type == nameType) {
+            return 1;
+        }
+        list = list->next;
+    }
+
+    return 0;
+}
+
 static int ConfirmNameConstraints(Signer* signer, DecodedCert* cert)
 {
     const byte nameTypes[] = {ASN_RFC822_TYPE, ASN_DNS_TYPE, ASN_DIR_TYPE,
                               ASN_IP_TYPE, ASN_URI_TYPE, ASN_OTHER_TYPE,
                               ASN_RID_TYPE};
     int i;
+    int uriConstraintsApply;
 
     if (signer == NULL || cert == NULL)
         return 0;
@@ -18577,6 +18739,10 @@ static int ConfirmNameConstraints(Signer* signer, DecodedCert* cert)
     if (signer->excludedNames == NULL && signer->permittedNames == NULL &&
             !signer->extNameConstraintHasUnsupported)
         return 1;
+
+    uriConstraintsApply =
+        NameConstraintListHasType(signer->excludedNames, ASN_URI_TYPE) ||
+        NameConstraintListHasType(signer->permittedNames, ASN_URI_TYPE);
 
     for (i=0; i < (int)sizeof(nameTypes); i++) {
         byte nameType = nameTypes[i];
@@ -18588,9 +18754,10 @@ static int ConfirmNameConstraints(Signer* signer, DecodedCert* cert)
             case ASN_DNS_TYPE:
                 name = cert->altNames;
 
-                /* When no SAN is present, apply DNS name constraints to the
-                 * Subject CN. */
-                if (cert->subjectCN != NULL && cert->altNames == NULL) {
+                /* Apply DNS constraints to leaf Subject CN when no SAN
+                 * (legacy hostname-in-CN). Skipped for CAs. */
+                if (cert->subjectCN != NULL && cert->altNames == NULL &&
+                        !cert->isCA) {
                     subjectDnsName.next = NULL;
                     subjectDnsName.type = ASN_DNS_TYPE;
                     subjectDnsName.len  = cert->subjectCNLen;
@@ -18660,6 +18827,14 @@ static int ConfirmNameConstraints(Signer* signer, DecodedCert* cert)
         while (name != NULL) {
             /* Only check entries that match the current nameType. */
             if (name->type == nameType) {
+                if (nameType == ASN_URI_TYPE && uriConstraintsApply &&
+                        !wolfssl_local_UriNameHasDnsHost(name->name,
+                            name->len)) {
+                    WOLFSSL_MSG("URI name constraint applied to URI without "
+                                "DNS host");
+                    return 0;
+                }
+
                 if (IsInExcludedList(name, signer->excludedNames,
                         nameType) == 1) {
                     WOLFSSL_MSG("Excluded name was found!");
@@ -18900,31 +19075,20 @@ static int DecodeOtherName(DecodedCert* cert, const byte* input,
  * @return  ASN_UNKNOWN_OID_E when the OID cannot be verified.
  * @return  MEMORY_E when dynamic memory allocation fails.
  */
-/* Reject IA5String SAN content that cannot legally appear in
- * dNSName / rfc822Name / URI per RFC 5280 4.2.1.6. Currently just NUL. */
-static int DecodeGeneralNameCheckChars(const byte* input, int len)
-{
-    int i;
-    for (i = 0; i < len; i++) {
-        if (input[i] == 0) {
-            return ASN_PARSE_E;
-        }
-    }
-    return 0;
-}
-
 static int DecodeGeneralName(const byte* input, word32* inOutIdx, byte tag,
                              int len, DecodedCert* cert)
 {
     int ret = 0;
     word32 idx = *inOutIdx;
 
-    /* GeneralName choice: dnsName */
+    /* GeneralName choice: dnsName.
+     * An embedded NUL makes a dNSName an invalid presented identifier
+     * (RFC 6125 Sec. 6.3 / RFC 9525 Sec. 6.3), not a malformed certificate.
+     * Store it so its presence still suppresses Subject CN fallback, but
+     * length-based matching in MatchDomainName never matches a NUL-free
+     * reference hostname. The result is DOMAIN_NAME_MISMATCH at verification
+     * time rather than ASN_PARSE_E at parse time. */
     if (tag == (ASN_CONTEXT_SPECIFIC | ASN_DNS_TYPE)) {
-        ret = DecodeGeneralNameCheckChars(input + idx, len);
-        if (ret != 0) {
-            return ret;
-        }
         ret = SetDNSEntry(cert->heap, (const char*)(input + idx), len,
                 ASN_DNS_TYPE, &cert->altNames);
         if (ret == 0) {
@@ -18952,10 +19116,6 @@ static int DecodeGeneralName(const byte* input, word32* inOutIdx, byte tag,
     }
     /* GeneralName choice: rfc822Name */
     else if (tag == (ASN_CONTEXT_SPECIFIC | ASN_RFC822_TYPE)) {
-        ret = DecodeGeneralNameCheckChars(input + idx, len);
-        if (ret != 0) {
-            return ret;
-        }
         ret = SetDNSEntry(cert->heap, (const char*)(input + idx), len,
                 ASN_RFC822_TYPE, &cert->altEmailNames);
         if (ret == 0) {
@@ -18964,10 +19124,6 @@ static int DecodeGeneralName(const byte* input, word32* inOutIdx, byte tag,
     }
     /* GeneralName choice: uniformResourceIdentifier */
     else if (tag == (ASN_CONTEXT_SPECIFIC | ASN_URI_TYPE)) {
-        ret = DecodeGeneralNameCheckChars(input + idx, len);
-        if (ret != 0) {
-            return ret;
-        }
         WOLFSSL_MSG("\tPutting URI into list but not using");
 
     #ifndef WOLFSSL_NO_ASN_STRICT
@@ -20362,7 +20518,20 @@ static int DecodeSubtree(const byte* input, word32 sz, Base_entry** head,
         ret = GetASN_Items(subTreeASN, dataASN, subTreeASN_Length, 0, input,
                            &idx, sz);
         if (ret == 0) {
-            byte t = dataASN[SUBTREEASN_IDX_BASE].tag;
+            byte t;
+
+            /* RFC 5280 Sec. 4.2.1.10: within this profile minimum must be 0
+             * and maximum must be absent. Reject a subtree that carries a
+             * non-zero minimum or any maximum rather than enforcing it as if
+             * those fields were the defaults. */
+            if ((minVal != 0) ||
+                    (dataASN[SUBTREEASN_IDX_MAX].length > 0)) {
+                WOLFSSL_MSG("unsupported name constraint minimum/maximum");
+                ret = ASN_NAME_INVALID_E;
+                break;
+            }
+
+            t = dataASN[SUBTREEASN_IDX_BASE].tag;
 
             /* Check GeneralName tag is one of the types we can handle.
              * registeredID is included so that ConfirmNameConstraints can
@@ -23149,6 +23318,71 @@ Signer* findSignerByName(Signer *list, byte *hash)
     return NULL;
 }
 
+#ifndef IGNORE_NAME_CONSTRAINTS
+/* Find a signer for cert in cm and extraCAList. Prefers AKID->SKID
+ * with name-hash validation. Fall back to name-only when AKID is
+ * absent. */
+static Signer* FindSignerByAkidOrName(void* cm, Signer* extraCAList,
+                                      Signer* cert)
+{
+    Signer* signer = NULL;
+#ifdef HAVE_CERTIFICATE_STATUS_REQUEST_V2
+    #ifndef NO_SKID
+    Signer* exCaSigner;
+    #endif
+#else
+    (void)extraCAList;
+#endif
+
+#ifndef NO_SKID
+    if (cert->authKeyIdSet) {
+        signer = GetCA(cm, cert->authKeyIdHash);
+        if (signer != NULL &&
+                XMEMCMP(signer->subjectNameHash, cert->issuerNameHash,
+                        SIGNER_DIGEST_SIZE) != 0) {
+            signer = NULL;
+        }
+        /* AKID is authoritative; do not fall back to name when AKID
+         * is set (could substitute a same-DN sibling). */
+    }
+    else {
+        signer = GetCAByName(cm, cert->issuerNameHash);
+    }
+#else
+    signer = GetCA(cm, cert->issuerNameHash);
+#endif
+
+#ifdef HAVE_CERTIFICATE_STATUS_REQUEST_V2
+    if (signer == NULL && extraCAList != NULL) {
+    #ifndef NO_SKID
+        if (cert->authKeyIdSet) {
+            for (exCaSigner = extraCAList; exCaSigner != NULL;
+                    exCaSigner = exCaSigner->next) {
+                if (XMEMCMP(exCaSigner->subjectKeyIdHash,
+                            cert->authKeyIdHash,
+                            SIGNER_DIGEST_SIZE) == 0 &&
+                        XMEMCMP(exCaSigner->subjectNameHash,
+                                cert->issuerNameHash,
+                                SIGNER_DIGEST_SIZE) == 0) {
+                    signer = exCaSigner;
+                    break;
+                }
+            }
+            /* AKID is authoritative; do not fall back to name. */
+        }
+        else {
+            signer = findSignerByName(extraCAList, cert->issuerNameHash);
+        }
+    #else
+        signer = findSignerByName(extraCAList, cert->issuerNameHash);
+    #endif
+    }
+#endif
+
+    return signer;
+}
+#endif /* !IGNORE_NAME_CONSTRAINTS */
+
 int ParseCertRelative(DecodedCert* cert, int type, int verify, void* cm,
                       Signer *extraCAList)
 {
@@ -23163,6 +23397,12 @@ int ParseCertRelative(DecodedCert* cert, int type, int verify, void* cm,
     int    idx = 0;
 #endif
     byte*  sce_tsip_encRsaKeyIdx;
+#ifndef IGNORE_NAME_CONSTRAINTS
+    int ncDepth = 0;
+    Signer* ncSigner = NULL;
+    Signer* ncParent = NULL;
+    Signer* ncPrev = NULL;
+#endif
     (void)extraCAList;
 
     if (cert == NULL) {
@@ -23795,18 +24035,6 @@ int ParseCertRelative(DecodedCert* cert, int type, int verify, void* cm,
                 }
             #endif /* WOLFSSL_DUAL_ALG_CERTS */
             }
-        #ifndef IGNORE_NAME_CONSTRAINTS
-            if (verify == VERIFY || verify == VERIFY_OCSP ||
-                        verify == VERIFY_NAME || verify == VERIFY_SKIP_DATE) {
-                /* check that this cert's name is permitted by the signer's
-                 * name constraints */
-                if (!ConfirmNameConstraints(cert->ca, cert)) {
-                    WOLFSSL_MSG("Confirm name constraint failed");
-                    WOLFSSL_ERROR_VERBOSE(ASN_NAME_INVALID_E);
-                    return ASN_NAME_INVALID_E;
-                }
-            }
-        #endif /* IGNORE_NAME_CONSTRAINTS */
         } /* cert->ca */
 #ifdef WOLFSSL_CERT_REQ
         else if (type == CERTREQ_TYPE) {
@@ -23888,6 +24116,38 @@ int ParseCertRelative(DecodedCert* cert, int type, int verify, void* cm,
         }
     } /* verify != NO_VERIFY && type != CA_TYPE && type != TRUSTED_PEER_TYPE */
 
+#ifndef IGNORE_NAME_CONSTRAINTS
+    /* Apply each ancestor CA's name constraints to this cert.
+     * Signer pointers between lookups are not lock-protected
+     * (see wolfssl_cm_get_certs_der). */
+    if ((verify == VERIFY || verify == VERIFY_OCSP ||
+         verify == VERIFY_NAME || verify == VERIFY_SKIP_DATE) &&
+         type != TRUSTED_PEER_TYPE && cert->ca != NULL) {
+        ncSigner = cert->ca;
+        while (ncSigner != NULL) {
+            if (!ConfirmNameConstraints(ncSigner, cert)) {
+                WOLFSSL_MSG("Confirm name constraint failed");
+                WOLFSSL_ERROR_VERBOSE(ASN_NAME_INVALID_E);
+                return ASN_NAME_INVALID_E;
+            }
+            /* Stop at trust anchor (self-issued). */
+            if (ncSigner->selfSigned)
+                break;
+            ncParent = FindSignerByAkidOrName(cm, extraCAList, ncSigner);
+            /* Stop on missing parent, self-loop, or A->B->A cycle. */
+            if (ncParent == NULL || ncParent == ncSigner ||
+                    ncParent == ncPrev)
+                break;
+            if (++ncDepth >= WOLFSSL_MAX_CHAIN_DEPTH) {
+                WOLFSSL_MSG("NC ancestor walk exceeded WOLFSSL_MAX_CHAIN_DEPTH");
+                WOLFSSL_ERROR_VERBOSE(ASN_PATHLEN_SIZE_E);
+                return ASN_PATHLEN_SIZE_E;
+            }
+            ncPrev = ncSigner;
+            ncSigner = ncParent;
+        }
+    }
+#endif /* IGNORE_NAME_CONSTRAINTS */
 #if defined(WOLFSSL_NO_TRUSTED_CERTS_VERIFY) && !defined(NO_SKID)
 exit_pcr:
 #endif
@@ -23966,10 +24226,18 @@ int FillSigner(Signer* signer, DecodedCert* cert, int type, DerBuffer *der)
     #ifndef NO_SKID
         XMEMCPY(signer->subjectKeyIdHash, cert->extSubjKeyId,
                 SIGNER_DIGEST_SIZE);
+    #ifndef IGNORE_NAME_CONSTRAINTS
+        if (cert->extAuthKeyIdSet) {
+            XMEMCPY(signer->authKeyIdHash, cert->extAuthKeyId,
+                    SIGNER_DIGEST_SIZE);
+            signer->authKeyIdSet = 1;
+        }
+    #endif
     #endif
         XMEMCPY(signer->subjectNameHash, cert->subjectHash,
                 SIGNER_DIGEST_SIZE);
-    #if defined(HAVE_OCSP) || defined(HAVE_CRL) || defined(WOLFSSL_AKID_NAME)
+    #if defined(HAVE_OCSP) || defined(HAVE_CRL) || \
+        defined(WOLFSSL_AKID_NAME) || !defined(IGNORE_NAME_CONSTRAINTS)
         XMEMCPY(signer->issuerNameHash, cert->issuerHash,
                 SIGNER_DIGEST_SIZE);
     #endif
