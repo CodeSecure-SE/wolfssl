@@ -7960,6 +7960,13 @@ size_t wolfSSL_get_client_random(const WOLFSSL* ssl, unsigned char* out,
         ssl->keys.encryptionOn = 0;
         XMEMSET(&ssl->msgsReceived, 0, sizeof(ssl->msgsReceived));
 
+        /* Discard any partial handshake-message reassembly on reuse. */
+        XFREE(ssl->pendingMsg, ssl->heap, DYNAMIC_TYPE_ARRAYS);
+        ssl->pendingMsg = NULL;
+        ssl->pendingMsgSz = 0;
+        ssl->pendingMsgOffset = 0;
+        ssl->pendingMsgType = 0;
+
         FreeCiphers(ssl);
         InitCiphers(ssl);
         InitCipherSpecs(&ssl->specs);
@@ -13910,6 +13917,10 @@ const WOLF_EC_NIST_NAME kNistCurves[] = {
     {CURVE_NAME("ML_KEM_512"), WOLFSSL_ML_KEM_512, WOLFSSL_ML_KEM_512},
     {CURVE_NAME("ML_KEM_768"), WOLFSSL_ML_KEM_768, WOLFSSL_ML_KEM_768},
     {CURVE_NAME("ML_KEM_1024"), WOLFSSL_ML_KEM_1024, WOLFSSL_ML_KEM_1024},
+    /* Aliases accepting the OpenSSL/IANA spelling without underscores. */
+    {CURVE_NAME("MLKEM512"), WOLFSSL_ML_KEM_512, WOLFSSL_ML_KEM_512},
+    {CURVE_NAME("MLKEM768"), WOLFSSL_ML_KEM_768, WOLFSSL_ML_KEM_768},
+    {CURVE_NAME("MLKEM1024"), WOLFSSL_ML_KEM_1024, WOLFSSL_ML_KEM_1024},
 #if defined(HAVE_ECC)
     #ifdef WOLFSSL_PQC_HYBRIDS
     {CURVE_NAME("SecP256r1MLKEM768"), WOLFSSL_SECP256R1MLKEM768,
@@ -14008,7 +14019,7 @@ int set_curves_list(WOLFSSL* ssl, WOLFSSL_CTX *ctx, const char* names,
 
         for (nist_name = kNistCurves; nist_name->name != NULL; nist_name++) {
             if (len == nist_name->name_len &&
-                    XSTRNCMP(name, nist_name->name, (size_t)len) == 0) {
+                    XSTRNCASECMP(name, nist_name->name, (size_t)len) == 0) {
                 curve = nist_name->curve;
                 break;
             }

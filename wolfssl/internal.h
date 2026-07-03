@@ -3894,6 +3894,7 @@ WOLFSSL_LOCAL int TLSX_ConnectionID_Parse(WOLFSSL* ssl, const byte* input,
 WOLFSSL_LOCAL void DtlsCIDOnExtensionsParsed(WOLFSSL* ssl);
 WOLFSSL_LOCAL byte DtlsCIDCheck(WOLFSSL* ssl, const byte* input,
     word16 inputSize);
+WOLFSSL_LOCAL int DtlsCidReplaceTx(WOLFSSL* ssl, const byte* cid, byte size);
 WOLFSSL_LOCAL int Dtls13UnifiedHeaderCIDPresent(byte flags);
 #endif /* WOLFSSL_DTLS_CID */
 WOLFSSL_LOCAL byte DtlsGetCidTxSize(WOLFSSL* ssl);
@@ -3997,6 +3998,7 @@ struct WOLFSSL_CTX {
     byte        verifyNone:1;
     byte        failNoCert:1;
     byte        failNoCertxPSK:1; /* fail if no cert with the exception of PSK*/
+    byte        failNoPSK:1;      /* fail if no PSK is negotiated */
     byte        sessionCacheOff:1;
     byte        sessionCacheFlushOff:1;
 #ifdef HAVE_EXT_CACHE
@@ -5138,6 +5140,7 @@ struct Options {
     word16            verifyNone:1;
     word16            failNoCert:1;
     word16            failNoCertxPSK:1;   /* fail for no cert except with PSK */
+    word16            failNoPSK:1;        /* fail if no PSK is negotiated */
     word16            downgrade:1;        /* allow downgrade of versions */
     word16            resuming:1;
 #ifdef HAVE_SECURE_RENEGOTIATION
@@ -5372,11 +5375,8 @@ struct Options {
 };
 
 typedef struct Arrays {
-    byte*           pendingMsg;         /* defrag buffer */
     byte*           preMasterSecret;
     word32          preMasterSz;        /* differs for DH, actual size */
-    word32          pendingMsgSz;       /* defrag buffer size */
-    word32          pendingMsgOffset;   /* current offset into defrag buffer */
 #if defined(HAVE_SESSION_TICKET) || !defined(NO_PSK)
     word32          psk_keySz;          /* actual size */
     char            client_identity[MAX_PSK_ID_LEN + NULL_TERM_LEN];
@@ -5408,7 +5408,6 @@ typedef struct Arrays {
     byte            cookie[MAX_COOKIE_LEN];
     byte            cookieSz;
 #endif
-    byte            pendingMsgType;    /* defrag buffer message type */
 } Arrays;
 
 #ifndef ASN_NAME_MAX
@@ -6089,6 +6088,12 @@ typedef struct CIDInfo {
     ConnectionID* rx;
     byte negotiated : 1;
 } CIDInfo;
+
+/* ConnectionIdUsage of the NewConnectionId message (RFC 9147 Section 9) */
+enum ConnectionIdUsage {
+    cid_immediate = 0,
+    cid_spare     = 1
+};
 #endif /* WOLFSSL_DTLS_CID */
 
 /* The idea is to reuse the context suites object whenever possible to save
@@ -6117,6 +6122,14 @@ struct WOLFSSL {
                                                    * suites */
 #endif
     Arrays*         arrays;
+    /* Buffer used to reassemble a handshake message that is fragmented across
+     * multiple records. Kept in WOLFSSL (not Arrays) so that post-handshake
+     * messages (e.g. a TLS 1.3 NewSessionTicket) can still be defragmented
+     * after the handshake arrays have been released by FreeArrays(). */
+    byte*           pendingMsg;         /* defrag buffer */
+    word32          pendingMsgSz;       /* defrag buffer size */
+    word32          pendingMsgOffset;   /* current offset into defrag buffer */
+    byte            pendingMsgType;     /* defrag buffer message type */
 #ifdef WOLFSSL_TLS13
     byte            clientSecret[SECRET_LEN];
     byte            serverSecret[SECRET_LEN];
@@ -6794,6 +6807,8 @@ enum HandShakeType {
     end_of_early_data    =   5,
     hello_retry_request  =   6,
     encrypted_extensions =   8,
+    request_connection_id =  9,    /* DTLS v1.3 addition (RFC 9147) */
+    new_connection_id    =  10,    /* DTLS v1.3 addition (RFC 9147) */
     certificate          =  11,
     server_key_exchange  =  12,
     certificate_request  =  13,
@@ -7442,6 +7457,12 @@ WOLFSSL_LOCAL int Dtls13HandshakeAddHeader(WOLFSSL* ssl, byte* output,
 #define EE_MASK (0x3)
 WOLFSSL_LOCAL int Dtls13FragmentsContinue(WOLFSSL* ssl);
 WOLFSSL_LOCAL int DoDtls13KeyUpdateAck(WOLFSSL* ssl);
+#ifdef WOLFSSL_DTLS_CID
+WOLFSSL_LOCAL int DoDtls13RequestConnectionId(WOLFSSL* ssl, const byte* input,
+    word32* inOutIdx, word32 size);
+WOLFSSL_LOCAL int DoDtls13NewConnectionId(WOLFSSL* ssl, const byte* input,
+    word32* inOutIdx, word32 size);
+#endif /* WOLFSSL_DTLS_CID */
 WOLFSSL_LOCAL int DoDtls13Ack(WOLFSSL* ssl, const byte* input, word32 inputSize,
     word32* processedSize);
 WOLFSSL_LOCAL int Dtls13ReconstructEpochNumber(WOLFSSL* ssl, byte epochBits,

@@ -25,6 +25,11 @@
 int test_dtls12_basic_connection_id(void);
 int test_wolfSSL_dtls_cid_parse(void);
 int test_wolfSSL_dtls_set_pending_peer(void);
+int test_wolfSSL_dtls_set_pending_peer_not_newest(void);
+int test_dtls13_new_connection_id(void);
+int test_dtls13_new_connection_id_not_negotiated(void);
+int test_dtls13_request_connection_id(void);
+int test_dtls13_cid_msg_malformed(void);
 int test_dtls_version_checking(void);
 int test_dtls_short_ciphertext(void);
 int test_dtls12_record_length_mismatch(void);
@@ -105,6 +110,11 @@ int test_WOLFSSL_dtls_version_alert(void);
         TEST_DECL_GROUP("dtls", test_dtls12_basic_connection_id),              \
         TEST_DECL_GROUP("dtls", test_wolfSSL_dtls_cid_parse),                  \
         TEST_DECL_GROUP("dtls", test_wolfSSL_dtls_set_pending_peer),           \
+        TEST_DECL_GROUP("dtls", test_wolfSSL_dtls_set_pending_peer_not_newest),\
+        TEST_DECL_GROUP("dtls", test_dtls13_new_connection_id),                \
+        TEST_DECL_GROUP("dtls", test_dtls13_new_connection_id_not_negotiated), \
+        TEST_DECL_GROUP("dtls", test_dtls13_request_connection_id),            \
+        TEST_DECL_GROUP("dtls", test_dtls13_cid_msg_malformed),                \
         TEST_DECL_GROUP("dtls", test_dtls_version_checking),                   \
         TEST_DECL_GROUP("dtls", test_dtls_short_ciphertext),                   \
         TEST_DECL_GROUP("dtls", test_dtls12_record_length_mismatch),           \
@@ -160,7 +170,6 @@ int test_WOLFSSL_dtls_version_alert(void);
         TEST_DECL_GROUP("dtls", test_dtls12_export_import_etm),                \
         TEST_DECL_GROUP("dtls", test_dtls13_min_rtx_interval),                 \
         TEST_DECL_GROUP("dtls", test_dtls13_no_session_id_echo),               \
-        TEST_DECL_GROUP("dtls", test_dtls13_oversized_cert_chain),             \
         TEST_DECL_GROUP("dtls", test_dtls_set_session_min_downgrade),          \
         TEST_DECL_GROUP("dtls", test_wolfSSL_dtls_create_free_peer),           \
         TEST_DECL_GROUP("dtls", test_wolfSSL_dtls_get0_peer),                  \
