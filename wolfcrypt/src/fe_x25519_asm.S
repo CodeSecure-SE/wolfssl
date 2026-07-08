@@ -2341,6 +2341,9 @@ _fe_invert_x64:
         movq	128(%rsp), %rdi
         addq	$0x90, %rsp
         repz retq
+#ifndef __APPLE__
+.size	fe_invert_x64,.-fe_invert_x64
+#endif /* __APPLE__ */
 #if defined(WOLFSSL_CURVE25519_NOT_USE_ED25519)
 #ifndef __APPLE__
 .data
@@ -5738,6 +5741,15 @@ L_curve25519_x64_bits:
         adcq	%r12, %r9
         adcq	%r13, %r10
         adcq	%r14, %r11
+        movq	$0x7fffffffffffffff, %rbp
+        movq	%r11, %rax
+        sarq	$63, %rax
+        andq	$19, %rax
+        andq	%rbp, %r11
+        addq	%rax, %rcx
+        adcq	$0x00, %r9
+        adcq	$0x00, %r10
+        adcq	$0x00, %r11
         # Store
         movq	%rcx, 64(%rsp)
         movq	%r9, 72(%rsp)
@@ -7338,6 +7350,9 @@ _fe_pow22523_x64:
         movq	96(%rsp), %rdi
         addq	$0x70, %rsp
         repz retq
+#ifndef __APPLE__
+.size	fe_pow22523_x64,.-fe_pow22523_x64
+#endif /* __APPLE__ */
 #ifndef __APPLE__
 .text
 .globl	ge_p1p1_to_p2_x64
@@ -13201,6 +13216,9 @@ _fe_invert_avx2:
         movq	128(%rsp), %rdi
         addq	$0x90, %rsp
         repz retq
+#ifndef __APPLE__
+.size	fe_invert_avx2,.-fe_invert_avx2
+#endif /* __APPLE__ */
 #if defined(WOLFSSL_CURVE25519_NOT_USE_ED25519)
 #ifndef __APPLE__
 .data
@@ -16022,6 +16040,15 @@ L_curve25519_avx2_bits:
         adcxq	%rbx, %r11
         adoxq	%r15, %r12
         adcxq	%rcx, %r12
+        movq	$0x7fffffffffffffff, %rcx
+        movq	%r12, %rdx
+        sarq	$63, %rdx
+        andq	$19, %rdx
+        andq	%rcx, %r12
+        addq	%rdx, %r9
+        adcq	$0x00, %r10
+        adcq	$0x00, %r11
+        adcq	$0x00, %r12
         # Store
         movq	%r9, 64(%rsp)
         movq	%r10, 72(%rsp)
@@ -17402,6 +17429,9 @@ _fe_pow22523_avx2:
         movq	96(%rsp), %rdi
         addq	$0x70, %rsp
         repz retq
+#ifndef __APPLE__
+.size	fe_pow22523_avx2,.-fe_pow22523_avx2
+#endif /* __APPLE__ */
 #ifndef __APPLE__
 .text
 .globl	ge_p1p1_to_p2_avx2
