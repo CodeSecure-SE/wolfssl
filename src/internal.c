@@ -60,7 +60,6 @@
  * WOLFSSL_TEST_APPLE_NATIVE_CERT_VALIDATION:
  *                  Testing mode for Apple cert validation             default: off
  * HAVE_DANE:                  DNS-based cert validation (DNSSEC)      default: off
- * HAVE_FALLBACK_SCSV:         TLS Fallback SCSV anti-downgrade        default: off
  * WOLFSSL_ACERT:              Attribute certificate support           default: off
  * WOLFSSL_DEBUG_CERTS:        Debug logging for cert processing       default: off
  * WOLFSSL_HOSTNAME_VERIFY_ALT_NAME_ONLY:
@@ -2707,6 +2706,12 @@ int InitSSL_Ctx(WOLFSSL_CTX* ctx, WOLFSSL_METHOD* method, void* heap)
 #ifdef HAVE_NETX
     ctx->CBIORecv = NetX_Receive;
     ctx->CBIOSend = NetX_Send;
+    #if defined(WOLFSSL_DTLS) && defined(WOLFSSL_NETX_DUO)
+        if (method->version.major == DTLS_MAJOR) {
+            ctx->CBIORecv   = NetX_ReceiveFrom;
+            ctx->CBIOSend   = NetX_SendTo;
+        }
+    #endif /* WOLFSSL_DTLS && WOLFSSL_NETX_DUO */
 #elif defined(WOLFSSL_APACHE_MYNEWT) && !defined(WOLFSSL_LWIP)
     ctx->CBIORecv = Mynewt_Receive;
     ctx->CBIOSend = Mynewt_Send;
@@ -8104,14 +8109,20 @@ int InitSSL(WOLFSSL* ssl, WOLFSSL_CTX* ctx, int writeDup)
 
     ssl->buffers.dtlsCtx.rfd            = -1;
     ssl->buffers.dtlsCtx.wfd            = -1;
+    ssl->buffers.dtlsCtx.rfdIsDGram     = 0;
+    ssl->buffers.dtlsCtx.wfdIsDGram     = 0;
 
 #ifdef WOLFSSL_RW_THREADED
     if (wc_InitRwLock(&ssl->buffers.dtlsCtx.peerLock) != 0)
         return BAD_MUTEX_E;
 #endif
-
+#ifdef HAVE_NETX
+    ssl->IOCB_ReadCtx  = &ssl->nxCtx;  /* default NetX IO ctx, same for read */
+    ssl->IOCB_WriteCtx = &ssl->nxCtx;  /* and write */
+#else
     ssl->IOCB_ReadCtx  = &ssl->buffers.dtlsCtx;  /* prevent invalid pointer access if not */
     ssl->IOCB_WriteCtx = &ssl->buffers.dtlsCtx;  /* correctly set */
+#endif
 #else
 #ifdef HAVE_NETX
     ssl->IOCB_ReadCtx  = &ssl->nxCtx;  /* default NetX IO ctx, same for read */
@@ -9795,6 +9806,37 @@ void WriteSEQ(WOLFSSL* ssl, int verifyOrder, byte* out)
 
     if (!ssl->options.dtls) {
         GetSEQIncrement(ssl, verifyOrder, seq);
+    }
+    else {
+#ifdef WOLFSSL_DTLS
+        DtlsGetSEQ(ssl, verifyOrder, seq);
+#endif
+    }
+
+    c32toa(seq[0], out);
+    c32toa(seq[1], out + OPAQUE32_LEN);
+}
+
+/* Same as WriteSEQ() but does not advance the per-direction TLS sequence
+ * counter. Lets a caller share the 64-bit record sequence between fields
+ * that are written more than once per record (e.g. AES-GCM nonce_explicit
+ * and AAD seq_num): peek here, then a later WriteSEQ() inside
+ * writeAeadAuthData() does the single mandated increment. For DTLS the
+ * underlying GetSEQ is already read-only, so this is identical to
+ * WriteSEQ() in that path. */
+static WC_INLINE void PeekSEQ(WOLFSSL* ssl, int verifyOrder, byte* out)
+{
+    word32 seq[2] = {0, 0};
+
+    if (!ssl->options.dtls) {
+        if (verifyOrder) {
+            seq[0] = ssl->keys.peer_sequence_number_hi;
+            seq[1] = ssl->keys.peer_sequence_number_lo;
+        }
+        else {
+            seq[0] = ssl->keys.sequence_number_hi;
+            seq[1] = ssl->keys.sequence_number_lo;
+        }
     }
     else {
 #ifdef WOLFSSL_DTLS
@@ -13657,6 +13699,57 @@ static int PatternHasWildcardInALabel(const char* pattern, word32 patternLen)
     return 0;
 }
 
+/* Validate the placement of a wildcard ('*') in a presented identifier per
+ * RFC 6125 sec. 6.4.3 / RFC 9525 sec. 6.3 and CA/Browser Forum Baseline
+ * Requirements sec. 3.2.2.6:
+ *   - a wildcard may only appear in the left-most label of the pattern, and
+ *   - a left-most label consisting solely of the wildcard ("*") may match only
+ *     when at least two further labels (i.e. at least two dots) follow it.
+ *
+ * This rejects a bare "*" (matches any single-label name), "*.com" (wildcard
+ * immediately to the left of a registry/public suffix), and
+ * "foo.*.example.com" (wildcard not in the left-most label), while still
+ * accepting the legitimate "*.example.com" form. Partial left-most wildcards
+ * such as "a*" or "a*b*" retain their existing matching behavior - they are
+ * not bare wildcard labels and are not subject to the two-label requirement.
+ * pattern/patternLen must already have any single trailing FQDN dot stripped.
+ *
+ * Returns 1 if the pattern has no wildcard or its wildcard placement is
+ * acceptable, 0 otherwise. */
+static int WildcardPlacementOK(const char* pattern, word32 patternLen)
+{
+    word32 i;
+    int sawWildcard = 0;
+    int sawDot = 0;
+    int dots = 0;
+
+    for (i = 0; i < patternLen; i++) {
+        if (pattern[i] == '*') {
+            /* A wildcard is only permitted in the left-most label: reject any
+             * '*' that appears after a label separator. */
+            if (sawDot)
+                return 0;
+            sawWildcard = 1;
+        }
+        else if (pattern[i] == '.') {
+            sawDot = 1;
+            dots++;
+        }
+    }
+
+    if (!sawWildcard)
+        return 1;
+
+    /* A left-most label that is exactly "*" (a bare wildcard label) requires at
+     * least two further labels. This rejects a bare "*" (0 dots) and "*.tld"
+     * (1 dot) but still allows "*.example.com" (2 dots). */
+    if (pattern[0] == '*' && (patternLen == 1 || pattern[1] == '.') &&
+            dots < 2)
+        return 0;
+
+    return 1;
+}
+
 /* Match names with wildcards, each wildcard can represent a single name
    component or fragment but not multiple names, i.e.,
    *.z.com matches y.z.com but not x.y.z.com
@@ -13712,6 +13805,13 @@ int MatchDomainName(const char* pattern, int patternLen, const char* str,
                 return 0;
         }
     }
+
+    /* RFC 6125 sec. 6.4.3 / RFC 9525 sec. 6.3 + CA/Browser Forum BR
+     * sec. 3.2.2.6: reject a pattern whose wildcard is not confined to the
+     * left-most label, or that has fewer than two labels to the right of the
+     * wildcard (e.g. "*", "*.com", "foo.*.example.com"). */
+    if (!WildcardPlacementOK(pattern, (word32)patternLen))
+        return 0;
 
     while (patternLen > 0) {
         /* Get the next pattern char to evaluate */
@@ -25399,9 +25499,37 @@ int BuildMessage(WOLFSSL* ssl, byte* output, int outSz, const byte* input,
                     args->iv = args->staticIvBuffer;
                 }
 
-                ret = wc_RNG_GenerateBlock(ssl->rng, args->iv, args->ivSz);
-                if (ret != 0)
-                    goto exit_buildmsg;
+#ifdef HAVE_AEAD
+                /* When the explicit nonce is the 8-byte record sequence
+                 * number, write it directly rather than drawing a random
+                 * value: RFC 5288 sec 3 (AES-GCM), RFC 6655 sec 3 (AES-CCM),
+                 * RFC 8998 sec 3 + NIST SP 800-38D sec 8.2.1 (SM4-GCM/CCM);
+                 * Camellia-GCM (RFC 6367) and ARIA-GCM (RFC 6209) inherit the
+                 * RFC 5288 construction. The ivSz == AESGCM_EXP_IV_SZ test
+                 * selects exactly these suites: ChaCha20 has an implicit nonce
+                 * (ivSz 0, so it never enters this ivSz > 0 block), while the
+                 * cipher_type == aead test excludes 3DES-CBC, whose explicit
+                 * block IV is also 8 bytes.
+                 *
+                 * These bytes normally never reach the wire: the Encrypt()
+                 * paths overwrite the explicit nonce with the cipher's own,
+                 * and FIPS<2 builds overwrite args->iv with keys.aead_exp_IV
+                 * just below. The win is skipping a per-record RNG draw.
+                 * The exception is an ATOMIC_USER MacEncryptCb, which sends
+                 * the bytes as-is; the sequence number is a valid explicit
+                 * nonce per the above RFCs. */
+                if (ssl->specs.cipher_type == aead &&
+                    args->ivSz == AESGCM_EXP_IV_SZ) {
+                    PeekSEQ(ssl, epochOrder, args->iv);
+                }
+                else
+#endif
+                {
+                    ret = wc_RNG_GenerateBlock(ssl->rng, args->iv,
+                                               args->ivSz);
+                    if (ret != 0)
+                        goto exit_buildmsg;
+                }
             }
 #if !defined(NO_PUBLIC_GCM_SET_IV) && \
     ((defined(HAVE_FIPS) || defined(HAVE_SELFTEST)) && \
@@ -39208,6 +39336,7 @@ static int AddPSKtoPreMasterSecret(WOLFSSL* ssl)
         word32          begin = i;
         int             ret = 0;
         byte            lesserVersion;
+        byte            maxMinor;
 
         WOLFSSL_START(WC_FUNC_CLIENT_HELLO_DO);
         WOLFSSL_ENTER("DoClientHello");
@@ -39270,6 +39399,14 @@ static int AddPSKtoPreMasterSecret(WOLFSSL* ssl)
         /* Legacy protocol version cannot negotiate TLS 1.3 or higher. */
         if (pv.major == SSLv3_MAJOR && pv.minor >= TLSv1_3_MINOR)
             pv.minor = TLSv1_2_MINOR;
+
+        /* Snapshot the server's effective max version before the downgrade
+         * logic below lowers ssl->version.minor to the negotiated version.
+         * This honors runtime restrictions (e.g. SSL_OP_NO_TLSv1_3 on a
+         * TLS 1.3 capable method), unlike ssl->ctx->method->version.minor.
+         * Used by the TLS_FALLBACK_SCSV check, which runs after the cipher
+         * suites are parsed (and thus after ssl->version.minor is mutated). */
+        maxMinor = ssl->version.minor;
 
         lesserVersion = (byte)(!ssl->options.dtls &&
                                     ssl->version.minor > pv.minor);
@@ -39566,18 +39703,19 @@ static int AddPSKtoPreMasterSecret(WOLFSSL* ssl)
             }
         }
 #endif /* HAVE_SERVER_RENEGOTIATION_INFO */
-#if defined(HAVE_FALLBACK_SCSV) || defined(OPENSSL_ALL)
-        /* check for TLS_FALLBACK_SCSV suite */
+        /* Check for TLS_FALLBACK_SCSV (RFC 7507). Always enforced. */
         if (FindSuite(ssl->clSuites, TLS_FALLBACK_SCSV, 0) >= 0) {
             WOLFSSL_MSG("Found Fallback SCSV");
-            if (ssl->ctx->method->version.minor > pv.minor) {
+            /* Abort if the server supports a version higher than the client
+             * offered. DTLS version minors decrease as the version increases. */
+            if ((!ssl->options.dtls && maxMinor > pv.minor) ||
+                (ssl->options.dtls && maxMinor < pv.minor)) {
                 WOLFSSL_MSG("Client trying to connect with lesser version");
                 SendAlert(ssl, alert_fatal, inappropriate_fallback);
                 ret = VERSION_ERROR;
                 goto out;
             }
         }
-#endif
 
         i += ssl->clSuites->suiteSz;
         ssl->clSuites->hashSigAlgoSz = 0;

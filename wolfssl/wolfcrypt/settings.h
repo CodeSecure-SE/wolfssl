@@ -380,6 +380,15 @@
     #endif
 #endif
 
+/* Microsoft's ARM64 compiler defines _M_ARM64 but not __aarch64__.  The wolfSSL
+ * ARMv8 assembly (WOLFSSL_ARMASM) and all of its C callers are gated on
+ * __aarch64__, so map _M_ARM64 across when building that assembly with MSVC and
+ * armasm64.  Scoped to WOLFSSL_ARMASM so a plain MSVC ARM64 (pure C) build is
+ * left untouched. */
+#if defined(_M_ARM64) && defined(WOLFSSL_ARMASM) && !defined(__aarch64__)
+    #define __aarch64__ 1
+#endif
+
 /* Forward propagation of the legacy parent gate to the canonical name
  * (HAVE_DILITHIUM -> WOLFSSL_HAVE_MLDSA). Always active: required so that
  * a user_settings.h or build flag using only the legacy spelling still
@@ -3967,6 +3976,30 @@
 
 #if defined(WOLFSSL_ACERT) && !defined(WOLFSSL_ASN_TEMPLATE)
     #error "Attribute Certificate support requires the ASN.1 template feature."
+#endif
+
+#if defined(WOLFSSL_TSP) && !defined(WOLFSSL_ASN_TEMPLATE)
+    #error "Time-Stamp Protocol support requires the ASN.1 template feature."
+#endif
+
+#ifdef WOLFSSL_TSP
+    /* Time-Stamp Protocol roles: requester (create requests, verify
+     * responses), verifier (verify tokens/responses only) and responder
+     * (read requests, create responses). When none is chosen, requester and
+     * responder are enabled. */
+    #if !defined(WOLFSSL_TSP_REQUESTER) && !defined(WOLFSSL_TSP_RESPONDER) && \
+        !defined(WOLFSSL_TSP_VERIFIER)
+        #define WOLFSSL_TSP_REQUESTER
+        #define WOLFSSL_TSP_RESPONDER
+    #endif
+    /* A requester also verifies the responses it receives. */
+    #if defined(WOLFSSL_TSP_REQUESTER) && !defined(WOLFSSL_TSP_VERIFIER)
+        #define WOLFSSL_TSP_VERIFIER
+    #endif
+
+    /* Encoding the accuracy seconds of a TSTInfo needs 32-bit numbers. */
+    #undef  WOLFSSL_ASN_TEMPLATE_NEED_SET_INT32
+    #define WOLFSSL_ASN_TEMPLATE_NEED_SET_INT32
 #endif
 
 #if defined(OPENSSL_ALL) || defined(WOLFSSL_QT)

@@ -2599,7 +2599,6 @@ typedef HANDLE wolfSSL_CRL_mfd_t; /* monitor fd, INVALID_HANDLE_VALUE if
 /* wolfSSL CRL controller */
 struct WOLFSSL_CRL {
     WOLFSSL_CERT_MANAGER* cm;            /* pointer back to cert manager */
-    CRL_Entry*            currentEntry;  /* Current CRL entry being processed */
     CRL_Entry*            crlList;       /* our CRL list */
 #ifdef HAVE_CRL_IO
     CbCrlIO               crlIOCb;
@@ -2797,6 +2796,11 @@ typedef struct WOLFSSL_DTLS_CTX {
                        * connected (connect() and bind() both called).
                        * This means that sendto and recvfrom do not need to
                        * specify and store the peer address. */
+    byte rfdIsDGram:1; /* whether rfd is a SOCK_DGRAM socket; probed with
+                        * getsockopt(SO_TYPE) where rfd is assigned to keep
+                        * the syscall out of the I/O callbacks. */
+    byte wfdIsDGram:1; /* as rfdIsDGram, for wfd; rfd and wfd may be
+                        * different sockets of different types. */
 #ifdef WOLFSSL_DTLS_CID
     byte processingPendingRecord:1;
 #endif
@@ -5789,10 +5793,16 @@ typedef struct DtlsMsg {
 
     /* NETX I/O Callback default */
     typedef struct NetX_Ctx {
-        NX_TCP_SOCKET* nxSocket;    /* send/recv socket handle */
+        NX_TCP_SOCKET* nxTcpSocket; /* send/recv tcp socket handle */
         NX_PACKET*     nxPacket;    /* incoming packet handle for short reads */
         ULONG          nxOffset;    /* offset already read from nxPacket */
         ULONG          nxWait;      /* wait option flag */
+/* WOLFSSL_NETX_DUO: requires ThreadX NetX Duo (NXD_ADDRESS, nxd_udp_socket_send) */
+#if defined(WOLFSSL_DTLS) && defined(WOLFSSL_NETX_DUO)
+        NX_UDP_SOCKET* nxUdpSocket; /* send/recv udp socket handle */
+        NXD_ADDRESS    nxdIp;       /* destination IP address for udp send */
+        USHORT         nxPort;      /* destination port for udp send */
+#endif /* WOLFSSL_DTLS && WOLFSSL_NETX_DUO */
     } NetX_Ctx;
 
 #endif

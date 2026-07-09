@@ -70,7 +70,6 @@ int InitCRL(WOLFSSL_CRL* crl, WOLFSSL_CERT_MANAGER* cm)
         crl->heap = NULL;
     crl->cm = cm;
     crl->crlList  = NULL;
-    crl->currentEntry = NULL;
 #ifdef HAVE_CRL_MONITOR
     crl->monitors[0].path = NULL;
     crl->monitors[1].path = NULL;
@@ -364,8 +363,6 @@ void FreeCRL(WOLFSSL_CRL* crl, int dynamic)
         crl->revokedStack = NULL;
     }
 #endif
-    XFREE(crl->currentEntry, crl->heap, DYNAMIC_TYPE_CRL_ENTRY);
-    crl->currentEntry = NULL;
     while(tmp) {
         CRL_Entry* next = tmp->next;
         CRL_Entry_free(tmp, crl->heap);
@@ -687,13 +684,22 @@ int CheckCertCRL(WOLFSSL_CRL* crl, DecodedCert* cert)
 #ifdef HAVE_CRL_UPDATE_CB
 static void SetCrlInfo(CRL_Entry* entry, CrlInfo *info)
 {
-    info->issuerHash = (byte *)entry->issuerHash;
-    info->issuerHashLen = CRL_DIGEST_SIZE;
-    info->lastDate = (byte *)entry->lastDate;
-    info->lastDateMaxLen = MAX_DATE_SIZE;
+    /* Ensure the copy below stays within bounds. */
+    wc_static_assert(sizeof(info->issuerHashData) == sizeof(entry->issuerHash));
+
+    /* Copy into info's own buffers so the pointers stay valid for the
+     * lifetime of the CrlInfo, not just that of the source entry. */
+    info->issuerHashLen = sizeof(info->issuerHashData);
+    XMEMCPY(info->issuerHashData, entry->issuerHash,
+            sizeof(info->issuerHashData));
+    info->issuerHash = info->issuerHashData;
+    info->lastDateMaxLen = sizeof(info->lastDateData);
+    XMEMCPY(info->lastDateData, entry->lastDate, sizeof(info->lastDateData));
+    info->lastDate = info->lastDateData;
     info->lastDateFormat = entry->lastDateFormat;
-    info->nextDate = (byte *)entry->nextDate;
-    info->nextDateMaxLen = MAX_DATE_SIZE;
+    info->nextDateMaxLen = sizeof(info->nextDateData);
+    XMEMCPY(info->nextDateData, entry->nextDate, sizeof(info->nextDateData));
+    info->nextDate = info->nextDateData;
     info->nextDateFormat = entry->nextDateFormat;
     info->crlNumberSet = entry->crlNumberSet;
     if (info->crlNumberSet)
@@ -702,13 +708,19 @@ static void SetCrlInfo(CRL_Entry* entry, CrlInfo *info)
 
 static void SetCrlInfoFromDecoded(DecodedCRL* entry, CrlInfo *info)
 {
-    info->issuerHash = (byte *)entry->issuerHash;
-    info->issuerHashLen = SIGNER_DIGEST_SIZE;
-    info->lastDate = (byte *)entry->lastDate;
-    info->lastDateMaxLen = MAX_DATE_SIZE;
+    /* Copy into info's own buffers so the pointers stay valid after the
+     * decoded CRL is freed by the caller. */
+    info->issuerHashLen = sizeof(info->issuerHashData);
+    XMEMCPY(info->issuerHashData, entry->issuerHash,
+            sizeof(info->issuerHashData));
+    info->issuerHash = info->issuerHashData;
+    info->lastDateMaxLen = sizeof(info->lastDateData);
+    XMEMCPY(info->lastDateData, entry->lastDate, sizeof(info->lastDateData));
+    info->lastDate = info->lastDateData;
     info->lastDateFormat = entry->lastDateFormat;
-    info->nextDate = (byte *)entry->nextDate;
-    info->nextDateMaxLen = MAX_DATE_SIZE;
+    info->nextDateMaxLen = sizeof(info->nextDateData);
+    XMEMCPY(info->nextDateData, entry->nextDate, sizeof(info->nextDateData));
+    info->nextDate = info->nextDateData;
     info->nextDateFormat = entry->nextDateFormat;
     info->crlNumberSet = entry->crlNumberSet;
     if (info->crlNumberSet)
@@ -845,6 +857,7 @@ int BufferLoadCRL(WOLFSSL_CRL* crl, const byte* buff, long sz, int type,
     int          ret = WOLFSSL_SUCCESS;
     const byte*  myBuffer = buff;    /* if DER ok, otherwise switch */
     DerBuffer*   der = NULL;
+    CRL_Entry*   currentEntry = NULL;
     WC_DECLARE_VAR(dcrl, DecodedCRL, 1, 0);
 
     WOLFSSL_ENTER("BufferLoadCRL");
@@ -877,8 +890,8 @@ int BufferLoadCRL(WOLFSSL_CRL* crl, const byte* buff, long sz, int type,
     }
 #endif
 
-    crl->currentEntry = CRL_Entry_new(crl->heap);
-    if (crl->currentEntry == NULL) {
+    currentEntry = CRL_Entry_new(crl->heap);
+    if (currentEntry == NULL) {
         WOLFSSL_MSG_CERT_LOG("alloc CRL Entry failed");
         WC_FREE_VAR_EX(dcrl, NULL, DYNAMIC_TYPE_TMP_BUFFER);
         FreeDer(&der);
@@ -886,25 +899,23 @@ int BufferLoadCRL(WOLFSSL_CRL* crl, const byte* buff, long sz, int type,
     }
 
     InitDecodedCRL(dcrl, crl->heap);
-    ret = ParseCRL(crl->currentEntry->certs, dcrl, myBuffer, (word32)sz,
+    ret = ParseCRL(currentEntry->certs, dcrl, myBuffer, (word32)sz,
                    verify, crl->cm);
 
     if (ret != 0 && !(ret == WC_NO_ERR_TRACE(ASN_CRL_NO_SIGNER_E)
                       && verify == NO_VERIFY)) {
         WOLFSSL_MSG_CERT_LOG("ParseCRL error");
         WOLFSSL_MSG_CERT_EX("ParseCRL verify = %d, ret = %d", verify, ret);
-        CRL_Entry_free(crl->currentEntry, crl->heap);
-        crl->currentEntry = NULL;
+        CRL_Entry_free(currentEntry, crl->heap);
     }
     else {
-        ret = AddCRL(crl, dcrl, crl->currentEntry, myBuffer,
+        ret = AddCRL(crl, dcrl, currentEntry, myBuffer,
                      ret != WC_NO_ERR_TRACE(ASN_CRL_NO_SIGNER_E));
         if (ret != 0) {
             WOLFSSL_MSG_CERT_LOG("AddCRL error");
-            CRL_Entry_free(crl->currentEntry, crl->heap);
+            CRL_Entry_free(currentEntry, crl->heap);
         }
         /* Entry now is in the list, or has been freed due to error */
-        crl->currentEntry = NULL;
     }
 
     FreeDecodedCRL(dcrl);

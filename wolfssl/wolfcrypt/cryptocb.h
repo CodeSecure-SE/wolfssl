@@ -437,6 +437,22 @@ typedef struct wc_CryptoInfo {
                 word32      sz;
             } aesctr;
         #endif /* WOLFSSL_AES_COUNTER */
+        #if defined(WOLFSSL_AES_CFB)
+            struct {
+                Aes*        aes;
+                byte*       out;
+                const byte* in;
+                word32      sz;
+            } aescfb;
+        #endif /* WOLFSSL_AES_CFB */
+        #if defined(WOLFSSL_AES_OFB)
+            struct {
+                Aes*        aes;
+                byte*       out;
+                const byte* in;
+                word32      sz;
+            } aesofb;
+        #endif /* WOLFSSL_AES_OFB */
         #if defined(HAVE_AES_ECB) || defined(WOLFSSL_AES_DIRECT) || \
             defined(WOLF_CRYPTO_CB_ONLY_AES)
             struct {
@@ -709,12 +725,18 @@ typedef struct wc_CryptoInfo {
 
 typedef int (*CryptoDevCallbackFunc)(int devId, struct wc_CryptoInfo* info, void* ctx);
 
+/* Maximum number of crypto callback devices that can be registered. */
+#ifndef MAX_CRYPTO_DEVID_CALLBACKS
+#define MAX_CRYPTO_DEVID_CALLBACKS 8
+#endif
+
 WOLFSSL_LOCAL void wc_CryptoCb_Init(void);
 WOLFSSL_LOCAL void wc_CryptoCb_Cleanup(void);
 WOLFSSL_LOCAL int wc_CryptoCb_GetDevIdAtIndex(int startIdx);
 WOLFSSL_API int  wc_CryptoCb_RegisterDevice(int devId, CryptoDevCallbackFunc cb, void* ctx);
 WOLFSSL_API void wc_CryptoCb_UnRegisterDevice(int devId);
 WOLFSSL_API int wc_CryptoCb_DefaultDevID(void);
+WOLFSSL_API int wc_CryptoCb_IsDeviceRegistered(int devId);
 
 #ifdef WOLF_CRYPTO_CB_FIND
 typedef int (*CryptoDevCallbackFind)(int devId, int algoType);
@@ -876,6 +898,18 @@ WOLFSSL_LOCAL int wc_CryptoCb_AesCbcDecrypt(Aes* aes, byte* out,
 WOLFSSL_LOCAL int wc_CryptoCb_AesCtrEncrypt(Aes* aes, byte* out,
                                const byte* in, word32 sz);
 #endif /* WOLFSSL_AES_COUNTER */
+#ifdef WOLFSSL_AES_CFB
+WOLFSSL_LOCAL int wc_CryptoCb_AesCfbEncrypt(Aes* aes, byte* out,
+                               const byte* in, word32 sz);
+WOLFSSL_LOCAL int wc_CryptoCb_AesCfbDecrypt(Aes* aes, byte* out,
+                               const byte* in, word32 sz);
+#endif /* WOLFSSL_AES_CFB */
+#ifdef WOLFSSL_AES_OFB
+WOLFSSL_LOCAL int wc_CryptoCb_AesOfbEncrypt(Aes* aes, byte* out,
+                               const byte* in, word32 sz);
+WOLFSSL_LOCAL int wc_CryptoCb_AesOfbDecrypt(Aes* aes, byte* out,
+                               const byte* in, word32 sz);
+#endif /* WOLFSSL_AES_OFB */
 #if defined(HAVE_AES_ECB) || defined(WOLFSSL_AES_DIRECT) || \
     defined(WOLF_CRYPTO_CB_ONLY_AES)
 WOLFSSL_LOCAL int wc_CryptoCb_AesEcbEncrypt(Aes* aes, byte* out,

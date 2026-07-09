@@ -3705,6 +3705,243 @@ int test_wc_AesGcmMixedEncDecLongIV(void)
  * AES-GCM non-standard nonce lengths
  ******************************************************************************/
 
+#if defined(WOLFSSL_AESGCM_SIV) && !defined(NO_AES) && defined(HAVE_AESGCM) && \
+    defined(WOLFSSL_AES_128)
+/* Decode a hex string into 'out' (spaces ignored, NULL -> length 0).
+ * Returns the byte length, or -1 on a malformed string / overflow. */
+static int gcmsiv_hex(const char* hex, byte* out, word32 max)
+{
+    word32 n = 0;
+    int hi, lo;
+
+    if (hex == NULL)
+        return 0;
+    while (*hex != '\0') {
+        if (*hex == ' ') { hex++; continue; }
+        if (hex[1] == '\0') return -1;
+        hi = (*hex >= '0' && *hex <= '9') ? *hex - '0' :
+             (*hex >= 'a' && *hex <= 'f') ? *hex - 'a' + 10 :
+             (*hex >= 'A' && *hex <= 'F') ? *hex - 'A' + 10 : -1;
+        hex++;
+        lo = (*hex >= '0' && *hex <= '9') ? *hex - '0' :
+             (*hex >= 'a' && *hex <= 'f') ? *hex - 'a' + 10 :
+             (*hex >= 'A' && *hex <= 'F') ? *hex - 'A' + 10 : -1;
+        hex++;
+        if (hi < 0 || lo < 0 || n >= max) return -1;
+        out[n++] = (byte)((hi << 4) | lo);
+    }
+    return (int)n;
+}
+
+/* Run one RFC 8452 known-answer vector (expH = ciphertext || 16-byte tag):
+ * encrypt and check ciphertext+tag, then decrypt and check the recovered
+ * plaintext and that authentication succeeds. Returns 0 on a full match,
+ * or a negative step code on the first failure. */
+static int gcmsiv_kat(const char* keyH, const char* nonceH, const char* aadH,
+    const char* ptH, const char* expH)
+{
+    byte key[32], nonce[12], aad[64], pt[64], exp[96], ct[80], tag[16], dec[64];
+    int keySz, nonceSz, aadSz, ptSz, expSz;
+
+    keySz   = gcmsiv_hex(keyH,   key,   (word32)sizeof(key));
+    nonceSz = gcmsiv_hex(nonceH, nonce, (word32)sizeof(nonce));
+    aadSz   = gcmsiv_hex(aadH,   aad,   (word32)sizeof(aad));
+    ptSz    = gcmsiv_hex(ptH,    pt,    (word32)sizeof(pt));
+    expSz   = gcmsiv_hex(expH,   exp,   (word32)sizeof(exp));
+    if (keySz < 0 || nonceSz < 0 || aadSz < 0 || ptSz < 0 || expSz < 0)
+        return -1;
+    if (expSz != ptSz + 16)
+        return -2;
+
+    if (wc_AesGcmSivEncrypt(key, (word32)keySz, nonce, (word32)nonceSz,
+            aad, (word32)aadSz, pt, (word32)ptSz, ct, tag, 16) != 0)
+        return -3;
+    if (ptSz > 0 && XMEMCMP(ct, exp, (size_t)ptSz) != 0)
+        return -4;
+    if (XMEMCMP(tag, exp + ptSz, 16) != 0)
+        return -5;
+
+    if (wc_AesGcmSivDecrypt(key, (word32)keySz, nonce, (word32)nonceSz,
+            aad, (word32)aadSz, ct, (word32)ptSz, dec, tag, 16) != 0)
+        return -6;
+    if (ptSz > 0 && XMEMCMP(dec, pt, (size_t)ptSz) != 0)
+        return -7;
+
+    return 0;
+}
+#endif /* WOLFSSL_AESGCM_SIV ... */
+
+/*
+ * AES-GCM-SIV (RFC 8452): RFC 8452 Appendix C known-answer vectors (encrypt and
+ * decrypt), a full encrypt/decrypt round trip, authentication-failure handling
+ * (corrupted tag / AAD / ciphertext), edge cases (empty plaintext, empty AAD,
+ * AES-128 and AES-256), and an exhaustive invalid-parameter matrix.
+ */
+int test_wc_AesGcmSivEncryptDecrypt(void)
+{
+    EXPECT_DECLS;
+#if defined(WOLFSSL_AESGCM_SIV) && !defined(NO_AES) && defined(HAVE_AESGCM) && \
+    defined(WOLFSSL_AES_128)
+    byte    key[32];
+    byte    nonce[12];
+    byte    aad[20];
+    byte    pt[32];
+    byte    ct[32];
+    byte    tag[16];
+    byte    dec[32];
+    word32  i;
+
+    /* --- RFC 8452 Appendix C.1 known-answer vectors (AES-128) --- */
+    ExpectIntEQ(gcmsiv_kat("01000000000000000000000000000000",
+        "030000000000000000000000", NULL, NULL,
+        "dc20e2d83f25705bb49e439eca56de25"), 0);
+    ExpectIntEQ(gcmsiv_kat("01000000000000000000000000000000",
+        "030000000000000000000000", NULL, "0100000000000000",
+        "b5d839330ac7b786578782fff6013b815b287c22493a364c"), 0);
+    ExpectIntEQ(gcmsiv_kat("01000000000000000000000000000000",
+        "030000000000000000000000", NULL, "010000000000000000000000",
+        "7323ea61d05932260047d942a4978db357391a0bc4fdec8b0d106639"), 0);
+    ExpectIntEQ(gcmsiv_kat("01000000000000000000000000000000",
+        "030000000000000000000000", "01", "0200000000000000",
+        "1e6daba35669f4273b0a1a2560969cdf790d99759abd1508"), 0);
+    ExpectIntEQ(gcmsiv_kat("01000000000000000000000000000000",
+        "030000000000000000000000", "01",
+        "02000000000000000000000000000000",
+        "e2b0c5da79a901c1745f700525cb335b8f8936ec039e4e4bb97ebd8c4457441f"), 0);
+    /* Non-block-aligned AAD (18 B) and plaintext (20 B). */
+    ExpectIntEQ(gcmsiv_kat("01000000000000000000000000000000",
+        "030000000000000000000000",
+        "010000000000000000000000000000000200",
+        "030000000000000000000000000000000400 0000",
+        "6bb0fecf5ded9b77f902c7d5da236a4391dd029724afc9805e976f451e6d87f6"
+        "fe106514"), 0);
+    /* Non-block-aligned AAD (20 B) and plaintext (18 B). */
+    ExpectIntEQ(gcmsiv_kat("01000000000000000000000000000000",
+        "030000000000000000000000",
+        "0100000000000000000000000000000002000000",
+        "030000000000000000000000000000000400",
+        "44d0aaf6fb2f1f34add5e8064e83e12a2adabff9b2ef00fb47920cc72a0c0f13"
+        "b9fd"), 0);
+
+#ifdef WOLFSSL_AES_256
+    /* --- RFC 8452 Appendix C.2 known-answer vectors (AES-256) --- */
+    ExpectIntEQ(gcmsiv_kat(
+        "0100000000000000000000000000000000000000000000000000000000000000",
+        "030000000000000000000000", NULL, NULL,
+        "07f5f4169bbf55a8400cd47ea6fd400f"), 0);
+    ExpectIntEQ(gcmsiv_kat(
+        "0100000000000000000000000000000000000000000000000000000000000000",
+        "030000000000000000000000", NULL, "0100000000000000",
+        "c2ef328e5c71c83b843122130f7364b761e0b97427e3df28"), 0);
+    ExpectIntEQ(gcmsiv_kat(
+        "0100000000000000000000000000000000000000000000000000000000000000",
+        "030000000000000000000000", NULL, "010000000000000000000000",
+        "9aab2aeb3faa0a34aea8e2b18ca50da9ae6559e48fd10f6e5c9ca17e"), 0);
+#endif /* WOLFSSL_AES_256 */
+
+    /* --- Round trip + authentication-failure handling (AES-128) --- */
+    for (i = 0; i < (word32)sizeof(key);   i++) key[i]   = (byte)i;
+    for (i = 0; i < (word32)sizeof(nonce); i++) nonce[i] = (byte)(i + 1);
+    for (i = 0; i < (word32)sizeof(aad);   i++) aad[i]   = (byte)(i + 2);
+    for (i = 0; i < (word32)sizeof(pt);    i++) pt[i]    = (byte)(i + 3);
+
+    ExpectIntEQ(wc_AesGcmSivEncrypt(key, 16, nonce, 12, aad, sizeof(aad),
+        pt, sizeof(pt), ct, tag, 16), 0);
+    ExpectIntEQ(wc_AesGcmSivDecrypt(key, 16, nonce, 12, aad, sizeof(aad),
+        ct, sizeof(pt), dec, tag, 16), 0);
+    ExpectIntEQ(XMEMCMP(pt, dec, sizeof(pt)), 0);
+
+    /* Corrupted tag -> authentication failure. */
+    tag[0] ^= 0xff;
+    ExpectIntEQ(wc_AesGcmSivDecrypt(key, 16, nonce, 12, aad, sizeof(aad),
+        ct, sizeof(pt), dec, tag, 16), WC_NO_ERR_TRACE(AES_GCM_AUTH_E));
+    tag[0] ^= 0xff;
+    /* Corrupted AAD -> authentication failure. */
+    aad[0] ^= 0xff;
+    ExpectIntEQ(wc_AesGcmSivDecrypt(key, 16, nonce, 12, aad, sizeof(aad),
+        ct, sizeof(pt), dec, tag, 16), WC_NO_ERR_TRACE(AES_GCM_AUTH_E));
+    aad[0] ^= 0xff;
+    /* Corrupted ciphertext -> authentication failure. */
+    ct[0] ^= 0xff;
+    ExpectIntEQ(wc_AesGcmSivDecrypt(key, 16, nonce, 12, aad, sizeof(aad),
+        ct, sizeof(pt), dec, tag, 16), WC_NO_ERR_TRACE(AES_GCM_AUTH_E));
+    ct[0] ^= 0xff;
+
+    /* Edge cases: empty plaintext (tag only) and empty AAD. */
+    ExpectIntEQ(wc_AesGcmSivEncrypt(key, 16, nonce, 12, NULL, 0, NULL, 0,
+        NULL, tag, 16), 0);
+    ExpectIntEQ(wc_AesGcmSivDecrypt(key, 16, nonce, 12, NULL, 0, NULL, 0,
+        NULL, tag, 16), 0);
+
+#ifdef WOLFSSL_AES_256
+    /* AES-256 round trip. */
+    ExpectIntEQ(wc_AesGcmSivEncrypt(key, 32, nonce, 12, aad, sizeof(aad),
+        pt, sizeof(pt), ct, tag, 16), 0);
+    ExpectIntEQ(wc_AesGcmSivDecrypt(key, 32, nonce, 12, aad, sizeof(aad),
+        ct, sizeof(pt), dec, tag, 16), 0);
+    ExpectIntEQ(XMEMCMP(pt, dec, sizeof(pt)), 0);
+#endif
+
+    /* --- Invalid parameters: encrypt --- */
+    ExpectIntEQ(wc_AesGcmSivEncrypt(NULL, 16, nonce, 12, aad, sizeof(aad),
+        pt, sizeof(pt), ct, tag, 16), WC_NO_ERR_TRACE(BAD_FUNC_ARG));
+    ExpectIntEQ(wc_AesGcmSivEncrypt(key, 16, NULL, 12, aad, sizeof(aad),
+        pt, sizeof(pt), ct, tag, 16), WC_NO_ERR_TRACE(BAD_FUNC_ARG));
+    ExpectIntEQ(wc_AesGcmSivEncrypt(key, 16, nonce, 12, aad, sizeof(aad),
+        pt, sizeof(pt), ct, NULL, 16), WC_NO_ERR_TRACE(BAD_FUNC_ARG));
+    /* in/out NULL while inSz != 0 */
+    ExpectIntEQ(wc_AesGcmSivEncrypt(key, 16, nonce, 12, aad, sizeof(aad),
+        NULL, sizeof(pt), ct, tag, 16), WC_NO_ERR_TRACE(BAD_FUNC_ARG));
+    ExpectIntEQ(wc_AesGcmSivEncrypt(key, 16, nonce, 12, aad, sizeof(aad),
+        pt, sizeof(pt), NULL, tag, 16), WC_NO_ERR_TRACE(BAD_FUNC_ARG));
+    /* aad NULL while aadSz != 0 */
+    ExpectIntEQ(wc_AesGcmSivEncrypt(key, 16, nonce, 12, NULL, sizeof(aad),
+        pt, sizeof(pt), ct, tag, 16), WC_NO_ERR_TRACE(BAD_FUNC_ARG));
+    /* invalid key sizes (only 16 and 32 allowed; 24/AES-192 is rejected) */
+    ExpectIntEQ(wc_AesGcmSivEncrypt(key, 0, nonce, 12, aad, sizeof(aad),
+        pt, sizeof(pt), ct, tag, 16), WC_NO_ERR_TRACE(BAD_FUNC_ARG));
+    ExpectIntEQ(wc_AesGcmSivEncrypt(key, 15, nonce, 12, aad, sizeof(aad),
+        pt, sizeof(pt), ct, tag, 16), WC_NO_ERR_TRACE(BAD_FUNC_ARG));
+    ExpectIntEQ(wc_AesGcmSivEncrypt(key, 24, nonce, 12, aad, sizeof(aad),
+        pt, sizeof(pt), ct, tag, 16), WC_NO_ERR_TRACE(BAD_FUNC_ARG));
+    ExpectIntEQ(wc_AesGcmSivEncrypt(key, 33, nonce, 12, aad, sizeof(aad),
+        pt, sizeof(pt), ct, tag, 16), WC_NO_ERR_TRACE(BAD_FUNC_ARG));
+    /* invalid nonce sizes (must be exactly 12) */
+    ExpectIntEQ(wc_AesGcmSivEncrypt(key, 16, nonce, 0, aad, sizeof(aad),
+        pt, sizeof(pt), ct, tag, 16), WC_NO_ERR_TRACE(BAD_FUNC_ARG));
+    ExpectIntEQ(wc_AesGcmSivEncrypt(key, 16, nonce, 11, aad, sizeof(aad),
+        pt, sizeof(pt), ct, tag, 16), WC_NO_ERR_TRACE(BAD_FUNC_ARG));
+    ExpectIntEQ(wc_AesGcmSivEncrypt(key, 16, nonce, 13, aad, sizeof(aad),
+        pt, sizeof(pt), ct, tag, 16), WC_NO_ERR_TRACE(BAD_FUNC_ARG));
+    /* invalid tag sizes (must be exactly 16) */
+    ExpectIntEQ(wc_AesGcmSivEncrypt(key, 16, nonce, 12, aad, sizeof(aad),
+        pt, sizeof(pt), ct, tag, 15), WC_NO_ERR_TRACE(BAD_FUNC_ARG));
+    ExpectIntEQ(wc_AesGcmSivEncrypt(key, 16, nonce, 12, aad, sizeof(aad),
+        pt, sizeof(pt), ct, tag, 17), WC_NO_ERR_TRACE(BAD_FUNC_ARG));
+
+    /* --- Invalid parameters: decrypt --- */
+    ExpectIntEQ(wc_AesGcmSivDecrypt(NULL, 16, nonce, 12, aad, sizeof(aad),
+        ct, sizeof(pt), dec, tag, 16), WC_NO_ERR_TRACE(BAD_FUNC_ARG));
+    ExpectIntEQ(wc_AesGcmSivDecrypt(key, 16, NULL, 12, aad, sizeof(aad),
+        ct, sizeof(pt), dec, tag, 16), WC_NO_ERR_TRACE(BAD_FUNC_ARG));
+    ExpectIntEQ(wc_AesGcmSivDecrypt(key, 16, nonce, 12, aad, sizeof(aad),
+        ct, sizeof(pt), dec, NULL, 16), WC_NO_ERR_TRACE(BAD_FUNC_ARG));
+    ExpectIntEQ(wc_AesGcmSivDecrypt(key, 16, nonce, 12, aad, sizeof(aad),
+        NULL, sizeof(pt), dec, tag, 16), WC_NO_ERR_TRACE(BAD_FUNC_ARG));
+    ExpectIntEQ(wc_AesGcmSivDecrypt(key, 16, nonce, 12, aad, sizeof(aad),
+        ct, sizeof(pt), NULL, tag, 16), WC_NO_ERR_TRACE(BAD_FUNC_ARG));
+    ExpectIntEQ(wc_AesGcmSivDecrypt(key, 16, NULL, 12, NULL, sizeof(aad),
+        ct, sizeof(pt), dec, tag, 16), WC_NO_ERR_TRACE(BAD_FUNC_ARG));
+    ExpectIntEQ(wc_AesGcmSivDecrypt(key, 24, nonce, 12, aad, sizeof(aad),
+        ct, sizeof(pt), dec, tag, 16), WC_NO_ERR_TRACE(BAD_FUNC_ARG));
+    ExpectIntEQ(wc_AesGcmSivDecrypt(key, 16, nonce, 13, aad, sizeof(aad),
+        ct, sizeof(pt), dec, tag, 16), WC_NO_ERR_TRACE(BAD_FUNC_ARG));
+    ExpectIntEQ(wc_AesGcmSivDecrypt(key, 16, nonce, 12, aad, sizeof(aad),
+        ct, sizeof(pt), dec, tag, 17), WC_NO_ERR_TRACE(BAD_FUNC_ARG));
+#endif /* WOLFSSL_AESGCM_SIV && !NO_AES && HAVE_AESGCM && WOLFSSL_AES_128 */
+    return EXPECT_RESULT();
+}
+
 /*
  * Non-standard (non-96-bit) nonce tests for AES-GCM.
  *
@@ -8699,6 +8936,312 @@ out:
 }
 
 #endif /* WOLF_CRYPTO_CB && WOLF_CRYPTO_CB_AES_SETKEY && !NO_AES && HAVE_AESGCM */
+
+
+/*----------------------------------------------------------------------------*
+ | CryptoCB AES-CFB End-to-End Offload Test
+ *----------------------------------------------------------------------------*/
+
+#if defined(WOLF_CRYPTO_CB) && !defined(NO_AES) && defined(WOLFSSL_AES_CFB) && \
+    !defined(WOLF_CRYPTO_CB_ONLY_AES)
+
+#if defined(WOLFSSL_AES_128)
+
+#define TEST_CRYPTOCB_AESCFB_DEVID  10
+
+static int cryptoCbAesCfbEncryptCalled = 0;
+static int cryptoCbAesCfbDecryptCalled = 0;
+
+/* Mock CryptoCB callback that "offloads" AES-CFB.  It routes the request back
+ * to the software implementation, temporarily setting devId to INVALID_DEVID
+ * so the nested wc_AesCfb*crypt() call runs in software instead of recursing
+ * into the callback. */
+static int test_CryptoCb_AesCfb_Cb(int devId, wc_CryptoInfo* info, void* ctx)
+{
+    (void)ctx;
+
+    if (devId != TEST_CRYPTOCB_AESCFB_DEVID)
+        return CRYPTOCB_UNAVAILABLE;
+
+    if (info->algo_type == WC_ALGO_TYPE_CIPHER &&
+        info->cipher.type == WC_CIPHER_AES_CFB) {
+        Aes* aes = info->cipher.aescfb.aes;
+        int ret;
+
+        if (aes == NULL)
+            return BAD_FUNC_ARG;
+
+        /* run software, no recursion */
+        aes->devId = INVALID_DEVID;
+        if (info->cipher.enc) {
+            cryptoCbAesCfbEncryptCalled++;
+            ret = wc_AesCfbEncrypt(aes, info->cipher.aescfb.out,
+                info->cipher.aescfb.in, info->cipher.aescfb.sz);
+        }
+#ifdef HAVE_AES_DECRYPT
+        else {
+            cryptoCbAesCfbDecryptCalled++;
+            ret = wc_AesCfbDecrypt(aes, info->cipher.aescfb.out,
+                info->cipher.aescfb.in, info->cipher.aescfb.sz);
+        }
+#else
+        else {
+            ret = NOT_COMPILED_IN;
+        }
+#endif
+        aes->devId = TEST_CRYPTOCB_AESCFB_DEVID;
+
+        return ret;
+    }
+
+    return CRYPTOCB_UNAVAILABLE;
+}
+#endif /* WOLFSSL_AES_128 */
+
+/*
+ * Test: End-to-End AES-CFB Offload via CryptoCB
+ * Verifies that wc_AesCfbEncrypt/Decrypt route through a registered CryptoCB
+ * device, that the callback is invoked for both directions, that the offloaded
+ * ciphertext matches a software-only reference (correctness), and that the
+ * offloaded round-trip recovers the plaintext.
+ */
+int test_wc_CryptoCb_AesCfb_EncryptDecrypt(void)
+{
+    EXPECT_DECLS;
+#if defined(WOLFSSL_AES_128)
+    Aes enc;
+#ifdef HAVE_AES_DECRYPT
+    Aes dec;
+#endif
+    static const byte key[AES_128_KEY_SIZE] = {
+        0x2b,0x7e,0x15,0x16, 0x28,0xae,0xd2,0xa6,
+        0xab,0xf7,0x15,0x88, 0x09,0xcf,0x4f,0x3c
+    };
+    static const byte iv[WC_AES_BLOCK_SIZE] = {
+        0x00,0x01,0x02,0x03, 0x04,0x05,0x06,0x07,
+        0x08,0x09,0x0a,0x0b, 0x0c,0x0d,0x0e,0x0f
+    };
+    static const byte plain[2 * WC_AES_BLOCK_SIZE] = {
+        0x6b,0xc1,0xbe,0xe2, 0x2e,0x40,0x9f,0x96,
+        0xe9,0x3d,0x7e,0x11, 0x73,0x93,0x17,0x2a,
+        0xae,0x2d,0x8a,0x57, 0x1e,0x03,0xac,0x9c,
+        0x9e,0xb7,0x6f,0xac, 0x45,0xaf,0x8e,0x51
+    };
+    byte refCipher[2 * WC_AES_BLOCK_SIZE];
+    byte cipher[2 * WC_AES_BLOCK_SIZE];
+    byte decrypted[2 * WC_AES_BLOCK_SIZE];
+    int devRegistered = 0;
+
+    XMEMSET(&enc, 0, sizeof(enc));
+#ifdef HAVE_AES_DECRYPT
+    XMEMSET(&dec, 0, sizeof(dec));
+#endif
+    XMEMSET(refCipher, 0, sizeof(refCipher));
+    XMEMSET(cipher, 0, sizeof(cipher));
+    XMEMSET(decrypted, 0, sizeof(decrypted));
+
+    cryptoCbAesCfbEncryptCalled = 0;
+    cryptoCbAesCfbDecryptCalled = 0;
+
+    /* Software-only reference ciphertext (no devId, no callback). */
+    ExpectIntEQ(wc_AesInit(&enc, NULL, INVALID_DEVID), 0);
+    ExpectIntEQ(wc_AesSetKey(&enc, key, sizeof(key), iv, AES_ENCRYPTION), 0);
+    ExpectIntEQ(wc_AesCfbEncrypt(&enc, refCipher, plain, sizeof(plain)), 0);
+    wc_AesFree(&enc);
+    XMEMSET(&enc, 0, sizeof(enc));
+
+    /* Register the offload callback. */
+    ExpectIntEQ(wc_CryptoCb_RegisterDevice(TEST_CRYPTOCB_AESCFB_DEVID,
+        test_CryptoCb_AesCfb_Cb, NULL), 0);
+    if (EXPECT_SUCCESS())
+        devRegistered = 1;
+
+    /* Both contexts carry the offload devId so the AES-CFB calls route through
+     * the callback. */
+    ExpectIntEQ(wc_AesInit(&enc, NULL, TEST_CRYPTOCB_AESCFB_DEVID), 0);
+    ExpectIntEQ(wc_AesSetKey(&enc, key, sizeof(key), iv, AES_ENCRYPTION), 0);
+#ifdef HAVE_AES_DECRYPT
+    ExpectIntEQ(wc_AesInit(&dec, NULL, TEST_CRYPTOCB_AESCFB_DEVID), 0);
+    ExpectIntEQ(wc_AesSetKey(&dec, key, sizeof(key), iv, AES_ENCRYPTION), 0);
+#endif
+
+    /* Encrypt - must route through the callback and match the SW reference. */
+    ExpectIntEQ(wc_AesCfbEncrypt(&enc, cipher, plain, sizeof(plain)), 0);
+    ExpectIntEQ(cryptoCbAesCfbEncryptCalled, 1);
+    ExpectBufEQ(cipher, refCipher, sizeof(refCipher));
+
+#ifdef HAVE_AES_DECRYPT
+    /* Decrypt - must route through the callback and recover the plaintext. */
+    ExpectIntEQ(wc_AesCfbDecrypt(&dec, decrypted, cipher, sizeof(cipher)), 0);
+    ExpectIntEQ(cryptoCbAesCfbDecryptCalled, 1);
+    ExpectBufEQ(decrypted, plain, sizeof(plain));
+#endif
+
+    wc_AesFree(&enc);
+#ifdef HAVE_AES_DECRYPT
+    wc_AesFree(&dec);
+#endif
+
+    if (devRegistered)
+        wc_CryptoCb_UnRegisterDevice(TEST_CRYPTOCB_AESCFB_DEVID);
+#endif /* WOLFSSL_AES_128 */
+    return EXPECT_RESULT();
+}
+
+#endif /* WOLF_CRYPTO_CB && !NO_AES && WOLFSSL_AES_CFB && !WOLF_CRYPTO_CB_ONLY_AES */
+
+
+/*----------------------------------------------------------------------------*
+ | CryptoCB AES-OFB End-to-End Offload Test
+ *----------------------------------------------------------------------------*/
+
+#if defined(WOLF_CRYPTO_CB) && !defined(NO_AES) && defined(WOLFSSL_AES_OFB) && \
+    !defined(WOLF_CRYPTO_CB_ONLY_AES)
+
+#if defined(WOLFSSL_AES_128)
+
+#define TEST_CRYPTOCB_AESOFB_DEVID  11
+
+static int cryptoCbAesOfbEncryptCalled = 0;
+static int cryptoCbAesOfbDecryptCalled = 0;
+
+/* Mock CryptoCB callback that "offloads" AES-OFB.  It routes the request back
+ * to the software implementation, temporarily setting devId to INVALID_DEVID
+ * so the nested wc_AesOfb*crypt() call runs in software instead of recursing
+ * into the callback. */
+static int test_CryptoCb_AesOfb_Cb(int devId, wc_CryptoInfo* info, void* ctx)
+{
+    (void)ctx;
+
+    if (devId != TEST_CRYPTOCB_AESOFB_DEVID)
+        return CRYPTOCB_UNAVAILABLE;
+
+    if (info->algo_type == WC_ALGO_TYPE_CIPHER &&
+        info->cipher.type == WC_CIPHER_AES_OFB) {
+        Aes* aes = info->cipher.aesofb.aes;
+        int ret;
+
+        if (aes == NULL)
+            return BAD_FUNC_ARG;
+
+        /* run software, no recursion */
+        aes->devId = INVALID_DEVID;
+        if (info->cipher.enc) {
+            cryptoCbAesOfbEncryptCalled++;
+            ret = wc_AesOfbEncrypt(aes, info->cipher.aesofb.out,
+                info->cipher.aesofb.in, info->cipher.aesofb.sz);
+        }
+#ifdef HAVE_AES_DECRYPT
+        else {
+            cryptoCbAesOfbDecryptCalled++;
+            ret = wc_AesOfbDecrypt(aes, info->cipher.aesofb.out,
+                info->cipher.aesofb.in, info->cipher.aesofb.sz);
+        }
+#else
+        else {
+            ret = NOT_COMPILED_IN;
+        }
+#endif
+        aes->devId = TEST_CRYPTOCB_AESOFB_DEVID;
+
+        return ret;
+    }
+
+    return CRYPTOCB_UNAVAILABLE;
+}
+#endif /* WOLFSSL_AES_128 */
+
+/*
+ * Test: End-to-End AES-OFB Offload via CryptoCB
+ * Verifies that wc_AesOfbEncrypt/Decrypt route through a registered CryptoCB
+ * device, that the callback is invoked for both directions, that the offloaded
+ * ciphertext matches a software-only reference (correctness), and that the
+ * offloaded round-trip recovers the plaintext.
+ */
+int test_wc_CryptoCb_AesOfb_EncryptDecrypt(void)
+{
+    EXPECT_DECLS;
+#if defined(WOLFSSL_AES_128)
+    Aes enc;
+#ifdef HAVE_AES_DECRYPT
+    Aes dec;
+#endif
+    static const byte key[AES_128_KEY_SIZE] = {
+        0x2b,0x7e,0x15,0x16, 0x28,0xae,0xd2,0xa6,
+        0xab,0xf7,0x15,0x88, 0x09,0xcf,0x4f,0x3c
+    };
+    static const byte iv[WC_AES_BLOCK_SIZE] = {
+        0x00,0x01,0x02,0x03, 0x04,0x05,0x06,0x07,
+        0x08,0x09,0x0a,0x0b, 0x0c,0x0d,0x0e,0x0f
+    };
+    static const byte plain[2 * WC_AES_BLOCK_SIZE] = {
+        0x6b,0xc1,0xbe,0xe2, 0x2e,0x40,0x9f,0x96,
+        0xe9,0x3d,0x7e,0x11, 0x73,0x93,0x17,0x2a,
+        0xae,0x2d,0x8a,0x57, 0x1e,0x03,0xac,0x9c,
+        0x9e,0xb7,0x6f,0xac, 0x45,0xaf,0x8e,0x51
+    };
+    byte refCipher[2 * WC_AES_BLOCK_SIZE];
+    byte cipher[2 * WC_AES_BLOCK_SIZE];
+    byte decrypted[2 * WC_AES_BLOCK_SIZE];
+    int devRegistered = 0;
+
+    XMEMSET(&enc, 0, sizeof(enc));
+#ifdef HAVE_AES_DECRYPT
+    XMEMSET(&dec, 0, sizeof(dec));
+#endif
+    XMEMSET(refCipher, 0, sizeof(refCipher));
+    XMEMSET(cipher, 0, sizeof(cipher));
+    XMEMSET(decrypted, 0, sizeof(decrypted));
+
+    cryptoCbAesOfbEncryptCalled = 0;
+    cryptoCbAesOfbDecryptCalled = 0;
+
+    /* Software-only reference ciphertext (no devId, no callback). */
+    ExpectIntEQ(wc_AesInit(&enc, NULL, INVALID_DEVID), 0);
+    ExpectIntEQ(wc_AesSetKey(&enc, key, sizeof(key), iv, AES_ENCRYPTION), 0);
+    ExpectIntEQ(wc_AesOfbEncrypt(&enc, refCipher, plain, sizeof(plain)), 0);
+    wc_AesFree(&enc);
+    XMEMSET(&enc, 0, sizeof(enc));
+
+    /* Register the offload callback. */
+    ExpectIntEQ(wc_CryptoCb_RegisterDevice(TEST_CRYPTOCB_AESOFB_DEVID,
+        test_CryptoCb_AesOfb_Cb, NULL), 0);
+    if (EXPECT_SUCCESS())
+        devRegistered = 1;
+
+    /* Both contexts carry the offload devId so the AES-OFB calls route through
+     * the callback. */
+    ExpectIntEQ(wc_AesInit(&enc, NULL, TEST_CRYPTOCB_AESOFB_DEVID), 0);
+    ExpectIntEQ(wc_AesSetKey(&enc, key, sizeof(key), iv, AES_ENCRYPTION), 0);
+#ifdef HAVE_AES_DECRYPT
+    ExpectIntEQ(wc_AesInit(&dec, NULL, TEST_CRYPTOCB_AESOFB_DEVID), 0);
+    ExpectIntEQ(wc_AesSetKey(&dec, key, sizeof(key), iv, AES_ENCRYPTION), 0);
+#endif
+
+    /* Encrypt - must route through the callback and match the SW reference. */
+    ExpectIntEQ(wc_AesOfbEncrypt(&enc, cipher, plain, sizeof(plain)), 0);
+    ExpectIntEQ(cryptoCbAesOfbEncryptCalled, 1);
+    ExpectBufEQ(cipher, refCipher, sizeof(refCipher));
+
+#ifdef HAVE_AES_DECRYPT
+    /* Decrypt - must route through the callback and recover the plaintext. */
+    ExpectIntEQ(wc_AesOfbDecrypt(&dec, decrypted, cipher, sizeof(cipher)), 0);
+    ExpectIntEQ(cryptoCbAesOfbDecryptCalled, 1);
+    ExpectBufEQ(decrypted, plain, sizeof(plain));
+#endif
+
+    wc_AesFree(&enc);
+#ifdef HAVE_AES_DECRYPT
+    wc_AesFree(&dec);
+#endif
+
+    if (devRegistered)
+        wc_CryptoCb_UnRegisterDevice(TEST_CRYPTOCB_AESOFB_DEVID);
+#endif /* WOLFSSL_AES_128 */
+    return EXPECT_RESULT();
+}
+
+#endif /* WOLF_CRYPTO_CB && !NO_AES && WOLFSSL_AES_OFB && !WOLF_CRYPTO_CB_ONLY_AES */
 
 
 /*----------------------------------------------------------------------------*

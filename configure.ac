@@ -1330,7 +1330,6 @@ then
     test "$enable_savecert" = "" && enable_savecert=yes
     test "$enable_postauth" = "" && enable_postauth=yes
     test "$enable_hrrcookie" = "" && enable_hrrcookie=yes
-    test "$enable_fallback_scsv" = "" && enable_fallback_scsv=yes
     test "$enable_crl_monitor" = "" && enable_crl_monitor=yes
     test "$enable_sni" = "" && enable_sni=yes
     test "$enable_maxfragment" = "" && enable_maxfragment=yes
@@ -3534,6 +3533,25 @@ AC_ARG_ENABLE([aessiv],
 if test "$ENABLED_CHRONY" = "yes"
 then
     ENABLED_AESSIV=yes
+fi
+
+# AES-GCM-SIV (RFC 8452)
+AC_ARG_ENABLE([aesgcm-siv],
+    [AS_HELP_STRING([--enable-aesgcm-siv],[Enable AES-GCM-SIV (RFC 8452) (default: disabled)])],
+    [ ENABLED_AESGCMSIV=$enableval ],
+    [ ENABLED_AESGCMSIV=no ]
+    )
+
+if test "$ENABLED_AESGCMSIV" = "yes"
+then
+    if test "$ENABLED_AESGCM" = "no"
+    then
+        AC_MSG_ERROR([AES-GCM-SIV requires AES-GCM. Please enable it (--enable-aesgcm).])
+    fi
+    AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_AESGCM_SIV"
+    # The generated AES-GCM-SIV assembly (aes_gcm_asm.S) is guarded by
+    # WOLFSSL_AESGCM_SIV, so the assembler needs the define too.
+    AM_CCASFLAGS="$AM_CCASFLAGS -DWOLFSSL_AESGCM_SIV"
 fi
 
 # AES-CTR
@@ -8489,18 +8507,6 @@ AC_ARG_ENABLE([secure-renegotiation-info],
     )
 
 
-# Fallback SCSV
-AC_ARG_ENABLE([fallback-scsv],
-    [AS_HELP_STRING([--enable-fallback-scsv],[Enable Fallback SCSV (default: disabled)])],
-    [ ENABLED_FALLBACK_SCSV=$enableval ],
-    [ ENABLED_FALLBACK_SCSV=no ]
-    )
-
-if test "x$ENABLED_FALLBACK_SCSV" = "xyes"
-then
-    AM_CFLAGS="$AM_CFLAGS -DHAVE_FALLBACK_SCSV"
-fi
-
 # Exporting Keying Material
 AC_ARG_ENABLE([keying-material],
     [AS_HELP_STRING([--enable-keying-material],[Enable Keying Material Exporters (default: disabled)])],
@@ -8700,6 +8706,28 @@ AC_ARG_ENABLE([pkcs7],
 if test "x$ENABLED_WPAS_DPP" = "xyes"
 then
     ENABLED_PKCS7=yes
+fi
+
+# RFC 3161 Time-Stamp Protocol (TSP)
+AC_ARG_ENABLE([tsp],
+    [AS_HELP_STRING([--enable-tsp],[Enable RFC 3161 Time-Stamp Protocol (default: disabled)])],
+    [ ENABLED_TSP=$enableval ],
+    [ ENABLED_TSP=no ]
+    )
+
+if test "x$ENABLED_TSP" = "xyes"
+then
+    # TSP ASN.1 encoding/decoding is only implemented with the template parser.
+    if test "$ASN_IMPL" = "original"
+    then
+        AC_MSG_ERROR([--enable-tsp is not supported with --enable-asn=original.])
+    fi
+    AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_TSP"
+    # Requires PKCS7 for time-stamp token creation and verification
+    if test "x$ENABLED_PKCS7" = "xno"
+    then
+        ENABLED_PKCS7="yes"
+    fi
 fi
 
 # wolfSSH Options
@@ -12589,6 +12617,7 @@ AM_CONDITIONAL([BUILD_HEAPMATH],[test "x$ENABLED_HEAPMATH" = "xyes" || test "x$E
 AM_CONDITIONAL([BUILD_EXAMPLE_SERVERS],[test "x$ENABLED_EXAMPLES" = "xyes" && test "x$ENABLED_LEANTLS" = "xno"])
 AM_CONDITIONAL([BUILD_EXAMPLE_CLIENTS],[test "x$ENABLED_EXAMPLES" = "xyes"])
 AM_CONDITIONAL([BUILD_EXAMPLE_ASN1],[test "x$ENABLED_EXAMPLES" = "xyes" && test "x$ENABLED_ASN_PRINT" = "xyes" && test "$ENABLED_ASN" != "no"])
+AM_CONDITIONAL([BUILD_EXAMPLE_TSP],[test "x$ENABLED_EXAMPLES" = "xyes" && test "x$ENABLED_TSP" = "xyes"])
 AM_CONDITIONAL([BUILD_OCSP_RESPONDER],[test "x$ENABLED_EXAMPLES" = "xyes" && test "x$ENABLED_OCSP_RESPONDER" = "xyes"])
 AM_CONDITIONAL([BUILD_TESTS],[test "x$ENABLED_EXAMPLES" = "xyes"])
 AM_CONDITIONAL([BUILD_THREADED_EXAMPLES],[test "x$ENABLED_SINGLETHREADED" = "xno" && test "x$ENABLED_EXAMPLES" = "xyes" && test "x$ENABLED_LEANTLS" = "xno"])
@@ -12630,6 +12659,7 @@ AM_CONDITIONAL([BUILD_TRUST_PEER_CERT],[test "x$ENABLED_TRUSTED_PEER_CERT" = "xy
 AM_CONDITIONAL([BUILD_PKI],[test "x$ENABLED_PKI" = "xyes"])
 AM_CONDITIONAL([BUILD_DES3],[test "x$ENABLED_DES3" = "xyes" || test "x$ENABLED_USERSETTINGS" = "xyes"])
 AM_CONDITIONAL([BUILD_PKCS7],[test "x$ENABLED_PKCS7" = "xyes" || test "x$ENABLED_USERSETTINGS" = "xyes"])
+AM_CONDITIONAL([BUILD_TSP],[test "x$ENABLED_TSP" = "xyes" || test "x$ENABLED_USERSETTINGS" = "xyes"])
 AM_CONDITIONAL([BUILD_SMIME],[test "x$ENABLED_SMIME" = "xyes" || test "x$ENABLED_USERSETTINGS" = "xyes"])
 AM_CONDITIONAL([BUILD_HASHFLAGS],[test "x$ENABLED_HASHFLAGS" = "xyes"])
 AM_CONDITIONAL([BUILD_LINUXKM],[test "$ENABLED_LINUXKM" = "yes"])
@@ -13013,6 +13043,7 @@ echo "   * AES-OFB:                    $ENABLED_AESOFB"
 echo "   * AES-XTS:                    $ENABLED_AESXTS"
 echo "   * AES-XTS streaming:          $ENABLED_AESXTS_STREAM"
 echo "   * AES-SIV:                    $ENABLED_AESSIV"
+echo "   * AES-GCM-SIV:                $ENABLED_AESGCMSIV"
 echo "   * AES-EAX:                    $ENABLED_AESEAX"
 echo "   * AES Bitspliced:             $ENABLED_AESBS"
 echo "   * AES Key Wrap:               $ENABLED_AESKEYWRAP"
@@ -13164,11 +13195,11 @@ echo "   * Session Ticket:             $ENABLED_SESSION_TICKET"
 echo "   * Extended Master Secret:     $ENABLED_EXTENDED_MASTER"
 echo "   * Renegotiation Indication:   $ENABLED_RENEGOTIATION_INDICATION"
 echo "   * Secure Renegotiation:       $ENABLED_SECURE_RENEGOTIATION"
-echo "   * Fallback SCSV:              $ENABLED_FALLBACK_SCSV"
 echo "   * Keying Material Exporter:   $ENABLED_KEYING_MATERIAL"
 echo "   * All TLS Extensions:         $ENABLED_TLSX"
 echo "   * S/MIME:                     $ENABLED_SMIME"
 echo "   * PKCS#7:                     $ENABLED_PKCS7"
+echo "   * TSP:                        $ENABLED_TSP"
 echo "   * PKCS#8:                     $ENABLED_PKCS8"
 echo "   * PKCS#11:                    $ENABLED_PKCS11"
 echo "   * PKCS#12:                    $ENABLED_PKCS12"

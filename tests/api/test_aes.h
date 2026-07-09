@@ -51,6 +51,7 @@ int test_wc_AesGcmEncryptDecrypt_UnalignedBuffers(void);
 int test_wc_AesGcm_CrossCipher(void);
 int test_wc_AesGcmMixedEncDecLongIV(void);
 int test_wc_AesGcmNonStdNonce(void);
+int test_wc_AesGcmSivEncryptDecrypt(void);
 int test_wc_AesGcmStream(void);
 int test_wc_AesGcmStream_MidStreamState(void);
 int test_wc_AesGcmStream_ReinitAfterFinal(void);
@@ -94,6 +95,14 @@ int test_wc_GmacUpdate(void);
 int test_wc_CryptoCb_AesSetKey(void);
 int test_wc_CryptoCb_AesGcm_EncryptDecrypt(void);
 #endif
+#if defined(WOLF_CRYPTO_CB) && !defined(NO_AES) && defined(WOLFSSL_AES_CFB) && \
+    !defined(WOLF_CRYPTO_CB_ONLY_AES)
+int test_wc_CryptoCb_AesCfb_EncryptDecrypt(void);
+#endif
+#if defined(WOLF_CRYPTO_CB) && !defined(NO_AES) && defined(WOLFSSL_AES_OFB) && \
+    !defined(WOLF_CRYPTO_CB_ONLY_AES)
+int test_wc_CryptoCb_AesOfb_EncryptDecrypt(void);
+#endif
 
 /* These test functions always have a (possibly empty) definition in
  * test_aes.c so that callers can reference them unconditionally.  Declare
@@ -119,6 +128,22 @@ int test_wc_CryptoCb_Tls13_Key_No_Zero_Without_Offload(void);
                                         TEST_DECL_GROUP("aes", test_wc_CryptoCb_AesGcm_EncryptDecrypt)
 #else
 #define TEST_CRYPTOCB_AES_SETKEY_DECL
+#endif
+
+#if defined(WOLF_CRYPTO_CB) && !defined(NO_AES) && defined(WOLFSSL_AES_CFB) && \
+    !defined(WOLF_CRYPTO_CB_ONLY_AES)
+#define TEST_CRYPTOCB_AESCFB_DECL \
+    , TEST_DECL_GROUP("aes", test_wc_CryptoCb_AesCfb_EncryptDecrypt)
+#else
+#define TEST_CRYPTOCB_AESCFB_DECL
+#endif
+
+#if defined(WOLF_CRYPTO_CB) && !defined(NO_AES) && defined(WOLFSSL_AES_OFB) && \
+    !defined(WOLF_CRYPTO_CB_ONLY_AES)
+#define TEST_CRYPTOCB_AESOFB_DECL \
+    , TEST_DECL_GROUP("aes", test_wc_CryptoCb_AesOfb_EncryptDecrypt)
+#else
+#define TEST_CRYPTOCB_AESOFB_DECL
 #endif
 
 #define TEST_AES_DECLS                                          \
@@ -149,6 +174,7 @@ int test_wc_CryptoCb_Tls13_Key_No_Zero_Without_Offload(void);
     TEST_DECL_GROUP("aes", test_wc_AesGcm_CrossCipher),                    \
     TEST_DECL_GROUP("aes", test_wc_AesGcmMixedEncDecLongIV),                \
     TEST_DECL_GROUP("aes", test_wc_AesGcmNonStdNonce),          \
+    TEST_DECL_GROUP("aes", test_wc_AesGcmSivEncryptDecrypt),    \
     TEST_DECL_GROUP("aes", test_wc_AesGcmStream),               \
     TEST_DECL_GROUP("aes", test_wc_AesGcmStream_MidStreamState),  \
     TEST_DECL_GROUP("aes", test_wc_AesGcmStream_ReinitAfterFinal), \
@@ -174,7 +200,9 @@ int test_wc_CryptoCb_Tls13_Key_No_Zero_Without_Offload(void);
     TEST_DECL_GROUP("aes", test_wc_AesCfb_MonteCarlo),    \
     TEST_DECL_GROUP("aes", test_wc_AesOfb_MonteCarlo)     \
     TEST_CRYPTOCB_AES_SETKEY_DECL                         \
-    TEST_CRYPTOCB_TLS13_KEY_ZERO_DECL
+    TEST_CRYPTOCB_TLS13_KEY_ZERO_DECL                     \
+    TEST_CRYPTOCB_AESCFB_DECL                             \
+    TEST_CRYPTOCB_AESOFB_DECL
 
 #if defined(WOLFSSL_AES_EAX) && defined(WOLFSSL_AES_256) && \
     (!defined(HAVE_FIPS) || FIPS_VERSION_GE(5, 3)) && !defined(HAVE_SELFTEST)

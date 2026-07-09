@@ -455,6 +455,9 @@ WC_RNG* wolfssl_make_rng(WC_RNG* rng, int* local)
 #include "src/ssl_asn1.c"
 #endif /* OPENSSL_EXTRA_NO_ASN1 */
 
+#define WOLFSSL_SSL_TSP_INCLUDED
+#include "src/ssl_tsp.c"
+
 #define WOLFSSL_PK_INCLUDED
 #include "src/pk.c"
 
@@ -1131,6 +1134,10 @@ int wolfSSL_set_read_fd(WOLFSSL* ssl, int fd)
         if (ssl->options.dtls) {
             ssl->IOCB_ReadCtx = &ssl->buffers.dtlsCtx;
             ssl->buffers.dtlsCtx.rfd = fd;
+        #ifdef USE_WOLFSSL_IO
+            ssl->buffers.dtlsCtx.rfdIsDGram =
+                (byte)(wolfIO_SockIsDGram(fd) != 0);
+        #endif
         }
     #endif
 
@@ -1155,6 +1162,10 @@ int wolfSSL_set_write_fd(WOLFSSL* ssl, int fd)
         if (ssl->options.dtls) {
             ssl->IOCB_WriteCtx = &ssl->buffers.dtlsCtx;
             ssl->buffers.dtlsCtx.wfd = fd;
+        #ifdef USE_WOLFSSL_IO
+            ssl->buffers.dtlsCtx.wfdIsDGram =
+                (byte)(wolfIO_SockIsDGram(fd) != 0);
+        #endif
         }
     #endif
 
@@ -2219,6 +2230,17 @@ int wolfSSL_shutdown(WOLFSSL* ssl)
 
         /* wolfSSL_shutdown called again for bidirectional shutdown */
         if (ssl->options.sentNotify && !ssl->options.closeNotify) {
+            /* If there is still buffered application data waiting to be read,
+             * do not process incoming records here. clearOutputBuffer.buffer
+             * points into inputBuffer, and ProcessReply() may call
+             * GrowInputBuffer(), which frees and reallocates inputBuffer.
+             * Require the pending data to be drained first. */
+            if (ssl->buffers.clearOutputBuffer.length > 0) {
+                WOLFSSL_MSG("Pending application data, read it before shutdown");
+                ret = WOLFSSL_SHUTDOWN_NOT_DONE;
+                WOLFSSL_LEAVE("wolfSSL_shutdown", ret);
+                return ret;
+            }
             ret = ProcessReply(ssl);
             if ((ret == WC_NO_ERR_TRACE(ZERO_RETURN)) ||
                 (ret == WC_NO_ERR_TRACE(SOCKET_ERROR_E))) {
@@ -6203,16 +6225,16 @@ int wolfSSL_set_compression(WOLFSSL* ssl)
          * a chain */
         if ((flags & WOLFSSL_BIO_FLAG_READ) && (ssl->biord != NULL)) {
             if ((flags & WOLFSSL_BIO_FLAG_WRITE) && (ssl->biord != ssl->biowr)) {
-                if (ssl->biowr != NULL && ssl->biowr->prev != NULL)
+                if (ssl->biowr != NULL && ssl->biowr->prev == NULL)
                     wolfSSL_BIO_free(ssl->biowr);
                 ssl->biowr = NULL;
             }
-            if (ssl->biord->prev != NULL)
+            if (ssl->biord->prev == NULL)
                 wolfSSL_BIO_free(ssl->biord);
             ssl->biord = NULL;
         }
         else if ((flags & WOLFSSL_BIO_FLAG_WRITE) && (ssl->biowr != NULL)) {
-            if (ssl->biowr->prev != NULL)
+            if (ssl->biowr->prev == NULL)
                 wolfSSL_BIO_free(ssl->biowr);
             ssl->biowr = NULL;
         }
@@ -6819,6 +6841,10 @@ int wolfSSL_set_compression(WOLFSSL* ssl)
         if (ssl->options.dtls) {
             ssl->IOCB_ReadCtx = &ssl->buffers.dtlsCtx;
             ssl->buffers.dtlsCtx.rfd = rfd;
+        #ifdef USE_WOLFSSL_IO
+            ssl->buffers.dtlsCtx.rfdIsDGram =
+                (byte)(wolfIO_SockIsDGram(rfd) != 0);
+        #endif
         }
     #endif
 

@@ -703,6 +703,7 @@ WOLFSSL_LOCAL int SslBioReceive(WOLFSSL* ssl, char* buf, int sz, void* ctx);
         WOLFSSL_API int EmbedSendTo(WOLFSSL* ssl, char *buf, int sz, void *ctx);
         WOLFSSL_API int EmbedGenerateCookie(WOLFSSL* ssl, byte *buf, int sz,
                                             void *ctx);
+        WOLFSSL_LOCAL int wolfIO_SockIsDGram(int sfd);
         #ifdef WOLFSSL_MULTICAST
             WOLFSSL_API int EmbedReceiveFromMcast(WOLFSSL *ssl, char *buf,
                                                   int sz, void *ctx);
@@ -790,9 +791,17 @@ WOLFSSL_API void wolfSSL_SetIOWriteFlags(WOLFSSL* ssl, int flags);
 #ifdef HAVE_NETX
     WOLFSSL_LOCAL int NetX_Receive(WOLFSSL *ssl, char *buf, int sz, void *ctx);
     WOLFSSL_LOCAL int NetX_Send(WOLFSSL *ssl, char *buf, int sz, void *ctx);
-
     WOLFSSL_API void wolfSSL_SetIO_NetX(WOLFSSL* ssl, NX_TCP_SOCKET* nxsocket,
                                       ULONG waitoption);
+/* WOLFSSL_NETX_DUO: requires ThreadX NetX Duo (NXD_ADDRESS, nxd_udp_socket_send) */
+#if defined(WOLFSSL_DTLS) && defined(WOLFSSL_NETX_DUO)
+    WOLFSSL_LOCAL int NetX_ReceiveFrom(WOLFSSL *ssl, char *buf, int sz, void *ctx);
+    WOLFSSL_LOCAL int NetX_SendTo(WOLFSSL *ssl, char *buf, int sz, void *ctx);
+    WOLFSSL_API void wolfSSL_SetIO_NetX_Dtls(WOLFSSL* ssl, NX_UDP_SOCKET* nxsocket,
+                                        NXD_ADDRESS nxdip,
+                                        USHORT nxport,
+                                        ULONG waitoption);
+#endif /* WOLFSSL_DTLS && WOLFSSL_NETX_DUO */
 #endif /* HAVE_NETX */
 
 #ifdef MICRIUM
