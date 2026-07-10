@@ -11450,6 +11450,9 @@ int WARN_UNUSED_RESULT AES_GCM_decrypt_C(
     ret = (ret & ~res);
     ret |= (res & WC_NO_ERR_TRACE(AES_GCM_AUTH_E));
 #endif
+    if (ret != 0) {
+        ForceZero(out, sz);
+    }
     return ret;
 }
 #elif (defined(__aarch64__) || defined(WOLFSSL_ARMASM_NO_HW_CRYPTO)) || \
@@ -19432,8 +19435,9 @@ int  wc_AesEaxEncryptAuth(const byte* key, word32 keySz, byte* out,
     int ret;
     int eaxInited = 0;
 
-    if (key == NULL || out == NULL || in == NULL || nonce == NULL
-                              || authTag == NULL || authIn == NULL) {
+    if (key == NULL || nonce == NULL || authTag == NULL
+            || (inSz > 0 && (out == NULL || in == NULL))
+            || (authInSz > 0 && authIn == NULL)) {
         return BAD_FUNC_ARG;
     }
 
@@ -19495,8 +19499,9 @@ int  wc_AesEaxDecryptAuth(const byte* key, word32 keySz, byte* out,
     int ret;
     int eaxInited = 0;
 
-    if (key == NULL || out == NULL || in == NULL || nonce == NULL
-                              || authTag == NULL || authIn == NULL) {
+    if (key == NULL || nonce == NULL || authTag == NULL
+            || (inSz > 0 && (out == NULL || in == NULL))
+            || (authInSz > 0 && authIn == NULL)) {
         return BAD_FUNC_ARG;
     }
 
@@ -19689,24 +19694,27 @@ int  wc_AesEaxEncryptUpdate(AesEax* eax, byte* out,
 {
     int ret;
 
-    if (eax == NULL || out == NULL ||  in == NULL) {
+    if (eax == NULL || (inSz > 0 && (out == NULL || in == NULL))
+            || (authInSz > 0 && authIn == NULL)) {
         return BAD_FUNC_ARG;
     }
 
-    /*
-     * Encrypt the plaintext using AES CTR
-     *  C = CTR(M)
-     */
-    if ((ret = wc_AesCtrEncrypt(&eax->aes, out, in, inSz)) != 0) {
-        return ret;
-    }
+    if (inSz > 0) {
+        /*
+         * Encrypt the plaintext using AES CTR
+         *  C = CTR(M)
+         */
+        if ((ret = wc_AesCtrEncrypt(&eax->aes, out, in, inSz)) != 0) {
+            return ret;
+        }
 
-    /*
-     * update OMAC with new ciphertext
-     *  C' = OMAC^2_K(C)
-     */
-    if ((ret = wc_CmacUpdate(&eax->ciphertextCmac, out, inSz)) != 0) {
-        return ret;
+        /*
+         * update OMAC with new ciphertext
+         *  C' = OMAC^2_K(C)
+         */
+        if ((ret = wc_CmacUpdate(&eax->ciphertextCmac, out, inSz)) != 0) {
+            return ret;
+        }
     }
 
     /* If there exists new auth data, update the OMAC for that as well */
@@ -19734,24 +19742,27 @@ int  wc_AesEaxDecryptUpdate(AesEax* eax, byte* out,
 {
     int ret;
 
-    if (eax == NULL || out == NULL ||  in == NULL) {
+    if (eax == NULL || (inSz > 0 && (out == NULL || in == NULL))
+            || (authInSz > 0 && authIn == NULL)) {
         return BAD_FUNC_ARG;
     }
 
-    /*
-     * Decrypt the plaintext using AES CTR
-     *  C = CTR(M)
-     */
-    if ((ret = wc_AesCtrEncrypt(&eax->aes, out, in, inSz)) != 0) {
-        return ret;
-    }
+    if (inSz > 0) {
+        /*
+         * Decrypt the plaintext using AES CTR
+         *  C = CTR(M)
+         */
+        if ((ret = wc_AesCtrEncrypt(&eax->aes, out, in, inSz)) != 0) {
+            return ret;
+        }
 
-    /*
-     * update OMAC with new ciphertext
-     *  C' = OMAC^2_K(C)
-     */
-    if ((ret = wc_CmacUpdate(&eax->ciphertextCmac, in, inSz)) != 0) {
-        return ret;
+        /*
+         * update OMAC with new ciphertext
+         *  C' = OMAC^2_K(C)
+         */
+        if ((ret = wc_CmacUpdate(&eax->ciphertextCmac, in, inSz)) != 0) {
+            return ret;
+        }
     }
 
     /* If there exists new auth data, update the OMAC for that as well */
