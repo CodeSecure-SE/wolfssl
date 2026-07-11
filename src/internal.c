@@ -18467,6 +18467,11 @@ static int DoCertificateStatus(WOLFSSL* ssl, byte* input, word32* inOutIdx,
                     ||  (response->single->status->status != CERT_GOOD))
                         ret = BAD_CERTIFICATE_STATUS_ERROR;
 
+                    /* Bundling more than one SingleResponse inside a single
+                     * stapled BasicOCSPResponse is not supported. */
+                    if (ret == 0 && response->single->next != NULL)
+                        ret = BAD_CERTIFICATE_STATUS_ERROR;
+
                     if (ret == 0) {
                         request = (OcspRequest*)TLSX_CSR2_GetRequest(
                                 ssl->extensions, status_type, idx);
@@ -22724,7 +22729,9 @@ int DoApplicationData(WOLFSSL* ssl, byte* input, word32* inOutIdx, int sniff)
 #ifdef WOLFSSL_EARLY_DATA
     if (ssl->options.side == WOLFSSL_SERVER_END &&
             ssl->earlyData > early_data_ext) {
-        if (ssl->earlyDataSz + dataSz > ssl->options.maxEarlyDataSz) {
+        if (ssl->earlyDataSz > ssl->options.maxEarlyDataSz ||
+                (word32)dataSz >
+                    ssl->options.maxEarlyDataSz - ssl->earlyDataSz) {
             if (sniff == NO_SNIFF) {
                 SendAlert(ssl, alert_fatal, unexpected_message);
             }

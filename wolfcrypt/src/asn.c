@@ -156,6 +156,21 @@ ASN Options:
  * WOLFSSL_ALLOW_CRIT_AKID:  Allow critical Auth Key Identifier
  * WOLFSSL_ALLOW_CRIT_SKID:  Allow critical Subject Key Identifier
  * WC_ASN_UNKNOWN_EXT_CB:    Callback for unknown extensions
+ * WOLFSSL_X509_VERIFY_ONLY: Verify-only profile. Drops cert/key generation and
+    forces WOLFSSL_NO_PEM unless a gen add-back (WOLFSSL_X509_CERT_GEN /
+    WOLFSSL_X509_KEY_GEN) or WOLFSSL_X509_PEM is set.
+ * WOLFSSL_X509_TINY:        Minimal-extension profile. Compiles out optional
+    X.509 extension decoders behind per-feature WOLFSSL_X509_TINY_<F> add-back
+    macros. Requires WOLFSSL_ASN_TEMPLATE (enforced with #error).
+ * WC_ASN_NO_HEAP:           Zero-allocation cert parse: reference key/alt-name
+    data in the source DER instead of heap copies, so the source buffer must
+    outlive the DecodedCert. Auto-defined when WOLFSSL_NO_MALLOC and
+    NO_WOLFSSL_MEMORY are set without XMALLOC_USER or WOLFSSL_STATIC_MEMORY.
+    Limitation: IP and registeredID SAN entries need a parsed string form that
+    has no in-place source, so such certs are rejected with ASN_PARSE_E. SAN
+    DNS_entry.name is NOT NUL-terminated in this mode; only .len is authoritative.
+ * WC_ASN_MAX_ALTNAMES:      No-heap SAN pool slot count (default 8); excess
+    subject alternative names are rejected.
  *
  * ASN.1 Parsing:
  * WOLFSSL_ASN_ALL:          Enable all ASN.1 features
@@ -4494,9 +4509,14 @@ static int GetSignature(DecodedCert* cert);
 static word32 SetAlgoIDImpl(int algoOID, byte* output, int type, int curveSz, byte absentParams);
 #ifndef NO_CERTS
 static int DecodeAltNames(const byte* input, word32 sz, DecodedCert* cert);
+#if !defined(WOLFSSL_X509_TINY) || defined(WOLFSSL_X509_TINY_CRL_DP)
 static int DecodeCrlDist(const byte* input, word32 sz, DecodedCert* cert);
+#endif
+#if !defined(WOLFSSL_X509_TINY) || defined(WOLFSSL_X509_TINY_AIA)
 static int DecodeAuthInfo(const byte* input, word32 sz, DecodedCert* cert);
-#ifndef IGNORE_NAME_CONSTRAINTS
+#endif
+#if !defined(IGNORE_NAME_CONSTRAINTS) && \
+    (!defined(WOLFSSL_X509_TINY) || defined(WOLFSSL_X509_TINY_NAME_CONSTRAINTS))
 static int DecodeSubtree(const byte* input, word32 sz, Base_entry** head,
                          word32 limit, byte* hasUnsupported, void* heap);
 static int DecodeNameConstraints(const byte* input, word32 sz, DecodedCert* cert);
@@ -12579,7 +12599,14 @@ void FreeAltNames(DNS_entry* altNames, void* heap)
             altNames->ridStringStored = 0;
         }
     #endif
-        XFREE(altNames,       heap, DYNAMIC_TYPE_ALTNAME);
+#ifdef WC_ASN_NO_HEAP
+        /* Only free heap nodes; no-heap pool nodes aren't owned. */
+        if (altNames->entryStored) {
+            XFREE(altNames, heap, DYNAMIC_TYPE_ALTNAME);
+        }
+#else
+        XFREE(altNames, heap, DYNAMIC_TYPE_ALTNAME);
+#endif
         altNames = tmp;
     }
 }
@@ -12591,6 +12618,9 @@ DNS_entry* AltNameNew(void* heap)
     ret = (DNS_entry*)XMALLOC(sizeof(DNS_entry), heap, DYNAMIC_TYPE_ALTNAME);
     if (ret != NULL) {
         XMEMSET(ret, 0, sizeof(DNS_entry));
+#ifdef WC_ASN_NO_HEAP
+        ret->entryStored = 1;   /* heap-allocated node; FreeAltNames frees it */
+#endif
     }
     (void)heap;
     return ret;
@@ -12739,7 +12769,9 @@ static int StoreKey(DecodedCert* cert, const byte* source, word32* srcIdx,
 {
     int ret;
     int length;
+#ifndef WC_ASN_NO_HEAP
     byte* publicKey;
+#endif
 
     ret = CheckBitString(source, srcIdx, &length, maxIdx, 1, NULL);
     if (ret == 0) {
@@ -12749,6 +12781,17 @@ static int StoreKey(DecodedCert* cert, const byte* source, word32* srcIdx,
     }
     if (ret == 0) {
     #endif
+#ifdef WC_ASN_NO_HEAP
+        /* No heap: reference the key in place; source must outlive the cert. */
+        cert->publicKey = (byte*)&source[*srcIdx];
+        cert->pubKeyStored = 0;
+        cert->pubKeySize   = (word32)length;
+    #ifdef HAVE_OCSP_RESPONDER
+        cert->publicKeyForHash = cert->publicKey;
+        cert->pubKeyForHashSize = cert->pubKeySize;
+    #endif
+        *srcIdx += (word32)length;
+#else
         publicKey = (byte*)XMALLOC((size_t)length, cert->heap,
                                    DYNAMIC_TYPE_PUBLIC_KEY);
         if (publicKey == NULL) {
@@ -12767,6 +12810,7 @@ static int StoreKey(DecodedCert* cert, const byte* source, word32* srcIdx,
 
             *srcIdx += (word32)length;
         }
+#endif
     }
 
     return ret;
@@ -13407,7 +13451,9 @@ static int StoreEccKey(DecodedCert* cert, const byte* source, word32* srcIdx,
 {
     int ret = 0;
     DECL_ASNGETDATA(dataASN, eccCertKeyASN_Length);
+#ifndef WC_ASN_NO_HEAP
     byte* publicKey;
+#endif
 
     /* Validate parameters. */
     if (pubKey == NULL) {
@@ -13477,6 +13523,12 @@ static int StoreEccKey(DecodedCert* cert, const byte* source, word32* srcIdx,
     #endif
         /* Store public key data length. */
         cert->pubKeySize = pubKeyLen;
+#ifdef WC_ASN_NO_HEAP
+        /* No heap: point at pubKey in the input DER, so that buffer must stay
+         * valid for the DecodedCert's lifetime. */
+        cert->publicKey = (byte*)pubKey;
+        cert->pubKeyStored = 0;
+#else
         /* Must allocated space for key.
          * Don't memcpy into constant pointer so use temp. */
         publicKey = (byte*)XMALLOC(cert->pubKeySize, cert->heap,
@@ -13491,6 +13543,7 @@ static int StoreEccKey(DecodedCert* cert, const byte* source, word32* srcIdx,
             /* Indicate publicKey needs to be freed. */
             cert->pubKeyStored = 1;
         }
+#endif
     }
     FREE_ASNGETDATA(dataASN, cert->heap);
 
@@ -14357,7 +14410,7 @@ static const byte rdnChoice[] = {
 };
 #endif
 
-#ifdef WOLFSSL_IP_ALT_NAME
+#if defined(WOLFSSL_IP_ALT_NAME) && !defined(WC_ASN_NO_HEAP)
 /* used to set the human readable string for the IP address with a ASN_IP_TYPE
  * DNS entry
  * return 0 on success
@@ -14426,9 +14479,9 @@ static int GenerateDNSEntryIPString(DNS_entry* entry, void* heap)
 
     return ret;
 }
-#endif /* WOLFSSL_IP_ALT_NAME */
+#endif /* WOLFSSL_IP_ALT_NAME && !WC_ASN_NO_HEAP */
 
-#ifdef WOLFSSL_RID_ALT_NAME
+#if defined(WOLFSSL_RID_ALT_NAME) && !defined(WC_ASN_NO_HEAP)
 /* used to set the human readable string for the registeredID with an
  * ASN_RID_TYPE DNS entry
  * return 0 on success
@@ -14525,7 +14578,7 @@ static int GenerateDNSEntryRIDString(DNS_entry* entry, void* heap)
 
     return ret;
 }
-#endif /* WOLFSSL_RID_ALT_NAME */
+#endif /* WOLFSSL_RID_ALT_NAME && !WC_ASN_NO_HEAP */
 
 #ifdef WOLFSSL_ASN_TEMPLATE
 
@@ -14574,13 +14627,57 @@ static int AddDNSEntryToList(DNS_entry** lst, DNS_entry* entry)
  * @return  0 on success.
  * @return  MEMORY_E when dynamic memory allocation fails.
  */
-static int SetDNSEntry(void* heap, const char* str, int strLen,
-                       int type, DNS_entry** entries)
+/* No-heap SAN entries come from a caller pool; pass NULL,NULL if none. */
+#ifdef WC_ASN_NO_HEAP
+    #define WC_DNS_POOL(obj)  (obj)->altNamePool, &(obj)->altNamePoolUsed
+#else
+    #define WC_DNS_POOL(obj)  NULL, NULL
+#endif
+
+static int SetDNSEntry(void* heap, DNS_entry* pool, word32* poolUsed,
+                       const char* str, int strLen, int type,
+                       DNS_entry** entries)
 {
     DNS_entry* dnsEntry;
     int ret = 0;
+#ifndef WC_ASN_NO_HEAP
     char *dnsEntry_name = NULL;
+#endif
 
+#ifdef WC_ASN_NO_HEAP
+    /* No heap: borrow a pool slot; name points into the source DER. */
+    (void)heap;
+#ifdef WOLFSSL_IP_ALT_NAME
+    /* No-heap path can't parse an ipString/ridString; reject rather than skip. */
+    if (type == ASN_IP_TYPE) {
+        return ASN_PARSE_E;
+    }
+#endif
+#ifdef WOLFSSL_RID_ALT_NAME
+    if (type == ASN_RID_TYPE) {
+        return ASN_PARSE_E;
+    }
+#endif
+    if ((pool == NULL) || (*poolUsed >= WC_ASN_MAX_ALTNAMES)) {
+        /* Distinguish pool exhaustion from a real allocation failure. */
+        WOLFSSL_MSG("No-heap SAN pool exhausted; raise WC_ASN_MAX_ALTNAMES");
+        ret = MEMORY_E;
+        dnsEntry = NULL;
+    }
+    else {
+        dnsEntry = &pool[(*poolUsed)++];
+        XMEMSET(dnsEntry, 0, sizeof(*dnsEntry));
+        dnsEntry->type = type;
+        dnsEntry->len  = strLen;
+        dnsEntry->name = (char*)str;   /* points into the source DER */
+        dnsEntry->nameStored = 0;
+    }
+    if (ret == 0) {
+        ret = AddDNSEntryToList(entries, dnsEntry);
+    }
+#else
+    (void)pool;
+    (void)poolUsed;
     /* TODO: consider one malloc. */
     /* Allocate DNS Entry object. */
     dnsEntry = AltNameNew(heap);
@@ -14625,6 +14722,7 @@ static int SetDNSEntry(void* heap, const char* str, int strLen,
         XFREE(dnsEntry_name, heap, DYNAMIC_TYPE_ALTNAME);
         XFREE(dnsEntry, heap, DYNAMIC_TYPE_ALTNAME);
     }
+#endif
 
     return ret;
 }
@@ -14665,7 +14763,7 @@ int wc_SetDNSEntry(void* heap, const char* str, int strLen, int type,
             return BAD_FUNC_ARG;
     }
 
-    return SetDNSEntry(heap, str, strLen, type, entries);
+    return SetDNSEntry(heap, NULL, NULL, str, strLen, type, entries);
 }
 #endif /* WOLFSSL_CERT_GEN && WOLFSSL_ALT_NAMES */
 #endif
@@ -19147,7 +19245,8 @@ static int DecodeOtherHelper(ASNGetData* dataASN, DecodedCert* cert, int oid)
     }
 
     if (ret == 0) {
-        ret = SetDNSEntry(cert->heap, buf, (int)bufLen, ASN_OTHER_TYPE, &entry);
+        ret = SetDNSEntry(cert->heap, WC_DNS_POOL(cert), buf, (int)bufLen,
+                          ASN_OTHER_TYPE, &entry);
         if (ret == 0) {
         #ifdef WOLFSSL_FPKI
             entry->oidSum = oid;
@@ -19209,8 +19308,8 @@ static int DecodeOtherName(DecodedCert* cert, const byte* input,
                 break;
             default:
                 WOLFSSL_MSG("\tadding unsupported OID");
-                ret = SetDNSEntry(cert->heap, name, len, ASN_OTHER_TYPE,
-                        &cert->altNames);
+                ret = SetDNSEntry(cert->heap, WC_DNS_POOL(cert), name, len,
+                        ASN_OTHER_TYPE, &cert->altNames);
                 break;
         }
     }
@@ -19248,13 +19347,15 @@ static int DecodeGeneralName(const byte* input, word32* inOutIdx, byte tag,
      * reference hostname. The result is DOMAIN_NAME_MISMATCH at verification
      * time rather than ASN_PARSE_E at parse time. */
     if (tag == (ASN_CONTEXT_SPECIFIC | ASN_DNS_TYPE)) {
-        ret = SetDNSEntry(cert->heap, (const char*)(input + idx), len,
-                ASN_DNS_TYPE, &cert->altNames);
+        ret = SetDNSEntry(cert->heap, WC_DNS_POOL(cert),
+                (const char*)(input + idx), len, ASN_DNS_TYPE,
+                &cert->altNames);
         if (ret == 0) {
             idx += (word32)len;
         }
     }
 #ifndef IGNORE_NAME_CONSTRAINTS
+#if !defined(WOLFSSL_X509_TINY) || defined(WOLFSSL_X509_TINY_SAN_DIR)
     /* GeneralName choice: directoryName */
     else if (tag == (ASN_CONTEXT_SPECIFIC | ASN_CONSTRUCTED | ASN_DIR_TYPE)) {
         int strLen;
@@ -19267,20 +19368,25 @@ static int DecodeGeneralName(const byte* input, word32* inOutIdx, byte tag,
             return ASN_PARSE_E;
         }
 
-        ret = SetDNSEntry(cert->heap, (const char*)(input + idxDir), strLen,
-                ASN_DIR_TYPE, &cert->altDirNames);
+        ret = SetDNSEntry(cert->heap, WC_DNS_POOL(cert),
+                (const char*)(input + idxDir), strLen, ASN_DIR_TYPE,
+                &cert->altDirNames);
         if (ret == 0) {
             idx += (word32)len;
         }
     }
+#endif /* !WOLFSSL_X509_TINY || WOLFSSL_X509_TINY_SAN_DIR */
+#if !defined(WOLFSSL_X509_TINY) || defined(WOLFSSL_X509_TINY_SAN_EMAIL)
     /* GeneralName choice: rfc822Name */
     else if (tag == (ASN_CONTEXT_SPECIFIC | ASN_RFC822_TYPE)) {
-        ret = SetDNSEntry(cert->heap, (const char*)(input + idx), len,
-                ASN_RFC822_TYPE, &cert->altEmailNames);
+        ret = SetDNSEntry(cert->heap, WC_DNS_POOL(cert),
+                (const char*)(input + idx), len, ASN_RFC822_TYPE,
+                &cert->altEmailNames);
         if (ret == 0) {
             idx += (word32)len;
         }
     }
+#endif /* !WOLFSSL_X509_TINY || WOLFSSL_X509_TINY_SAN_EMAIL */
     /* GeneralName choice: uniformResourceIdentifier */
     else if (tag == (ASN_CONTEXT_SPECIFIC | ASN_URI_TYPE)) {
         WOLFSSL_MSG("\tPutting URI into list but not using");
@@ -19322,8 +19428,9 @@ static int DecodeGeneralName(const byte* input, word32* inOutIdx, byte tag,
         }
     #endif
 
-        ret = SetDNSEntry(cert->heap, (const char*)(input + idx), len,
-                ASN_URI_TYPE, &cert->altNames);
+        ret = SetDNSEntry(cert->heap, WC_DNS_POOL(cert),
+                (const char*)(input + idx), len, ASN_URI_TYPE,
+                &cert->altNames);
         if (ret == 0) {
             idx += (word32)len;
         }
@@ -19354,13 +19461,16 @@ static int DecodeGeneralName(const byte* input, word32* inOutIdx, byte tag,
      *     surface the raw octets as OCTET_STRING already (see the
      *     ASN_IP_TYPE case under WOLFSSL_GEN_IPADD in src/x509.c).
      */
+#if !defined(WOLFSSL_X509_TINY) || defined(WOLFSSL_X509_TINY_SAN_IP)
     else if (tag == (ASN_CONTEXT_SPECIFIC | ASN_IP_TYPE)) {
-        ret = SetDNSEntry(cert->heap, (const char*)(input + idx), len,
-                ASN_IP_TYPE, &cert->altNames);
+        ret = SetDNSEntry(cert->heap, WC_DNS_POOL(cert),
+                (const char*)(input + idx), len, ASN_IP_TYPE,
+                &cert->altNames);
         if (ret == 0) {
             idx += (word32)len;
         }
     }
+#endif /* !WOLFSSL_X509_TINY || WOLFSSL_X509_TINY_SAN_IP */
     /* GeneralName choice: registeredID
      *
      * Always parse registeredID into cert->altNames so
@@ -19386,13 +19496,16 @@ static int DecodeGeneralName(const byte* input, word32* inOutIdx, byte tag,
      *   - X509_print_name_entry: emits "Registered ID:<unavailable>"
      *     when ridString is not generated, instead of failing the
      *     whole print operation. */
+#if !defined(WOLFSSL_X509_TINY) || defined(WOLFSSL_X509_TINY_SAN_RID)
     else if (tag == (ASN_CONTEXT_SPECIFIC | ASN_RID_TYPE)) {
-        ret = SetDNSEntry(cert->heap, (const char*)(input + idx), len,
-                ASN_RID_TYPE, &cert->altNames);
+        ret = SetDNSEntry(cert->heap, WC_DNS_POOL(cert),
+                (const char*)(input + idx), len, ASN_RID_TYPE,
+                &cert->altNames);
         if (ret == 0) {
             idx += (word32)len;
         }
     }
+#endif /* !WOLFSSL_X509_TINY || WOLFSSL_X509_TINY_SAN_RID */
 #endif /* IGNORE_NAME_CONSTRAINTS */
 #ifndef IGNORE_NAME_CONSTRAINTS
     /* GeneralName choice: otherName.
@@ -19403,8 +19516,9 @@ static int DecodeGeneralName(const byte* input, word32* inOutIdx, byte tag,
      * the public altNames view (used by OpenSSL-compat APIs) reflects
      * exactly what the SAN extension carries. */
     else if (tag == (ASN_CONTEXT_SPECIFIC | ASN_CONSTRUCTED | ASN_OTHER_TYPE)) {
-        ret = SetDNSEntry(cert->heap, (const char*)(input + idx), len,
-                ASN_OTHER_TYPE, &cert->altOtherNamesRaw);
+        ret = SetDNSEntry(cert->heap, WC_DNS_POOL(cert),
+                (const char*)(input + idx), len, ASN_OTHER_TYPE,
+                &cert->altOtherNamesRaw);
         if (ret != 0) {
             return ret;
         }
@@ -19681,6 +19795,7 @@ static int DecodeBasicCaConstraintInternal(const byte* input, int sz,
 }
 
 
+#ifndef WOLFSSL_X509_TINY
 static int DecodePolicyConstraints(const byte* input, int sz, DecodedCert* cert)
 {
     word32 idx = 0;
@@ -19734,6 +19849,7 @@ static int DecodePolicyConstraints(const byte* input, int sz, DecodedCert* cert)
 
     return 0;
 }
+#endif /* !WOLFSSL_X509_TINY */
 
 
 /* Context-Specific value for: DistributionPoint.distributionPoint
@@ -19746,7 +19862,8 @@ static int DecodePolicyConstraints(const byte* input, int sz, DecodedCert* cert)
  * From RFC3280 SS4.2.1.7, GeneralName */
 #define GENERALNAME_URI     (ASN_CONTEXT_SPECIFIC | 6)
 
-#ifdef WOLFSSL_ASN_TEMPLATE
+#if defined(WOLFSSL_ASN_TEMPLATE) && \
+    (!defined(WOLFSSL_X509_TINY) || defined(WOLFSSL_X509_TINY_CRL_DP))
 /* ASN.1 template for CRL distribution points.
  * X.509: RFC 5280, 4.2.1.13 - CRL Distribution Points.
  */
@@ -19797,6 +19914,7 @@ enum {
  * @return  BUFFER_E when data in buffer is too small.
  */
 #ifdef WOLFSSL_ASN_TEMPLATE
+#if !defined(WOLFSSL_X509_TINY) || defined(WOLFSSL_X509_TINY_CRL_DP)
 static int DecodeCrlDist(const byte* input, word32 sz, DecodedCert* cert)
 {
     DECL_ASNGETDATA(dataASN, crlDistASN_Length);
@@ -19854,8 +19972,10 @@ static int DecodeCrlDist(const byte* input, word32 sz, DecodedCert* cert)
     FREE_ASNGETDATA(dataASN, cert->heap);
     return ret;
 }
+#endif /* !WOLFSSL_X509_TINY || WOLFSSL_X509_TINY_CRL_DP */
 #endif /* WOLFSSL_ASN_TEMPLATE */
-#ifdef WOLFSSL_ASN_TEMPLATE
+#if defined(WOLFSSL_ASN_TEMPLATE) && \
+    (!defined(WOLFSSL_X509_TINY) || defined(WOLFSSL_X509_TINY_AIA))
 /* ASN.1 template for the access description.
  * X.509: RFC 5280, 4.2.2.1 - Authority Information Access.
  */
@@ -19892,6 +20012,7 @@ enum {
  * @return  ASN_UNKNOWN_OID_E when the OID cannot be verified.
  */
 #ifdef WOLFSSL_ASN_TEMPLATE
+#if !defined(WOLFSSL_X509_TINY) || defined(WOLFSSL_X509_TINY_AIA)
 static int DecodeAuthInfo(const byte* input, word32 sz, DecodedCert* cert)
 {
     word32 idx = 0;
@@ -19960,6 +20081,7 @@ static int DecodeAuthInfo(const byte* input, word32 sz, DecodedCert* cert)
 
     return ret;
 }
+#endif /* !WOLFSSL_X509_TINY || WOLFSSL_X509_TINY_AIA */
 #endif /* WOLFSSL_ASN_TEMPLATE */
 
 #ifdef WOLFSSL_ASN_TEMPLATE
@@ -20100,6 +20222,7 @@ int DecodeAuthKeyId(const byte* input, word32 sz, const byte **extAuthKeyId,
  *          is invalid.
  * @return  BUFFER_E when data in buffer is too small.
  */
+#if !defined(WOLFSSL_X509_TINY) || defined(WOLFSSL_X509_TINY_AKI)
 static int DecodeAuthKeyIdInternal(const byte* input, word32 sz,
                                    DecodedCert* cert)
 {
@@ -20157,6 +20280,7 @@ static int DecodeAuthKeyIdInternal(const byte* input, word32 sz,
 
     return ret;
 }
+#endif /* !WOLFSSL_X509_TINY || WOLFSSL_X509_TINY_AKI */
 
 /* Decode subject key id extension.
  *
@@ -20201,6 +20325,7 @@ int DecodeSubjKeyId(const byte* input, word32 sz, const byte **extSubjKeyId,
  *          invalid.
  * @return  MEMORY_E on dynamic memory allocation failure.
  */
+#if !defined(WOLFSSL_X509_TINY) || defined(WOLFSSL_X509_TINY_SKI)
 static int DecodeSubjKeyIdInternal(const byte* input, word32 sz,
                                    DecodedCert* cert)
 {
@@ -20224,6 +20349,7 @@ static int DecodeSubjKeyIdInternal(const byte* input, word32 sz,
 
     return ret;
 }
+#endif /* !WOLFSSL_X509_TINY || WOLFSSL_X509_TINY_SKI */
 
 #ifdef WOLFSSL_ASN_TEMPLATE
 /* ASN.1 template for KeyUsage.
@@ -20504,6 +20630,7 @@ static int DecodeExtKeyUsageInternal(const byte* input, word32 sz,
 
 #ifndef IGNORE_NETSCAPE_CERT_TYPE
 
+#ifndef WOLFSSL_X509_TINY
 static int DecodeNsCertType(const byte* input, int sz, DecodedCert* cert)
 {
     word32 idx = 0;
@@ -20523,11 +20650,13 @@ static int DecodeNsCertType(const byte* input, int sz, DecodedCert* cert)
 
     return 0;
 }
+#endif /* !WOLFSSL_X509_TINY (DecodeNsCertType) */
 #endif
 
 
 #ifndef IGNORE_NAME_CONSTRAINTS
-#ifdef WOLFSSL_ASN_TEMPLATE
+#if defined(WOLFSSL_ASN_TEMPLATE) && \
+    (!defined(WOLFSSL_X509_TINY) || defined(WOLFSSL_X509_TINY_NAME_CONSTRAINTS))
 /* ASN.1 template for GeneralSubtree.
  * X.509: RFC 5280, 4.2.1.10 - Name Constraints.
  */
@@ -20551,7 +20680,8 @@ enum {
 #define subTreeASN_Length (sizeof(subTreeASN) / sizeof(ASNItem))
 #endif
 
-#ifdef WOLFSSL_ASN_TEMPLATE
+#if defined(WOLFSSL_ASN_TEMPLATE) && \
+    (!defined(WOLFSSL_X509_TINY) || defined(WOLFSSL_X509_TINY_NAME_CONSTRAINTS))
 /* Decode the Subtree's GeneralName.
  *
  * @param [in]      input  Buffer holding data.
@@ -20639,7 +20769,8 @@ static int DecodeSubtreeGeneralName(const byte* input, word32 sz, byte tag,
  * @return  MEMORY_E when dynamic memory allocation fails.
  * @return  ASN_PARSE_E when SEQUENCE is not found as expected.
  */
-#ifdef WOLFSSL_ASN_TEMPLATE
+#if defined(WOLFSSL_ASN_TEMPLATE) && \
+    (!defined(WOLFSSL_X509_TINY) || defined(WOLFSSL_X509_TINY_NAME_CONSTRAINTS))
 /* Decode a sub-tree of name constraints.
  *
  * @param [out]     hasUnsupported  Set to 1 when an entry with a GeneralName
@@ -20732,7 +20863,8 @@ static int DecodeSubtree(const byte* input, word32 sz, Base_entry** head,
     return ret;
 }
 #endif /* WOLFSSL_ASN_TEMPLATE */
-#ifdef WOLFSSL_ASN_TEMPLATE
+#if defined(WOLFSSL_ASN_TEMPLATE) && \
+    (!defined(WOLFSSL_X509_TINY) || defined(WOLFSSL_X509_TINY_NAME_CONSTRAINTS))
 /* ASN.1 template for NameConstraints.
  * X.509: RFC 5280, 4.2.1.10 - Name Constraints.
  */
@@ -20766,6 +20898,7 @@ enum {
  * @return  MEMORY_E on dynamic memory allocation failure.
  */
 #ifdef WOLFSSL_ASN_TEMPLATE
+#if !defined(WOLFSSL_X509_TINY) || defined(WOLFSSL_X509_TINY_NAME_CONSTRAINTS)
 static int DecodeNameConstraints(const byte* input, word32 sz,
     DecodedCert* cert)
 {
@@ -20810,6 +20943,7 @@ static int DecodeNameConstraints(const byte* input, word32 sz,
 
     return ret;
 }
+#endif /* !WOLFSSL_X509_TINY || WOLFSSL_X509_TINY_NAME_CONSTRAINTS */
 #endif /* WOLFSSL_ASN_TEMPLATE */
 #endif /* IGNORE_NAME_CONSTRAINTS */
 
@@ -21379,6 +21513,7 @@ WOLFSSL_TEST_VIS int DecodeExtensionType(const byte* input, word32 length,
     int ret = 0;
     word32 idx = 0;
 
+    (void)idx; /* unused when optional extension cases are gated out (X509_TINY) */
     if (isUnknownExt != NULL)
         *isUnknownExt = 0;
 
@@ -21392,6 +21527,7 @@ WOLFSSL_TEST_VIS int DecodeExtensionType(const byte* input, word32 length,
             }
             break;
 
+#if !defined(WOLFSSL_X509_TINY) || defined(WOLFSSL_X509_TINY_CRL_DP)
         /* CRL Distribution point. */
         case CRL_DIST_OID:
             VERIFY_AND_SET_OID(cert->extCRLdistSet);
@@ -21400,7 +21536,9 @@ WOLFSSL_TEST_VIS int DecodeExtensionType(const byte* input, word32 length,
                 ret = ASN_PARSE_E;
             }
             break;
+#endif /* !WOLFSSL_X509_TINY || WOLFSSL_X509_TINY_CRL_DP */
 
+#if !defined(WOLFSSL_X509_TINY) || defined(WOLFSSL_X509_TINY_AIA)
         /* Authority information access. */
         case AUTH_INFO_OID:
             VERIFY_AND_SET_OID(cert->extAuthInfoSet);
@@ -21421,6 +21559,15 @@ WOLFSSL_TEST_VIS int DecodeExtensionType(const byte* input, word32 length,
                 ret = ASN_PARSE_E;
             }
             break;
+#elif defined(WOLFSSL_X509_TINY)
+        /* Stripped: reject critical even under ALLOW_CRIT_AIA - can't honor an
+         * undecoded extension (RFC 5280 4.2.2.1). No SET_OID, bit means decoded. */
+        case AUTH_INFO_OID:
+            if (critical) {
+                ret = ASN_CRIT_EXT_E;
+            }
+            break;
+#endif /* !WOLFSSL_X509_TINY || WOLFSSL_X509_TINY_AIA */
 
         /* Subject alternative name. */
         case ALT_NAMES_OID:
@@ -21429,6 +21576,7 @@ WOLFSSL_TEST_VIS int DecodeExtensionType(const byte* input, word32 length,
             ret = DecodeAltNames(input, length, cert);
             break;
 
+#if !defined(WOLFSSL_X509_TINY) || defined(WOLFSSL_X509_TINY_AKI)
         /* Authority Key Identifier. */
         case AUTH_KEY_OID:
             VERIFY_AND_SET_OID(cert->extAuthKeyIdSet);
@@ -21449,7 +21597,17 @@ WOLFSSL_TEST_VIS int DecodeExtensionType(const byte* input, word32 length,
                 ret = ASN_PARSE_E;
             }
             break;
+#elif defined(WOLFSSL_X509_TINY)
+        /* Stripped: reject critical even under ALLOW_CRIT_AKID - can't honor an
+         * undecoded extension (RFC 5280 4.2.1.1). No SET_OID, bit means decoded. */
+        case AUTH_KEY_OID:
+            if (critical) {
+                ret = ASN_CRIT_EXT_E;
+            }
+            break;
+#endif /* !WOLFSSL_X509_TINY || WOLFSSL_X509_TINY_AKI */
 
+#if !defined(WOLFSSL_X509_TINY) || defined(WOLFSSL_X509_TINY_SKI)
         /* Subject Key Identifier. */
         case SUBJ_KEY_OID:
             VERIFY_AND_SET_OID(cert->extSubjKeyIdSet);
@@ -21471,7 +21629,17 @@ WOLFSSL_TEST_VIS int DecodeExtensionType(const byte* input, word32 length,
                 ret = ASN_PARSE_E;
             }
             break;
+#elif defined(WOLFSSL_X509_TINY)
+        /* Stripped: reject critical even under ALLOW_CRIT_SKID - can't honor an
+         * undecoded extension (RFC 5280 4.2.1.2). No SET_OID, bit means decoded. */
+        case SUBJ_KEY_OID:
+            if (critical) {
+                ret = ASN_CRIT_EXT_E;
+            }
+            break;
+#endif /* !WOLFSSL_X509_TINY || WOLFSSL_X509_TINY_SKI */
 
+#if !defined(WOLFSSL_X509_TINY) || defined(WOLFSSL_X509_TINY_POLICIES)
         /* Certificate policies. */
         case CERT_POLICY_OID:
         #if defined(WOLFSSL_SEP) || defined(WOLFSSL_CERT_EXT)
@@ -21498,6 +21666,7 @@ WOLFSSL_TEST_VIS int DecodeExtensionType(const byte* input, word32 length,
             #endif
         #endif
             break;
+#endif /* !WOLFSSL_X509_TINY || WOLFSSL_X509_TINY_POLICIES */
 
         /* Key usage. */
         case KEY_USAGE_OID:
@@ -21517,7 +21686,9 @@ WOLFSSL_TEST_VIS int DecodeExtensionType(const byte* input, word32 length,
             }
             break;
 
-        #ifndef IGNORE_NAME_CONSTRAINTS
+        #if !defined(IGNORE_NAME_CONSTRAINTS) && \
+            (!defined(WOLFSSL_X509_TINY) || \
+             defined(WOLFSSL_X509_TINY_NAME_CONSTRAINTS))
         /* Name constraints. */
         case NAME_CONS_OID:
         #ifndef WOLFSSL_NO_ASN_STRICT
@@ -21536,22 +21707,29 @@ WOLFSSL_TEST_VIS int DecodeExtensionType(const byte* input, word32 length,
                 ret = ASN_PARSE_E;
             }
             break;
-        #endif /* IGNORE_NAME_CONSTRAINTS */
+        #elif !defined(IGNORE_NAME_CONSTRAINTS)
+        /* TINY can't enforce name constraints; fail closed rather than ignore. */
+        case NAME_CONS_OID:
+            WOLFSSL_ERROR_VERBOSE(ASN_NAME_INVALID_E);
+            ret = ASN_NAME_INVALID_E;
+            break;
+        #endif /* NAME_CONS_OID (name constraints / TINY) */
 
+        #ifndef WOLFSSL_X509_TINY
         /* Inhibit anyPolicy. */
         case INHIBIT_ANY_OID:
             VERIFY_AND_SET_OID(cert->inhibitAnyOidSet);
             WOLFSSL_MSG("Inhibit anyPolicy extension not supported yet.");
             break;
 
-   #ifndef IGNORE_NETSCAPE_CERT_TYPE
+        #ifndef IGNORE_NETSCAPE_CERT_TYPE
         /* Netscape's certificate type. */
         case NETSCAPE_CT_OID:
             if (DecodeNsCertType(input, (int)length, cert) < 0)
                 ret = ASN_PARSE_E;
             break;
-    #endif
-    #ifdef HAVE_OCSP
+        #endif
+        #ifdef HAVE_OCSP
         /* OCSP no check. */
         case OCSP_NOCHECK_OID:
             VERIFY_AND_SET_OID(cert->ocspNoCheckSet);
@@ -21560,13 +21738,14 @@ WOLFSSL_TEST_VIS int DecodeExtensionType(const byte* input, word32 length,
                 ret = ASN_PARSE_E;
             }
             break;
-    #endif
+        #endif
         case POLICY_CONST_OID:
             VERIFY_AND_SET_OID(cert->extPolicyConstSet);
             cert->extPolicyConstCrit = critical ? 1 : 0;
             if (DecodePolicyConstraints(&input[idx], (int)length, cert) < 0)
                 return ASN_PARSE_E;
             break;
+        #endif /* !WOLFSSL_X509_TINY (inhibitAny/netscape/ocsp/policyConst) */
     #ifdef WOLFSSL_SUBJ_DIR_ATTR
         case SUBJ_DIR_ATTR_OID:
             VERIFY_AND_SET_OID(cert->extSubjDirAttrSet);
@@ -21612,7 +21791,9 @@ WOLFSSL_TEST_VIS int DecodeExtensionType(const byte* input, word32 length,
         default:
             if (isUnknownExt != NULL)
                 *isUnknownExt = 1;
-        #ifndef WOLFSSL_NO_ASN_STRICT
+        /* TINY reaches default: for stripped extensions too, so reject a
+         * critical one even under NO_ASN_STRICT to stay fail-closed. */
+        #if !defined(WOLFSSL_NO_ASN_STRICT) || defined(WOLFSSL_X509_TINY)
             /* While it is a failure to not support critical extensions,
              * still parse the certificate ignoring the unsupported
              * extension to allow caller to accept it with the verify
@@ -24372,6 +24553,7 @@ int FillSigner(Signer* signer, DecodedCert* cert, int type, DerBuffer *der)
     (void)der;
     #endif
         signer->keyOID         = cert->keyOID;
+        /* pubKeyStored stays 0 under WC_ASN_NO_HEAP (signer uses heap). */
         if (cert->pubKeyStored) {
             signer->publicKey      = cert->publicKey;
             signer->pubKeySize     = cert->pubKeySize;
@@ -39002,8 +39184,8 @@ static int DecodeAcertGeneralName(const byte* input, word32* inOutIdx,
 
     /* GeneralName choice: dnsName */
     if (tag == (ASN_CONTEXT_SPECIFIC | ASN_DNS_TYPE)) {
-        ret = SetDNSEntry(acert->heap, (const char*)(input + idx), len,
-                          ASN_DNS_TYPE, entries);
+        ret = SetDNSEntry(acert->heap, WC_DNS_POOL(acert),
+                (const char*)(input + idx), len, ASN_DNS_TYPE, entries);
         if (ret == 0) {
             idx += (word32)len;
         }
@@ -39021,16 +39203,16 @@ static int DecodeAcertGeneralName(const byte* input, word32* inOutIdx,
             return ASN_PARSE_E;
         }
 
-        ret = SetDNSEntry(acert->heap, (const char*)(input + idxDir), strLen,
-                          ASN_DIR_TYPE, entries);
+        ret = SetDNSEntry(acert->heap, WC_DNS_POOL(acert),
+                (const char*)(input + idxDir), strLen, ASN_DIR_TYPE, entries);
         if (ret == 0) {
             idx += (word32)len;
         }
     }
     /* GeneralName choice: rfc822Name */
     else if (tag == (ASN_CONTEXT_SPECIFIC | ASN_RFC822_TYPE)) {
-        ret = SetDNSEntry(acert->heap, (const char*)(input + idx), len,
-                ASN_RFC822_TYPE, entries);
+        ret = SetDNSEntry(acert->heap, WC_DNS_POOL(acert),
+                (const char*)(input + idx), len, ASN_RFC822_TYPE, entries);
         if (ret == 0) {
             idx += (word32)len;
         }
@@ -39076,8 +39258,8 @@ static int DecodeAcertGeneralName(const byte* input, word32* inOutIdx,
         }
     #endif
 
-        ret = SetDNSEntry(acert->heap, (const char*)(input + idx), len,
-                          ASN_URI_TYPE, entries);
+        ret = SetDNSEntry(acert->heap, WC_DNS_POOL(acert),
+                (const char*)(input + idx), len, ASN_URI_TYPE, entries);
         if (ret == 0) {
             idx += (word32)len;
         }
@@ -39094,8 +39276,8 @@ static int DecodeAcertGeneralName(const byte* input, word32* inOutIdx,
      * IP-SAN compat layer). If iPAddress name-constraint enforcement is
      * ever extended to attribute certificates, this gate must drop. */
     else if (tag == (ASN_CONTEXT_SPECIFIC | ASN_IP_TYPE)) {
-        ret = SetDNSEntry(acert->heap, (const char*)(input + idx), len,
-                          ASN_IP_TYPE, entries);
+        ret = SetDNSEntry(acert->heap, WC_DNS_POOL(acert),
+                (const char*)(input + idx), len, ASN_IP_TYPE, entries);
         if (ret == 0) {
             idx += (word32)len;
         }
@@ -39105,8 +39287,8 @@ static int DecodeAcertGeneralName(const byte* input, word32* inOutIdx,
     #ifdef OPENSSL_ALL
     /* GeneralName choice: registeredID */
     else if (tag == (ASN_CONTEXT_SPECIFIC | ASN_RID_TYPE)) {
-        ret = SetDNSEntry(acert->heap, (const char*)(input + idx), len,
-                ASN_RID_TYPE, entries);
+        ret = SetDNSEntry(acert->heap, WC_DNS_POOL(acert),
+                (const char*)(input + idx), len, ASN_RID_TYPE, entries);
         if (ret == 0) {
             idx += (word32)len;
         }

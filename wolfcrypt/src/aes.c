@@ -231,7 +231,7 @@ block cipher mechanism that uses n-bit binary string parameter key with 128-bits
 #endif
 
 /* Define AES implementation includes and functions */
-#if defined(STM32_CRYPTO)
+#if defined(STM32_CRYPTO) && !defined(WOLF_CRYPTO_CB_ONLY_AES)
      /* STM32F2/F4/F7/L4/L5/H7/WB55 hardware AES support for ECB, CBC, CTR and GCM modes */
 
 #if defined(WOLFSSL_AES_DIRECT) || defined(HAVE_AESGCM) || defined(HAVE_AESCCM)
@@ -239,6 +239,11 @@ block cipher mechanism that uses n-bit binary string parameter key with 128-bits
     static WARN_UNUSED_RESULT int wc_AesEncrypt(
         Aes* aes, const byte* inBlock, byte* outBlock)
     {
+    #ifdef WOLFSSL_STM32_BARE
+        /* Bare-metal driver handles mutex, clock and key/IV internally.
+         * DHUK is routed via the crypto-callback framework, not here. */
+        return wc_Stm32_Aes_Ecb(aes, outBlock, inBlock, WC_AES_BLOCK_SIZE, 1);
+    #else
         int ret = 0;
     #ifdef WOLFSSL_STM32_CUBEMX
         CRYP_HandleTypeDef hcryp;
@@ -253,50 +258,7 @@ block cipher mechanism that uses n-bit binary string parameter key with 128-bits
             return ret;
 #endif
 
-    #ifdef WOLFSSL_STM32U5_DHUK
-        ret = wolfSSL_CryptHwMutexLock();
-        if (ret != 0)
-            return ret;
-
-        /* Handle making use of wrapped key */
-        if (aes->devId == WOLFSSL_STM32U5_DHUK_WRAPPED_DEVID) {
-            CRYP_ConfigTypeDef Config = {0};
-
-            ret = wc_Stm32_Aes_UnWrap(aes, &hcryp, (const byte*)aes->key,
-                aes->keylen, aes->dhukIV, aes->dhukIVLen);
-            if (ret != HAL_OK) {
-                WOLFSSL_MSG("Error with DHUK key unwrap");
-                ret = BAD_FUNC_ARG;
-            }
-            /* reconfigure for using unwrapped key now */
-            HAL_CRYP_GetConfig(&hcryp, &Config);
-            Config.KeyMode   = CRYP_KEYMODE_NORMAL;
-            Config.KeySelect = CRYP_KEYSEL_NORMAL;
-            Config.Algorithm = CRYP_AES_ECB;
-            Config.DataType  = CRYP_DATATYPE_8B;
-            Config.DataWidthUnit = CRYP_DATAWIDTHUNIT_BYTE;
-            HAL_CRYP_SetConfig(&hcryp, &Config);
-        }
-        else {
-            ret = wc_Stm32_Aes_Init(aes, &hcryp, 1);
-            if (ret == 0) {
-                hcryp.Init.Algorithm  = CRYP_AES_ECB;
-                ret = HAL_CRYP_Init(&hcryp);
-                if (ret != HAL_OK) {
-                    ret = BAD_FUNC_ARG;
-                }
-            }
-        }
-
-        if (ret == HAL_OK) {
-            ret = HAL_CRYP_Encrypt(&hcryp, (uint32_t*)inBlock, WC_AES_BLOCK_SIZE,
-                    (uint32_t*)outBlock, STM32_HAL_TIMEOUT);
-            if (ret != HAL_OK) {
-                ret = WC_TIMEOUT_E;
-            }
-        }
-        HAL_CRYP_DeInit(&hcryp);
-    #elif defined(WOLFSSL_STM32_CUBEMX)
+    #if defined(WOLFSSL_STM32_CUBEMX)
         ret = wc_Stm32_Aes_Init(aes, &hcryp, 0);
         if (ret != 0)
             return ret;
@@ -379,6 +341,7 @@ block cipher mechanism that uses n-bit binary string parameter key with 128-bits
         wc_Stm32_Aes_Cleanup();
 
         return ret;
+    #endif /* !WOLFSSL_STM32_BARE */
     }
 #endif /* WOLFSSL_AES_DIRECT || HAVE_AESGCM || HAVE_AESCCM */
 
@@ -387,6 +350,10 @@ block cipher mechanism that uses n-bit binary string parameter key with 128-bits
     static WARN_UNUSED_RESULT int wc_AesDecrypt(
         Aes* aes, const byte* inBlock, byte* outBlock)
     {
+    #ifdef WOLFSSL_STM32_BARE
+        /* DHUK is routed via the crypto-callback framework, not here. */
+        return wc_Stm32_Aes_Ecb(aes, outBlock, inBlock, WC_AES_BLOCK_SIZE, 0);
+    #else
         int ret = 0;
     #ifdef WOLFSSL_STM32_CUBEMX
         CRYP_HandleTypeDef hcryp;
@@ -401,51 +368,7 @@ block cipher mechanism that uses n-bit binary string parameter key with 128-bits
             return ret;
 #endif
 
-    #ifdef WOLFSSL_STM32U5_DHUK
-        ret = wolfSSL_CryptHwMutexLock();
-        if (ret != 0)
-            return ret;
-
-        /* Handle making use of wrapped key */
-        if (aes->devId == WOLFSSL_STM32U5_DHUK_WRAPPED_DEVID) {
-            CRYP_ConfigTypeDef Config;
-
-            XMEMSET(&Config, 0, sizeof(Config));
-            ret = wc_Stm32_Aes_UnWrap(aes, &hcryp, (const byte*)aes->key,
-                aes->keylen, aes->dhukIV, aes->dhukIVLen);
-            if (ret != HAL_OK) {
-                WOLFSSL_MSG("Error with DHUK unwrap");
-                ret = BAD_FUNC_ARG;
-            }
-            /* reconfigure for using unwrapped key now */
-            HAL_CRYP_GetConfig(&hcryp, &Config);
-            Config.KeyMode   = CRYP_KEYMODE_NORMAL;
-            Config.KeySelect = CRYP_KEYSEL_NORMAL;
-            Config.Algorithm = CRYP_AES_ECB;
-            Config.DataType  = CRYP_DATATYPE_8B;
-            Config.DataWidthUnit = CRYP_DATAWIDTHUNIT_BYTE;
-            HAL_CRYP_SetConfig(&hcryp, &Config);
-        }
-        else {
-            ret = wc_Stm32_Aes_Init(aes, &hcryp, 1);
-            if (ret == 0) {
-                hcryp.Init.Algorithm  = CRYP_AES_ECB;
-                ret = HAL_CRYP_Init(&hcryp);
-                if (ret != HAL_OK) {
-                    ret = BAD_FUNC_ARG;
-                }
-            }
-        }
-
-        if (ret == HAL_OK) {
-            ret = HAL_CRYP_Decrypt(&hcryp, (uint32_t*)inBlock, WC_AES_BLOCK_SIZE,
-                    (uint32_t*)outBlock, STM32_HAL_TIMEOUT);
-            if (ret != HAL_OK) {
-                ret = WC_TIMEOUT_E;
-            }
-        }
-        HAL_CRYP_DeInit(&hcryp);
-    #elif defined(WOLFSSL_STM32_CUBEMX)
+    #if defined(WOLFSSL_STM32_CUBEMX)
         ret = wc_Stm32_Aes_Init(aes, &hcryp, 0);
         if (ret != 0)
             return ret;
@@ -533,6 +456,7 @@ block cipher mechanism that uses n-bit binary string parameter key with 128-bits
         wc_Stm32_Aes_Cleanup();
 
         return ret;
+    #endif /* !WOLFSSL_STM32_BARE */
     }
     #endif /* WOLFSSL_AES_DIRECT */
 #endif /* HAVE_AES_DECRYPT */
@@ -749,17 +673,16 @@ block cipher mechanism that uses n-bit binary string parameter key with 128-bits
         #define AESNI_ALIGN 16
     #endif
 
-    /* note that all write access to these static variables must be idempotent,
-     * as arranged by Check_CPU_support_AES(), else they will be susceptible to
-     * data races.
-     */
-    static int checkedAESNI = 0;
-    static int haveAESNI  = 0;
-    static cpuid_flags_t intel_flags = WC_CPUID_INITIALIZER;
+    /* Accessed with the wolfSSL atomic APIs so the one-time detection is free of
+     * data races.  Writes are also idempotent (all callers compute the same
+     * value), so a benign concurrent double-write is harmless. */
+    static wolfSSL_Atomic_Uint checkedAESNI = WOLFSSL_ATOMIC_INITIALIZER(0);
+    static wolfSSL_Atomic_Uint haveAESNI = WOLFSSL_ATOMIC_INITIALIZER(0);
+    static cpuid_flags_atomic_t intel_flags = WC_CPUID_ATOMIC_INITIALIZER;
 
     static WARN_UNUSED_RESULT int Check_CPU_support_AES(void)
     {
-        cpuid_get_flags_ex(&intel_flags);
+        cpuid_get_flags_atomic(&intel_flags);
 
         return IS_INTEL_AESNI(intel_flags) != 0;
     }
@@ -1163,11 +1086,11 @@ block cipher mechanism that uses n-bit binary string parameter key with 128-bits
 
 #elif defined(WOLFSSL_ARMASM)
 #if defined(__aarch64__) && !defined(WOLFSSL_ARMASM_NO_HW_CRYPTO)
-static cpuid_flags_t cpuid_flags = WC_CPUID_INITIALIZER;
+static cpuid_flags_atomic_t cpuid_flags = WC_CPUID_ATOMIC_INITIALIZER;
 
 static void Check_CPU_support_HwCrypto(Aes* aes)
 {
-    cpuid_get_flags_ex(&cpuid_flags);
+    cpuid_get_flags_atomic(&cpuid_flags);
     aes->use_aes_hw_crypto = IS_AARCH64_AES(cpuid_flags);
 #ifdef HAVE_AESGCM
     aes->use_pmull_hw_crypto = IS_AARCH64_PMULL(cpuid_flags);
@@ -1241,6 +1164,83 @@ static WARN_UNUSED_RESULT int wc_AesDecrypt(Aes* aes, const byte* inBlock,
 #endif /* HAVE_AES_DECRYPT && WOLFSSL_AES_DIRECT */
 
 #elif (defined(WOLFSSL_PPC64_ASM) || defined(WOLFSSL_PPC32_ASM))
+
+#if defined(WOLFSSL_PPC64_ASM) && defined(WOLFSSL_PPC64_ASM_CRYPTO)
+/* POWER8+ has vector AES (vcipher/vncipher...) instructions.  When built in,
+ * select the "_crypto" implementations at run time if the CPU supports them.
+ *
+ * A run-time flag with direct calls is used rather than a function pointer: an
+ * indirect call would require an ELFv1 function descriptor, whereas direct
+ * calls work under both the ELFv1 and ELFv2 ABIs.  The dispatch is expressed as
+ * self-referential macros - the base name inside each macro is not re-expanded
+ * (C99 6.10.3.4), so it names the real base function.  In a PPC build the ARM
+ * branches that also call these names are #if'd out, so only the live PPC call
+ * sites are redirected. */
+
+/* Resolved dispatch decision (0 = base, 1 = vector-crypto), accessed with the
+ * wolfSSL atomic APIs so the one-time detection is free of data races.  The
+ * master cpuid flags read by cpuid_get_flags() are themselves atomic; the write
+ * here is idempotent so a benign concurrent double-write is harmless. */
+static wolfSSL_Atomic_Uint aes_ppc64_use_crypto = WOLFSSL_ATOMIC_INITIALIZER(0);
+
+/* True when the CPU supports the vector-crypto instructions. */
+#define AES_PPC64_USE_CRYPTO()   (WOLFSSL_ATOMIC_LOAD(aes_ppc64_use_crypto) != 0)
+
+/* Check and set the decision together (as Check_CPU_support_AES/HwCrypto do);
+ * called from the key-setup path before any AES_*_crypto use. */
+static void Aes_SetCrypto(void)
+{
+    WOLFSSL_ATOMIC_STORE(aes_ppc64_use_crypto,
+        (unsigned int)(IS_PPC64_VEC_CRYPTO(cpuid_get_flags()) != 0));
+}
+
+#define AES_set_encrypt_key(key, len, ks)                                     \
+    (AES_PPC64_USE_CRYPTO() ?                                               \
+        AES_set_encrypt_key_crypto((key), (len), (ks)) :                      \
+        AES_set_encrypt_key((key), (len), (ks)))
+#define AES_invert_key(ks, rounds)                                            \
+    (AES_PPC64_USE_CRYPTO() ?                                               \
+        AES_invert_key_crypto((ks), (rounds)) :                              \
+        AES_invert_key((ks), (rounds)))
+#define AES_ECB_encrypt(in, out, len, ks, nr)                                 \
+    (AES_PPC64_USE_CRYPTO() ?                                               \
+        AES_ECB_encrypt_crypto((in), (out), (len), (ks), (nr)) :              \
+        AES_ECB_encrypt((in), (out), (len), (ks), (nr)))
+#define AES_ECB_decrypt(in, out, len, ks, nr)                                 \
+    (AES_PPC64_USE_CRYPTO() ?                                               \
+        AES_ECB_decrypt_crypto((in), (out), (len), (ks), (nr)) :              \
+        AES_ECB_decrypt((in), (out), (len), (ks), (nr)))
+#define AES_CBC_encrypt(in, out, len, ks, nr, iv)                             \
+    (AES_PPC64_USE_CRYPTO() ?                                               \
+        AES_CBC_encrypt_crypto((in), (out), (len), (ks), (nr), (iv)) :        \
+        AES_CBC_encrypt((in), (out), (len), (ks), (nr), (iv)))
+#define AES_CBC_decrypt(in, out, len, ks, nr, iv)                             \
+    (AES_PPC64_USE_CRYPTO() ?                                               \
+        AES_CBC_decrypt_crypto((in), (out), (len), (ks), (nr), (iv)) :        \
+        AES_CBC_decrypt((in), (out), (len), (ks), (nr), (iv)))
+#define AES_CTR_encrypt(in, out, len, ks, nr, ctr)                            \
+    (AES_PPC64_USE_CRYPTO() ?                                               \
+        AES_CTR_encrypt_crypto((in), (out), (len), (ks), (nr), (ctr)) :       \
+        AES_CTR_encrypt((in), (out), (len), (ks), (nr), (ctr)))
+#define AES_GCM_encrypt(in, out, len, ks, nr, ctr)                            \
+    (AES_PPC64_USE_CRYPTO() ?                                               \
+        AES_GCM_encrypt_crypto((in), (out), (len), (ks), (nr), (ctr)) :       \
+        AES_GCM_encrypt((in), (out), (len), (ks), (nr), (ctr)))
+#if defined(WOLFSSL_AES_XTS)
+#define AES_XTS_encrypt(in, out, sz, i, key, key2, tmp, nr)                   \
+    (AES_PPC64_USE_CRYPTO() ?                                               \
+        AES_XTS_encrypt_crypto((in), (out), (sz), (i), (key), (key2), (tmp),  \
+            (nr)) :                                                           \
+        AES_XTS_encrypt((in), (out), (sz), (i), (key), (key2), (tmp), (nr)))
+#define AES_XTS_decrypt(in, out, sz, i, key, key2, tmp, nr)                   \
+    (AES_PPC64_USE_CRYPTO() ?                                               \
+        AES_XTS_decrypt_crypto((in), (out), (sz), (i), (key), (key2), (tmp),  \
+            (nr)) :                                                           \
+        AES_XTS_decrypt((in), (out), (sz), (i), (key), (key2), (tmp), (nr)))
+#endif /* WOLFSSL_AES_XTS */
+#else
+#define Aes_SetCrypto()                 WC_DO_NOTHING
+#endif /* WOLFSSL_PPC64_ASM && WOLFSSL_PPC64_ASM_CRYPTO */
 
 #if defined(WOLFSSL_AES_DIRECT) || defined(HAVE_AESCCM) || \
     defined(WOLFSSL_AESGCM_STREAM) || defined(HAVE_AESGCM)
@@ -4493,6 +4493,14 @@ static WARN_UNUSED_RESULT int wc_AesDecrypt(Aes* aes, const byte* inBlock,
         aes->keylen = keylen;
         aes->rounds = keylen/4 + 6;
         XMEMCPY(rk, userKey, keylen);
+    #ifdef WOLF_CRYPTO_CB
+        /* Keep a raw (non-reversed) copy for crypto-callback offload, e.g. the
+         * DHUK device reads the seed from devKey. Mirrors the generic
+         * wc_AesSetKey cryptocb path. */
+        if (keylen <= sizeof(aes->devKey)) {
+            XMEMCPY(aes->devKey, userKey, keylen);
+        }
+    #endif
     #if !defined(WOLFSSL_STM32_CUBEMX) || defined(STM32_HAL_V2)
         ByteReverseWords(rk, rk, keylen);
     #endif
@@ -4955,6 +4963,9 @@ static WARN_UNUSED_RESULT int wc_AesDecrypt(Aes* aes, const byte* inBlock,
         aes->keylen = (int)keylen;
         aes->rounds = (keylen/4) + 6;
 
+        /* Determine base vs vector-crypto before the (dispatched) key setup so
+         * the schedule matches the mode functions that later consume it. */
+        Aes_SetCrypto();
         AES_set_encrypt_key(userKey, keylen * 8, (byte*)aes->key);
 
     #ifdef HAVE_AES_DECRYPT
@@ -5637,11 +5648,11 @@ static void AesSetKey_C(Aes* aes, const byte* key, word32 keySz, int dir)
         * function correctly with default build settings.
         */
 
-        if (checkedAESNI == 0) {
-            haveAESNI  = Check_CPU_support_AES();
-            checkedAESNI = 1;
+        if (WOLFSSL_ATOMIC_LOAD(checkedAESNI) == 0) {
+            WOLFSSL_ATOMIC_STORE(haveAESNI, Check_CPU_support_AES());
+            WOLFSSL_ATOMIC_STORE(checkedAESNI, 1);
         }
-        if (haveAESNI
+        if (WOLFSSL_ATOMIC_LOAD(haveAESNI)
 #if defined(WC_FLAG_DONT_USE_VECTOR_OPS) && !defined(WC_C_DYNAMIC_FALLBACK)
             && (aes->use_aesni != WC_FLAG_DONT_USE_VECTOR_OPS)
 #endif
@@ -6067,141 +6078,60 @@ int wc_AesSetIV(Aes* aes, const byte* iv)
 #ifdef HAVE_AES_CBC
 #if defined(STM32_CRYPTO)
 
-#ifdef WOLFSSL_STM32U5_DHUK
+#ifdef WOLFSSL_STM32_BARE
     int wc_AesCbcEncrypt(Aes* aes, byte* out, const byte* in, word32 sz)
     {
-        int ret = 0;
-        CRYP_HandleTypeDef hcryp;
-        word32 blocks = (sz / WC_AES_BLOCK_SIZE);
-
-#ifdef WOLFSSL_AES_CBC_LENGTH_CHECKS
+    #ifdef WOLFSSL_AES_CBC_LENGTH_CHECKS
         if (sz % WC_AES_BLOCK_SIZE) {
             return BAD_LENGTH_E;
         }
-#endif
-        if (blocks == 0)
+    #endif
+        if (sz == 0) {
             return 0;
-
-        ret = wolfSSL_CryptHwMutexLock();
-        if (ret != 0) {
-            return ret;
         }
-
-        if (aes->devId == WOLFSSL_STM32U5_DHUK_WRAPPED_DEVID) {
-            CRYP_ConfigTypeDef Config;
-
-            XMEMSET(&Config, 0, sizeof(Config));
-            ret = wc_Stm32_Aes_UnWrap(aes, &hcryp, (const byte*)aes->key, aes->keylen,
-                (const byte*)aes->dhukIV, aes->dhukIVLen);
-
-            /* reconfigure for using unwrapped key now */
-            HAL_CRYP_GetConfig(&hcryp, &Config);
-            Config.KeyMode   = CRYP_KEYMODE_NORMAL;
-            Config.KeySelect = CRYP_KEYSEL_NORMAL;
-            Config.Algorithm = CRYP_AES_CBC;
-            ByteReverseWords(aes->reg, aes->reg, WC_AES_BLOCK_SIZE);
-            Config.pInitVect = (STM_CRYPT_TYPE*)aes->reg;
-            HAL_CRYP_SetConfig(&hcryp, &Config);
+    #ifdef WOLF_CRYPTO_CB
+        #ifndef WOLF_CRYPTO_CB_FIND
+        if (aes->devId != INVALID_DEVID)
+        #endif
+        {
+            int crypto_cb_ret = wc_CryptoCb_AesCbcEncrypt(aes, out, in, sz);
+            if (crypto_cb_ret != WC_NO_ERR_TRACE(CRYPTOCB_UNAVAILABLE))
+                return crypto_cb_ret;
+            /* fall-through when unavailable (normal-keyed Aes) */
         }
-        else {
-            ret = wc_Stm32_Aes_Init(aes, &hcryp, 1);
-            if (ret != 0) {
-                wolfSSL_CryptHwMutexUnLock();
-                return ret;
-            }
-            hcryp.Init.Algorithm  = CRYP_AES_CBC;
-            ByteReverseWords(aes->reg, aes->reg, WC_AES_BLOCK_SIZE);
-            hcryp.Init.pInitVect = (STM_CRYPT_TYPE*)aes->reg;
-            ret = HAL_CRYP_Init(&hcryp);
-        }
-
-        if (ret == HAL_OK) {
-            ret = HAL_CRYP_Encrypt(&hcryp, (uint32_t*)in, blocks * WC_AES_BLOCK_SIZE,
-                (uint32_t*)out, STM32_HAL_TIMEOUT);
-            if (ret != HAL_OK) {
-                ret = WC_TIMEOUT_E;
-            }
-
-            /* store iv for next call */
-            XMEMCPY(aes->reg, out + sz - WC_AES_BLOCK_SIZE, WC_AES_BLOCK_SIZE);
-        }
-
-        HAL_CRYP_DeInit(&hcryp);
-
-        wolfSSL_CryptHwMutexUnLock();
-        wc_Stm32_Aes_Cleanup();
-
-        return ret;
+    #endif
+        /* DHUK / any crypto-callback device is routed above. wc_Stm32_Aes_Cbc
+         * processes whole blocks and ignores any sub-block remainder, matching
+         * the SW / CUBEMX CBC backends; define WOLFSSL_AES_CBC_LENGTH_CHECKS
+         * (above) to reject a non-block-multiple length with BAD_LENGTH_E. */
+        return wc_Stm32_Aes_Cbc(aes, out, in, sz, 1);
     }
     #ifdef HAVE_AES_DECRYPT
     int wc_AesCbcDecrypt(Aes* aes, byte* out, const byte* in, word32 sz)
     {
-        int ret = 0;
-        CRYP_HandleTypeDef hcryp;
-        word32 blocks = (sz / WC_AES_BLOCK_SIZE);
-
-#ifdef WOLFSSL_AES_CBC_LENGTH_CHECKS
+    #ifdef WOLFSSL_AES_CBC_LENGTH_CHECKS
         if (sz % WC_AES_BLOCK_SIZE) {
             return BAD_LENGTH_E;
         }
-#endif
-        if (blocks == 0)
+    #endif
+        if (sz == 0) {
             return 0;
-
-        ret = wolfSSL_CryptHwMutexLock();
-        if (ret != 0) {
-            return ret;
         }
-
-        if (aes->devId == WOLFSSL_STM32U5_DHUK_WRAPPED_DEVID) {
-            CRYP_ConfigTypeDef Config;
-
-            XMEMSET(&Config, 0, sizeof(Config));
-            ret = wc_Stm32_Aes_UnWrap(aes, &hcryp, (const byte*)aes->key, aes->keylen,
-                aes->dhukIV, aes->dhukIVLen);
-
-            /* reconfigure for using unwrapped key now */
-            HAL_CRYP_GetConfig(&hcryp, &Config);
-            Config.KeyMode   = CRYP_KEYMODE_NORMAL;
-            Config.KeySelect = CRYP_KEYSEL_NORMAL;
-            Config.Algorithm = CRYP_AES_CBC;
-            ByteReverseWords(aes->reg, aes->reg, WC_AES_BLOCK_SIZE);
-            Config.pInitVect = (STM_CRYPT_TYPE*)aes->reg;
-            HAL_CRYP_SetConfig(&hcryp, &Config);
+    #ifdef WOLF_CRYPTO_CB
+        #ifndef WOLF_CRYPTO_CB_FIND
+        if (aes->devId != INVALID_DEVID)
+        #endif
+        {
+            int crypto_cb_ret = wc_CryptoCb_AesCbcDecrypt(aes, out, in, sz);
+            if (crypto_cb_ret != WC_NO_ERR_TRACE(CRYPTOCB_UNAVAILABLE))
+                return crypto_cb_ret;
+            /* fall-through when unavailable (normal-keyed Aes) */
         }
-        else {
-            ret = wc_Stm32_Aes_Init(aes, &hcryp, 1);
-            if (ret != 0) {
-                wolfSSL_CryptHwMutexUnLock();
-                return ret;
-            }
-            hcryp.Init.Algorithm  = CRYP_AES_CBC;
-            ByteReverseWords(aes->reg, aes->reg, WC_AES_BLOCK_SIZE);
-            hcryp.Init.pInitVect = (STM_CRYPT_TYPE*)aes->reg;
-            ret = HAL_CRYP_Init(&hcryp);
-        }
-
-        if (ret == HAL_OK) {
-            /* if input and output same will overwrite input iv */
-            XMEMCPY(aes->tmp, in + sz - WC_AES_BLOCK_SIZE, WC_AES_BLOCK_SIZE);
-            ret = HAL_CRYP_Decrypt(&hcryp, (uint32_t*)in, blocks * WC_AES_BLOCK_SIZE,
-                (uint32_t*)out, STM32_HAL_TIMEOUT);
-            if (ret != HAL_OK) {
-                ret = WC_TIMEOUT_E;
-            }
-
-            /* store iv for next call */
-            XMEMCPY(aes->reg, aes->tmp, WC_AES_BLOCK_SIZE);
-        }
-
-        HAL_CRYP_DeInit(&hcryp);
-        wolfSSL_CryptHwMutexUnLock();
-        wc_Stm32_Aes_Cleanup();
-
-        return ret;
+    #endif
+        /* DHUK / any crypto-callback device is routed above. */
+        return wc_Stm32_Aes_Cbc(aes, out, in, sz, 0);
     }
     #endif /* HAVE_AES_DECRYPT */
-
 #elif defined(WOLFSSL_STM32_CUBEMX)
     int wc_AesCbcEncrypt(Aes* aes, byte* out, const byte* in, word32 sz)
     {
@@ -6216,6 +6146,18 @@ int wc_AesSetIV(Aes* aes, const byte* iv)
 #endif
         if (blocks == 0)
             return 0;
+
+    #ifdef WOLF_CRYPTO_CB
+        #ifndef WOLF_CRYPTO_CB_FIND
+        if (aes->devId != INVALID_DEVID)
+        #endif
+        {
+            int crypto_cb_ret = wc_CryptoCb_AesCbcEncrypt(aes, out, in, sz);
+            if (crypto_cb_ret != WC_NO_ERR_TRACE(CRYPTOCB_UNAVAILABLE))
+                return crypto_cb_ret;
+            /* fall-through when unavailable (normal-keyed Aes) */
+        }
+    #endif
 
         ret = wc_Stm32_Aes_Init(aes, &hcryp, 0);
         if (ret != 0)
@@ -6278,6 +6220,18 @@ int wc_AesSetIV(Aes* aes, const byte* iv)
 #endif
         if (blocks == 0)
             return 0;
+
+    #ifdef WOLF_CRYPTO_CB
+        #ifndef WOLF_CRYPTO_CB_FIND
+        if (aes->devId != INVALID_DEVID)
+        #endif
+        {
+            int crypto_cb_ret = wc_CryptoCb_AesCbcDecrypt(aes, out, in, sz);
+            if (crypto_cb_ret != WC_NO_ERR_TRACE(CRYPTOCB_UNAVAILABLE))
+                return crypto_cb_ret;
+            /* fall-through when unavailable (normal-keyed Aes) */
+        }
+    #endif
 
         ret = wc_Stm32_Aes_Init(aes, &hcryp, 0);
         if (ret != 0)
@@ -7471,6 +7425,26 @@ int wc_AesCbcEncrypt(Aes* aes, byte* out, const byte* in, word32 sz)
 
         int wc_AesCtrEncryptBlock(Aes* aes, byte* out, const byte* in)
         {
+        #ifdef WOLFSSL_STM32_BARE
+            /* CTR per-block transform: produce out = in XOR AES_ECB(counter).
+             * ECB-encrypt the counter aes->reg into a keystream block, then XOR
+             * with the plaintext 'in'. The caller (XTRANSFORM_AESCTRBLOCK loop)
+             * does not XOR and increments aes->reg after this returns. */
+            byte ks[WC_AES_BLOCK_SIZE];
+            int  ret = wc_Stm32_Aes_Ecb(aes, ks, (const byte*)aes->reg,
+                                        WC_AES_BLOCK_SIZE, 1);
+            if (ret == 0) {
+                xorbufout(out, in, ks, WC_AES_BLOCK_SIZE);
+            }
+            else {
+                /* The XTRANSFORM_AESCTRBLOCK macro discards this return; zero
+                 * the block so a failed HW ECB does not leave stale/prior
+                 * plaintext in the output. */
+                ForceZero(out, WC_AES_BLOCK_SIZE);
+            }
+            ForceZero(ks, sizeof(ks));
+            return ret;
+        #else
             int ret = 0;
         #ifdef WOLFSSL_STM32_CUBEMX
             CRYP_HandleTypeDef hcryp;
@@ -7581,6 +7555,7 @@ int wc_AesCbcEncrypt(Aes* aes, byte* out, const byte* in, word32 sz)
             wolfSSL_CryptHwMutexUnLock();
             wc_Stm32_Aes_Cleanup();
             return ret;
+        #endif /* !WOLFSSL_STM32_BARE */
         }
 
 
@@ -7901,7 +7876,9 @@ int wc_AesCbcEncrypt(Aes* aes, byte* out, const byte* in, word32 sz)
                 /* do as many block size ops as possible */
                 while (sz >= WC_AES_BLOCK_SIZE) {
                 #ifdef XTRANSFORM_AESCTRBLOCK
-                    XTRANSFORM_AESCTRBLOCK(aes, out, in);
+                    ret = XTRANSFORM_AESCTRBLOCK(aes, out, in);
+                    if (ret != 0)
+                        break;
                 #else
                     ret = AesEncrypt_preFetchOpt(aes, (byte*)aes->reg,
                                                     scratch,
@@ -10872,6 +10849,7 @@ int wc_AesGcmEncrypt(Aes* aes, byte* out, const byte* in, word32 sz,
         authTag, authTagSz,
         authIn, authInSz);
 #endif
+
 #if defined(WOLFSSL_MICROCHIP_TA100) && defined(WOLFSSL_MICROCHIP_AESGCM)
 #ifndef TA_AES_GCM_MAX_DATA_SIZE
     #define TA_AES_GCM_MAX_DATA_SIZE 996u
@@ -10889,6 +10867,17 @@ int wc_AesGcmEncrypt(Aes* aes, byte* out, const byte* in, word32 sz,
             authIn, authInSz);
     }
 #endif
+
+#if defined(WOLFSSL_STM32_BARE) && defined(STM32_CRYPTO)
+    ret = wc_Stm32_Aes_Gcm(aes, out, in, sz, iv, ivSz,
+                           authTag, authTagSz,
+                           authIn, authInSz, 1 /* enc */);
+    if (ret != WC_NO_ERR_TRACE(CRYPTOCB_UNAVAILABLE))
+        return ret;
+    /* fall through to SW GCM (still uses HW AES via wc_AesEncrypt) */
+#endif /* WOLFSSL_STM32_BARE && STM32_CRYPTO */
+
+
 #ifdef STM32_CRYPTO_AES_GCM
     return wc_AesGcmEncrypt_STM32(
         aes, out, in, sz, iv, ivSz,
@@ -11663,6 +11652,10 @@ int wc_AesGcmDecrypt(Aes* aes, byte* out, const byte* in, word32 sz,
             authTag, authTagSz, authIn, authInSz);
     }
 #endif
+
+    /* BARE: GCM decrypt always uses SW path (with HW AES blocks via
+     * wc_AesEncrypt). Encrypt is HW-accelerated above; decrypt + tag
+     * verification stays in well-tested SW for now. */
 
 #ifdef STM32_CRYPTO_AES_GCM
     /* The STM standard peripheral library API's doesn't support partial blocks */
@@ -14871,7 +14864,7 @@ int wc_AesInit(Aes* aes, void* heap, int devId)
 
     aes->heap = heap;
 
-#if defined(WOLF_CRYPTO_CB) || defined(WOLFSSL_STM32U5_DHUK)
+#if defined(WOLF_CRYPTO_CB)
     aes->devId = devId;
     aes->devCtx = NULL;
 #else
@@ -18890,7 +18883,7 @@ static AesGcmSivPolyvalFn AesGcmSivPolyvalAsm(void)
 static AesGcmSivPolyvalFn AesGcmSivPolyvalAsm(void)
 {
 #ifndef WOLFSSL_ARMASM_NO_HW_CRYPTO
-    cpuid_get_flags_ex(&cpuid_flags);
+    cpuid_get_flags_atomic(&cpuid_flags);
     if (IS_AARCH64_PMULL(cpuid_flags)) {
         return &AES_GCMSIV_polyval_pmull;
     }
@@ -18909,7 +18902,7 @@ static AesGcmSivPolyvalFn AesGcmSivPolyvalAsm(void)
  * AES-NI gates the base path (matching wolfSSL's AES-GCM). */
 static AesGcmSivPolyvalFn AesGcmSivPolyvalAsm(void)
 {
-    cpuid_get_flags_ex(&intel_flags);
+    cpuid_get_flags_atomic(&intel_flags);
     if (!IS_INTEL_AESNI(intel_flags)) {
         return NULL;
     }
@@ -18954,7 +18947,7 @@ static AesGcmSivCtrFn AesGcmSivCtrAsm(void)
 static AesGcmSivCtrFn AesGcmSivCtrAsm(void)
 {
 #ifndef WOLFSSL_ARMASM_NO_HW_CRYPTO
-    cpuid_get_flags_ex(&cpuid_flags);
+    cpuid_get_flags_atomic(&cpuid_flags);
     if (IS_AARCH64_AES(cpuid_flags)) {
         return &AES_GCMSIV_ctr_aarch64;
     }
@@ -18972,7 +18965,7 @@ static AesGcmSivCtrFn AesGcmSivCtrAsm(void)
  * the base; AVX1/VAES/AVX512 are progressively wider pipelines. */
 static AesGcmSivCtrFn AesGcmSivCtrAsm(void)
 {
-    cpuid_get_flags_ex(&intel_flags);
+    cpuid_get_flags_atomic(&intel_flags);
     if (!IS_INTEL_AESNI(intel_flags)) {
         return NULL;
     }
