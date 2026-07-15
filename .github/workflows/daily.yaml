@@ -66,6 +66,8 @@ jobs:
           sed -i 's#.txt$#.html#' diff.csv
           cut -d, -f1,2,3,4,5,6,7,8,9,15 diff.csv > diff2.csv
           csv2md diff2.csv > diff.md
+      - name: Create tgz copy of SARIF results
+        run: tar czf diff.sarif.tgz diff.sarif
       - name: Email results
         uses: dawidd6/action-send-mail@v3
         with:
@@ -79,5 +81,6 @@ jobs:
           from: "CodeSonar Analyzer"
           to: "mark@hermeling.org, testing@wolfssl.com"
           reply_to: "mark@hermeling.org"
+          attachments: diff.sarif.tgz
       - name: cleanup
         run: rm hubpwfile
