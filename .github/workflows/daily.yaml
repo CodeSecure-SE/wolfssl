@@ -68,6 +68,11 @@ jobs:
           csv2md diff2.csv > diff.md
       - name: Create tgz copy of SARIF results
         run: tar czf diff.sarif.tgz diff.sarif
+      - name: Upload artefact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SARIF results summary
+          path: diff.sarif.tgz
       - name: Check if diff.md has more than 2 lines
         id: check_diff
         run: |
