@@ -1674,6 +1674,8 @@ then
         test "$enable_aesxts_stream" = "" && test "$enable_aesxts" = "yes" && enable_aesxts_stream=yes
         test "$enable_shake128" = "" && enable_shake128=yes
         test "$enable_shake256" = "" && enable_shake256=yes
+        test "$enable_cshake" = "" && enable_cshake=yes
+        test "$enable_kmac" = "" && enable_kmac=yes
         test "$enable_compkey" = "" && enable_compkey=yes
         # AFALG lacks AES-ECB
         test "$enable_srtp_kdf" = "" && test "$enable_afalg" != "yes" && enable_srtp_kdf=yes
@@ -1904,6 +1906,166 @@ AC_ARG_ENABLE([extra-pqc-hybrids],
     )
 
 
+# FrodoKEM (experimental reference implementation)
+AC_ARG_ENABLE([frodokem],
+    [AS_HELP_STRING([--enable-frodokem],[Enable FrodoKEM reference implementation, optionally with a comma-separated list of sub-options e.g. aes,ephemeral,small,no-640 (requires --enable-experimental) (default: disabled)])],
+    [ ENABLED_FRODOKEM=$enableval ],
+    [ ENABLED_FRODOKEM=no ]
+    )
+
+AS_IF([ test "$ENABLED_FRODOKEM" != "no" && test "$ENABLED_EXPERIMENTAL" != "yes" ],[ AC_MSG_ERROR([frodokem requires --enable-experimental.]) ])
+
+# FrodoKEM matrix A generation with SHAKE-128 (default: enabled with frodokem).
+AC_ARG_ENABLE([frodokem-shake],
+    [AS_HELP_STRING([--enable-frodokem-shake],[Enable FrodoKEM SHAKE-128 matrix A generation (default: enabled)])],
+    [ ENABLED_FRODOKEM_SHAKE=$enableval ],
+    [ ENABLED_FRODOKEM_SHAKE=default ]
+    )
+# FrodoKEM matrix A generation with AES-128 (default: disabled).
+AC_ARG_ENABLE([frodokem-aes],
+    [AS_HELP_STRING([--enable-frodokem-aes],[Enable FrodoKEM AES-128 matrix A generation (default: disabled)])],
+    [ ENABLED_FRODOKEM_AES=$enableval ],
+    [ ENABLED_FRODOKEM_AES=no ]
+    )
+# AArch64 SVE S*A accumulate, selected at run time by HWCAP (default: disabled).
+AC_ARG_ENABLE([frodokem-sve],
+    [AS_HELP_STRING([--enable-frodokem-sve],[Enable FrodoKEM AArch64 SVE matrix acceleration (default: disabled)])],
+    [ ENABLED_FRODOKEM_SVE=$enableval ],
+    [ ENABLED_FRODOKEM_SVE=no ]
+    )
+# AArch64 SME B*S via the ZA-tile UMOPA, selected at run time (default: disabled).
+AC_ARG_ENABLE([frodokem-sme],
+    [AS_HELP_STRING([--enable-frodokem-sme],[Enable FrodoKEM AArch64 SME matrix acceleration (default: disabled)])],
+    [ ENABLED_FRODOKEM_SME=$enableval ],
+    [ ENABLED_FRODOKEM_SME=no ]
+    )
+# eFrodoKEM (ephemeral, salt-less) variants (default: disabled).
+AC_ARG_ENABLE([frodokem-ephemeral],
+    [AS_HELP_STRING([--enable-frodokem-ephemeral],[Enable eFrodoKEM (ephemeral) variants (default: disabled)])],
+    [ ENABLED_FRODOKEM_EPHEMERAL=$enableval ],
+    [ ENABLED_FRODOKEM_EPHEMERAL=no ]
+    )
+# FrodoKEM parameter sets (each default: enabled with frodokem).
+AC_ARG_ENABLE([frodokem-640],
+    [AS_HELP_STRING([--enable-frodokem-640],[Enable the FrodoKEM-640 parameter set (default: enabled)])],
+    [ ENABLED_FRODOKEM_640=$enableval ],
+    [ ENABLED_FRODOKEM_640=yes ]
+    )
+AC_ARG_ENABLE([frodokem-976],
+    [AS_HELP_STRING([--enable-frodokem-976],[Enable the FrodoKEM-976 parameter set (default: enabled)])],
+    [ ENABLED_FRODOKEM_976=$enableval ],
+    [ ENABLED_FRODOKEM_976=yes ]
+    )
+AC_ARG_ENABLE([frodokem-1344],
+    [AS_HELP_STRING([--enable-frodokem-1344],[Enable the FrodoKEM-1344 parameter set (default: enabled)])],
+    [ ENABLED_FRODOKEM_1344=$enableval ],
+    [ ENABLED_FRODOKEM_1344=yes ]
+    )
+# FrodoKEM operations (each default: enabled with frodokem).
+AC_ARG_ENABLE([frodokem-make-key],
+    [AS_HELP_STRING([--enable-frodokem-make-key],[Enable FrodoKEM key generation (default: enabled)])],
+    [ ENABLED_FRODOKEM_MAKE_KEY=$enableval ],
+    [ ENABLED_FRODOKEM_MAKE_KEY=yes ]
+    )
+AC_ARG_ENABLE([frodokem-encapsulate],
+    [AS_HELP_STRING([--enable-frodokem-encapsulate],[Enable FrodoKEM encapsulation (default: enabled)])],
+    [ ENABLED_FRODOKEM_ENCAPSULATE=$enableval ],
+    [ ENABLED_FRODOKEM_ENCAPSULATE=yes ]
+    )
+AC_ARG_ENABLE([frodokem-decapsulate],
+    [AS_HELP_STRING([--enable-frodokem-decapsulate],[Enable FrodoKEM decapsulation (default: enabled)])],
+    [ ENABLED_FRODOKEM_DECAPSULATE=$enableval ],
+    [ ENABLED_FRODOKEM_DECAPSULATE=yes ]
+    )
+# Small-footprint FrodoKEM: use the looped (not fully unrolled) matrix
+# arithmetic (default: disabled).
+AC_ARG_ENABLE([frodokem-small],
+    [AS_HELP_STRING([--enable-frodokem-small],[Enable small-footprint FrodoKEM (default: disabled)])],
+    [ ENABLED_FRODOKEM_SMALL=$enableval ],
+    [ ENABLED_FRODOKEM_SMALL=no ]
+    )
+
+# The FrodoKEM sub-options may also be given as a comma-separated list to
+# --enable-frodokem, e.g. --enable-frodokem=aes,ephemeral,small,no-640. Each
+# token sets the matching --enable-frodokem-<option> value ("no-<option>"
+# disables). This is equivalent to passing the individual --enable-frodokem-*
+# options.
+case "$ENABLED_FRODOKEM" in
+no | yes | '')
+    ;;
+*)
+    frodokem_opts="$ENABLED_FRODOKEM"
+    ENABLED_FRODOKEM=yes
+    for frodokem_opt in $(echo "$frodokem_opts" | tr ',' ' ')
+    do
+        case "$frodokem_opt" in
+        yes)            ;;
+        small)          ENABLED_FRODOKEM_SMALL=yes ;;
+        no-small)       ENABLED_FRODOKEM_SMALL=no ;;
+        shake)          ENABLED_FRODOKEM_SHAKE=yes ;;
+        no-shake)       ENABLED_FRODOKEM_SHAKE=no ;;
+        aes)            ENABLED_FRODOKEM_AES=yes ;;
+        no-aes)         ENABLED_FRODOKEM_AES=no ;;
+        sve)            ENABLED_FRODOKEM_SVE=yes ;;
+        no-sve)         ENABLED_FRODOKEM_SVE=no ;;
+        sme)            ENABLED_FRODOKEM_SME=yes ;;
+        no-sme)         ENABLED_FRODOKEM_SME=no ;;
+        ephemeral)      ENABLED_FRODOKEM_EPHEMERAL=yes ;;
+        no-ephemeral)   ENABLED_FRODOKEM_EPHEMERAL=no ;;
+        640)            ENABLED_FRODOKEM_640=yes ;;
+        no-640)         ENABLED_FRODOKEM_640=no ;;
+        976)            ENABLED_FRODOKEM_976=yes ;;
+        no-976)         ENABLED_FRODOKEM_976=no ;;
+        1344)           ENABLED_FRODOKEM_1344=yes ;;
+        no-1344)        ENABLED_FRODOKEM_1344=no ;;
+        make-key)       ENABLED_FRODOKEM_MAKE_KEY=yes ;;
+        no-make-key)    ENABLED_FRODOKEM_MAKE_KEY=no ;;
+        encapsulate)    ENABLED_FRODOKEM_ENCAPSULATE=yes ;;
+        no-encapsulate) ENABLED_FRODOKEM_ENCAPSULATE=no ;;
+        decapsulate)    ENABLED_FRODOKEM_DECAPSULATE=yes ;;
+        no-decapsulate) ENABLED_FRODOKEM_DECAPSULATE=no ;;
+        *) AC_MSG_ERROR([Unknown --enable-frodokem option: $frodokem_opt]) ;;
+        esac
+    done
+    ;;
+esac
+
+AS_IF([ test "$ENABLED_FRODOKEM" = "no" &&
+        ( test "$ENABLED_FRODOKEM_AES" != "no" ||
+          test "$ENABLED_FRODOKEM_EPHEMERAL" != "no" ) ],
+      [ AC_MSG_ERROR([frodokem-aes and frodokem-ephemeral require --enable-frodokem.]) ])
+
+if test "$ENABLED_FRODOKEM" != "no"
+then
+    # SHAKE-128 matrix A generation is on by default unless explicitly disabled.
+    if test "$ENABLED_FRODOKEM_SHAKE" = "default"; then
+        ENABLED_FRODOKEM_SHAKE=yes
+    fi
+    # At least one matrix A generation method must be enabled.
+    if test "$ENABLED_FRODOKEM_SHAKE" = "no" && test "$ENABLED_FRODOKEM_AES" = "no"
+    then
+        AC_MSG_ERROR([frodokem requires at least one of --enable-frodokem-shake or --enable-frodokem-aes.])
+    fi
+    # At least one parameter set must be enabled.
+    if test "$ENABLED_FRODOKEM_640" = "no" && \
+       test "$ENABLED_FRODOKEM_976" = "no" && \
+       test "$ENABLED_FRODOKEM_1344" = "no"
+    then
+        AC_MSG_ERROR([frodokem requires at least one of --enable-frodokem-640, --enable-frodokem-976 or --enable-frodokem-1344.])
+    fi
+    # At least one operation must be enabled.
+    if test "$ENABLED_FRODOKEM_MAKE_KEY" = "no" && \
+       test "$ENABLED_FRODOKEM_ENCAPSULATE" = "no" && \
+       test "$ENABLED_FRODOKEM_DECAPSULATE" = "no"
+    then
+        AC_MSG_ERROR([frodokem requires at least one of --enable-frodokem-make-key, --enable-frodokem-encapsulate or --enable-frodokem-decapsulate.])
+    fi
+else
+    if test "$ENABLED_FRODOKEM_SHAKE" = "default"; then
+        ENABLED_FRODOKEM_SHAKE=no
+    fi
+fi
+
 # Dilithium
 #  - SHA3, Shake128 and Shake256
 AC_ARG_ENABLE([mldsa],
@@ -1978,6 +2140,16 @@ do
   esac
 done
 
+# If ML-DSA is enabled but no specific level (44/65/87) was requested,
+# default to enabling all levels.
+if test "$ENABLED_MLDSA" != "no" && test "$ENABLED_MLDSA44" = "" && \
+   test "$ENABLED_MLDSA65" = "" && test "$ENABLED_MLDSA87" = ""
+then
+    ENABLED_MLDSA44=yes
+    ENABLED_MLDSA65=yes
+    ENABLED_MLDSA87=yes
+fi
+
 # XMSS
 AC_ARG_ENABLE([xmss],
     [AS_HELP_STRING([--enable-xmss],[Enable stateful XMSS/XMSS^MT signatures (default: disabled)])],
@@ -1993,7 +2165,7 @@ do
   no)
     ;;
   verify-only)
-    AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_XMSS_VERIFY_ONLY -DXMSS_VERIFY_ONLY"
+    AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_XMSS_VERIFY_ONLY"
     ;;
   small)
     AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_WC_XMSS_SMALL"
@@ -4872,6 +5044,49 @@ then
     fi
 fi
 
+# cSHAKE and KMAC (NIST SP 800-185), both built on SHAKE. KMAC is built on
+# cSHAKE, so enabling KMAC also enables cSHAKE; cSHAKE can be enabled on its own.
+AC_ARG_ENABLE([cshake],
+    [AS_HELP_STRING([--enable-cshake],[Enable wolfSSL cSHAKE support (default: disabled)])],
+    [ ENABLED_CSHAKE=$enableval ],
+    [ ENABLED_CSHAKE=no ]
+    )
+
+AC_ARG_ENABLE([kmac],
+    [AS_HELP_STRING([--enable-kmac],[Enable wolfSSL KMAC support (default: disabled)])],
+    [ ENABLED_KMAC=$enableval ],
+    [ ENABLED_KMAC=no ]
+    )
+
+# KMAC is built on cSHAKE - enabling KMAC enables cSHAKE.
+if test "$ENABLED_KMAC" != "no"
+then
+    ENABLED_CSHAKE=yes
+fi
+
+# cSHAKE (and thus KMAC) require SHA-3 and SHAKE. Force-enable them (unless
+# explicitly disabled).
+if test "$ENABLED_CSHAKE" != "no"
+then
+    if test "$ENABLED_SHA3" = "no"
+    then
+        AC_MSG_ERROR([cshake requires SHA-3: --enable-sha3])
+    fi
+    ENABLED_SHA3=yes
+    if test "$ENABLED_SHAKE128" != "no"
+    then
+        ENABLED_SHAKE128=yes
+    fi
+    if test "$ENABLED_SHAKE256" != "no"
+    then
+        ENABLED_SHAKE256=yes
+    fi
+    if test "$ENABLED_SHAKE128" = "no" && test "$ENABLED_SHAKE256" = "no"
+    then
+        AC_MSG_ERROR([cshake requires SHAKE128 and/or SHAKE256])
+    fi
+fi
+
 # SHA512
 AC_ARG_ENABLE([sha512],
     [AS_HELP_STRING([--enable-sha512],[Enable wolfSSL SHA-512 support (default: enabled)])],
@@ -7639,6 +7854,12 @@ then
     ENABLED_SHAKE128=yes
     ENABLED_SHAKE256=yes
 fi
+if test "$ENABLED_FRODOKEM" != "no"
+then
+    ENABLED_SHA3=yes
+    ENABLED_SHAKE128=yes
+    ENABLED_SHAKE256=yes
+fi
 
 # Set SHA-3 flags
 if test "$ENABLED_SHA3" != "no"
@@ -7679,6 +7900,24 @@ then
     fi
 else
     AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_NO_SHAKE256"
+fi
+
+# Set cSHAKE / KMAC flags. Both are built on SHAKE, so re-check here (after any
+# later logic - e.g. FIPS < 6 - may have force-disabled SHAKE) and fail with a
+# clear configure error rather than a confusing compile-time #error. KMAC
+# implies cSHAKE (ENABLED_CSHAKE was set above), so the SHAKE check on the
+# cSHAKE branch also covers KMAC.
+if test "$ENABLED_CSHAKE" != "no"
+then
+    if test "$ENABLED_SHAKE128" = "no" && test "$ENABLED_SHAKE256" = "no"
+    then
+        AC_MSG_ERROR([cshake requires SHAKE128 and/or SHAKE256, disabled in this configuration (for example by FIPS < 6)])
+    fi
+    AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_CSHAKE"
+fi
+if test "$ENABLED_KMAC" != "no"
+then
+    AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_KMAC"
 fi
 
 # MLKEM CFLAG processing (after FIPS section for sandwich pattern)
@@ -11916,6 +12155,39 @@ AS_IF([test "x$ENABLED_SYS_CA_CERTS" = "xyes"],
 AS_IF([test "x$ENABLED_DUAL_ALG_CERTS" = "xyes"],
       [AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_DUAL_ALG_CERTS"])
 
+AS_IF([test "x$ENABLED_FRODOKEM" = "xyes"],
+      [AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_HAVE_FRODOKEM"
+       AM_CCASFLAGS="$AM_CCASFLAGS -DWOLFSSL_HAVE_FRODOKEM"])
+AS_IF([test "x$ENABLED_FRODOKEM_SHAKE" = "xyes"],
+      [AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_FRODOKEM_SHAKE"])
+AS_IF([test "x$ENABLED_FRODOKEM_AES" = "xyes"],
+      [AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_FRODOKEM_AES -DWOLFSSL_AES_DIRECT -DHAVE_AES_ECB"])
+AS_IF([test "x$ENABLED_FRODOKEM_SVE" = "xyes"],
+      [AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_FRODOKEM_SVE"])
+AS_IF([test "x$ENABLED_FRODOKEM_SME" = "xyes"],
+      [AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_FRODOKEM_SME"])
+AS_IF([test "x$ENABLED_FRODOKEM_EPHEMERAL" = "xyes"],
+      [AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_FRODOKEM_EPHEMERAL"])
+AS_IF([test "x$ENABLED_FRODOKEM" = "xyes" && \
+       test "x$ENABLED_FRODOKEM_SMALL" = "xyes"],
+      [AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_FRODOKEM_SMALL"])
+# Parameter sets and operations excluded from the build.
+AS_IF([test "x$ENABLED_FRODOKEM" = "xyes" && test "x$ENABLED_FRODOKEM_640" = "xno"],
+      [AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_NO_FRODOKEM_640"])
+AS_IF([test "x$ENABLED_FRODOKEM" = "xyes" && test "x$ENABLED_FRODOKEM_976" = "xno"],
+      [AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_NO_FRODOKEM_976"])
+AS_IF([test "x$ENABLED_FRODOKEM" = "xyes" && test "x$ENABLED_FRODOKEM_1344" = "xno"],
+      [AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_NO_FRODOKEM_1344"])
+AS_IF([test "x$ENABLED_FRODOKEM" = "xyes" && \
+       test "x$ENABLED_FRODOKEM_MAKE_KEY" = "xno"],
+      [AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_FRODOKEM_NO_MAKE_KEY"])
+AS_IF([test "x$ENABLED_FRODOKEM" = "xyes" && \
+       test "x$ENABLED_FRODOKEM_ENCAPSULATE" = "xno"],
+      [AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_FRODOKEM_NO_ENCAPSULATE"])
+AS_IF([test "x$ENABLED_FRODOKEM" = "xyes" && \
+       test "x$ENABLED_FRODOKEM_DECAPSULATE" = "xno"],
+      [AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_FRODOKEM_NO_DECAPSULATE"])
+
 AS_IF([test "x$ENABLED_RPK" = "xyes"],
       [AM_CFLAGS="$AM_CFLAGS -DHAVE_RPK"])
 
@@ -12578,6 +12850,7 @@ AM_CONDITIONAL([BUILD_WC_LMS],[test "x$ENABLED_LMS" != "xno" || test "x$ENABLED_
 AM_CONDITIONAL([BUILD_WC_XMSS],[test "x$ENABLED_XMSS" != "xno" || test "x$ENABLED_USERSETTINGS" = "xyes"])
 AM_CONDITIONAL([BUILD_WC_SLHDSA],[test "x$ENABLED_SLHDSA" != "xno" || test "x$ENABLED_USERSETTINGS" = "xyes"])
 AM_CONDITIONAL([BUILD_WC_MLKEM],[test "x$ENABLED_MLKEM" != "xno" || test "x$ENABLED_USERSETTINGS" = "xyes"])
+AM_CONDITIONAL([BUILD_WC_FRODOKEM],[test "x$ENABLED_FRODOKEM" = "xyes" || test "x$ENABLED_USERSETTINGS" = "xyes"])
 AM_CONDITIONAL([BUILD_MLDSA],[test "x$ENABLED_MLDSA" != "xno" || test "x$ENABLED_USERSETTINGS" = "xyes"])
 AM_CONDITIONAL([BUILD_ECCSI],[test "x$ENABLED_ECCSI" = "xyes" || test "x$ENABLED_USERSETTINGS" = "xyes"])
 AM_CONDITIONAL([BUILD_SAKKE],[test "x$ENABLED_SAKKE" = "xyes" || test "x$ENABLED_USERSETTINGS" = "xyes"])
@@ -13094,6 +13367,8 @@ echo "   * SHA-512:                    $ENABLED_SHA512"
 echo "   * SHA3:                       $ENABLED_SHA3"
 echo "   * SHAKE128:                   $ENABLED_SHAKE128"
 echo "   * SHAKE256:                   $ENABLED_SHAKE256"
+echo "   * cSHAKE:                     $ENABLED_CSHAKE"
+echo "   * KMAC:                       $ENABLED_KMAC"
 echo "   * SM3:                        $ENABLED_SM3"
 echo "   * BLAKE2B:                    $ENABLED_BLAKE2B"
 echo "   * BLAKE2S:                    $ENABLED_BLAKE2S"
@@ -13300,6 +13575,16 @@ echo "   * Maxim Integrated MAXQ10XX:  $ENABLED_MAXQ10XX"
 echo "   * PSA:                        $ENABLED_PSA"
 echo "   * System CA certs:            $ENABLED_SYS_CA_CERTS"
 echo "   * Dual alg cert support:      $ENABLED_DUAL_ALG_CERTS"
+echo "   * FrodoKEM (experimental):    $ENABLED_FRODOKEM"
+echo "   * FrodoKEM SHAKE-128 matrix A: $ENABLED_FRODOKEM_SHAKE"
+echo "   * FrodoKEM AES-128 matrix A:   $ENABLED_FRODOKEM_AES"
+echo "   * eFrodoKEM (ephemeral):      $ENABLED_FRODOKEM_EPHEMERAL"
+echo "   * FrodoKEM-640:               $ENABLED_FRODOKEM_640"
+echo "   * FrodoKEM-976:               $ENABLED_FRODOKEM_976"
+echo "   * FrodoKEM-1344:              $ENABLED_FRODOKEM_1344"
+echo "   * FrodoKEM make key:          $ENABLED_FRODOKEM_MAKE_KEY"
+echo "   * FrodoKEM encapsulate:       $ENABLED_FRODOKEM_ENCAPSULATE"
+echo "   * FrodoKEM decapsulate:       $ENABLED_FRODOKEM_DECAPSULATE"
 echo "   * ERR Queues per Thread:      $ENABLED_ERRORQUEUEPERTHREAD"
 echo "   * rwlock:                     $ENABLED_RWLOCK"
 echo "   * keylog export:              $ENABLED_KEYLOG_EXPORT"

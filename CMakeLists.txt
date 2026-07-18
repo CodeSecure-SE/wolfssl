@@ -1010,6 +1010,18 @@ add_option(WOLFSSL_LMSNOSHA256256
     "Disable the LMS SHA_256_256 standard variant (default: disabled)"
     "no" "yes;no")
 
+add_option(WOLFSSL_LMSVERIFYONLY
+    "Enable the LMS/HSS verify-only implementation (default: disabled)"
+    "no" "yes;no")
+
+add_option(WOLFSSL_LMSSMALL
+    "Enable the smaller, slower LMS/HSS implementation (default: disabled)"
+    "no" "yes;no")
+
+add_option(WOLFSSL_LMSSHAKE256
+    "Enable the LMS SHAKE256 variant (default: disabled)"
+    "no" "yes;no")
+
 if (WOLFSSL_LMS)
     list(APPEND WOLFSSL_DEFINITIONS "-DWOLFSSL_HAVE_LMS")
 
@@ -1026,6 +1038,24 @@ if (WOLFSSL_LMS)
 
         set_wolfssl_definitions("WOLFSSL_NO_LMS_SHA256_256" RESULT)
     endif()
+
+    if (WOLFSSL_LMSVERIFYONLY)
+        list(APPEND WOLFSSL_DEFINITIONS "-DWOLFSSL_LMS_VERIFY_ONLY")
+
+        set_wolfssl_definitions("WOLFSSL_LMS_VERIFY_ONLY"   RESULT)
+    endif()
+
+    if (WOLFSSL_LMSSMALL)
+        list(APPEND WOLFSSL_DEFINITIONS "-DWOLFSSL_WC_LMS_SMALL")
+
+        set_wolfssl_definitions("WOLFSSL_WC_LMS_SMALL"      RESULT)
+    endif()
+
+    if (WOLFSSL_LMSSHAKE256)
+        list(APPEND WOLFSSL_DEFINITIONS "-DWOLFSSL_LMS_SHAKE256")
+
+        set_wolfssl_definitions("WOLFSSL_LMS_SHAKE256"      RESULT)
+    endif()
 endif()
 
 # Experimental features
@@ -1035,6 +1065,56 @@ add_option(WOLFSSL_EXPERIMENTAL
 
 add_option(WOLFSSL_EXTRA_PQC_HYBRIDS
     "Enable extra PQ/T hybrid combinations (default: disabled)"
+    "no" "yes;no")
+
+# FrodoKEM reference implementation (experimental)
+add_option(WOLFSSL_FRODOKEM
+    "Enable the wolfSSL FrodoKEM reference implementation (requires WOLFSSL_EXPERIMENTAL) (default: disabled)"
+    "no" "yes;no")
+# FrodoKEM matrix A generation with SHAKE-128 (default: enabled when FrodoKEM on)
+add_option(WOLFSSL_FRODOKEM_SHAKE
+    "Enable FrodoKEM SHAKE-128 matrix A generation (default: enabled)"
+    "yes" "yes;no")
+# FrodoKEM matrix A generation with AES-128 (default: disabled)
+add_option(WOLFSSL_FRODOKEM_AES
+    "Enable FrodoKEM AES-128 matrix A generation (default: disabled)"
+    "no" "yes;no")
+# eFrodoKEM (ephemeral, salt-less) variants (default: disabled)
+add_option(WOLFSSL_FRODOKEM_EPHEMERAL
+    "Enable eFrodoKEM (ephemeral) variants (default: disabled)"
+    "no" "yes;no")
+# FrodoKEM parameter sets (each default: enabled)
+add_option(WOLFSSL_FRODOKEM_640
+    "Enable the FrodoKEM-640 parameter set (default: enabled)"
+    "yes" "yes;no")
+add_option(WOLFSSL_FRODOKEM_976
+    "Enable the FrodoKEM-976 parameter set (default: enabled)"
+    "yes" "yes;no")
+add_option(WOLFSSL_FRODOKEM_1344
+    "Enable the FrodoKEM-1344 parameter set (default: enabled)"
+    "yes" "yes;no")
+# FrodoKEM operations (each default: enabled)
+add_option(WOLFSSL_FRODOKEM_MAKE_KEY
+    "Enable FrodoKEM key generation (default: enabled)"
+    "yes" "yes;no")
+add_option(WOLFSSL_FRODOKEM_ENCAPSULATE
+    "Enable FrodoKEM encapsulation (default: enabled)"
+    "yes" "yes;no")
+add_option(WOLFSSL_FRODOKEM_DECAPSULATE
+    "Enable FrodoKEM decapsulation (default: enabled)"
+    "yes" "yes;no")
+# Small-footprint FrodoKEM: looped (not unrolled) matrix arithmetic
+# (default: disabled)
+add_option(WOLFSSL_FRODOKEM_SMALL
+    "Enable small-footprint FrodoKEM (default: disabled)"
+    "no" "yes;no")
+
+# FrodoKEM AArch64 SVE / SME acceleration (default: disabled; AArch64 asm only)
+add_option(WOLFSSL_FRODOKEM_SVE
+    "Enable FrodoKEM AArch64 SVE acceleration (default: disabled)"
+    "no" "yes;no")
+add_option(WOLFSSL_FRODOKEM_SME
+    "Enable FrodoKEM AArch64 SME acceleration (default: disabled)"
     "no" "yes;no")
 
 message(STATUS "Looking for WOLFSSL_EXPERIMENTAL")
@@ -1092,6 +1172,98 @@ if (WOLFSSL_EXPERIMENTAL)
         message(STATUS "Looking for WOLFSSL_EXTRA_PQC_HYBRIDS - not found")
     endif()
 
+    # Checking for experimental feature: FrodoKEM
+    message(STATUS "Looking for WOLFSSL_FRODOKEM")
+    if (WOLFSSL_FRODOKEM)
+        set(WOLFSSL_FOUND_EXPERIMENTAL_FEATURE 1)
+        message(STATUS "Looking for WOLFSSL_FRODOKEM - found")
+
+        # At least one matrix A generation method must be enabled.
+        if (NOT WOLFSSL_FRODOKEM_SHAKE AND NOT WOLFSSL_FRODOKEM_AES)
+            message(FATAL_ERROR
+                "WOLFSSL_FRODOKEM requires WOLFSSL_FRODOKEM_SHAKE and/or WOLFSSL_FRODOKEM_AES.")
+        endif()
+        # At least one parameter set must be enabled.
+        if (NOT WOLFSSL_FRODOKEM_640 AND NOT WOLFSSL_FRODOKEM_976 AND
+            NOT WOLFSSL_FRODOKEM_1344)
+            message(FATAL_ERROR
+                "WOLFSSL_FRODOKEM requires at least one of WOLFSSL_FRODOKEM_640, WOLFSSL_FRODOKEM_976 or WOLFSSL_FRODOKEM_1344.")
+        endif()
+        # At least one operation must be enabled.
+        if (NOT WOLFSSL_FRODOKEM_MAKE_KEY AND NOT WOLFSSL_FRODOKEM_ENCAPSULATE
+            AND NOT WOLFSSL_FRODOKEM_DECAPSULATE)
+            message(FATAL_ERROR
+                "WOLFSSL_FRODOKEM requires at least one of WOLFSSL_FRODOKEM_MAKE_KEY, WOLFSSL_FRODOKEM_ENCAPSULATE or WOLFSSL_FRODOKEM_DECAPSULATE.")
+        endif()
+
+        list(APPEND WOLFSSL_DEFINITIONS "-DWOLFSSL_HAVE_FRODOKEM")
+        list(APPEND WOLFSSL_DEFINITIONS "-DWOLFSSL_SHA3")
+        list(APPEND WOLFSSL_DEFINITIONS "-DWOLFSSL_SHAKE128")
+        list(APPEND WOLFSSL_DEFINITIONS "-DWOLFSSL_SHAKE256")
+
+        set_wolfssl_definitions("WOLFSSL_HAVE_FRODOKEM" RESULT)
+        set_wolfssl_definitions("WOLFSSL_SHA3"          RESULT)
+        set_wolfssl_definitions("WOLFSSL_SHAKE128"      RESULT)
+        set_wolfssl_definitions("WOLFSSL_SHAKE256"      RESULT)
+
+        if (WOLFSSL_FRODOKEM_SHAKE)
+            list(APPEND WOLFSSL_DEFINITIONS "-DWOLFSSL_FRODOKEM_SHAKE")
+            set_wolfssl_definitions("WOLFSSL_FRODOKEM_SHAKE" RESULT)
+        endif()
+        if (WOLFSSL_FRODOKEM_AES)
+            list(APPEND WOLFSSL_DEFINITIONS "-DWOLFSSL_FRODOKEM_AES")
+            list(APPEND WOLFSSL_DEFINITIONS "-DWOLFSSL_AES_DIRECT")
+            list(APPEND WOLFSSL_DEFINITIONS "-DHAVE_AES_ECB")
+            set_wolfssl_definitions("WOLFSSL_FRODOKEM_AES" RESULT)
+            set_wolfssl_definitions("WOLFSSL_AES_DIRECT"   RESULT)
+            set_wolfssl_definitions("HAVE_AES_ECB"         RESULT)
+        endif()
+        if (WOLFSSL_FRODOKEM_EPHEMERAL)
+            list(APPEND WOLFSSL_DEFINITIONS "-DWOLFSSL_FRODOKEM_EPHEMERAL")
+            set_wolfssl_definitions("WOLFSSL_FRODOKEM_EPHEMERAL" RESULT)
+        endif()
+        if (WOLFSSL_FRODOKEM_SMALL)
+            list(APPEND WOLFSSL_DEFINITIONS "-DWOLFSSL_FRODOKEM_SMALL")
+            set_wolfssl_definitions("WOLFSSL_FRODOKEM_SMALL" RESULT)
+        endif()
+        if (WOLFSSL_FRODOKEM_SVE)
+            list(APPEND WOLFSSL_DEFINITIONS "-DWOLFSSL_FRODOKEM_SVE")
+            set_wolfssl_definitions("WOLFSSL_FRODOKEM_SVE" RESULT)
+        endif()
+        if (WOLFSSL_FRODOKEM_SME)
+            list(APPEND WOLFSSL_DEFINITIONS "-DWOLFSSL_FRODOKEM_SME")
+            set_wolfssl_definitions("WOLFSSL_FRODOKEM_SME" RESULT)
+        endif()
+        # Excluded parameter sets.
+        if (NOT WOLFSSL_FRODOKEM_640)
+            list(APPEND WOLFSSL_DEFINITIONS "-DWOLFSSL_NO_FRODOKEM_640")
+            set_wolfssl_definitions("WOLFSSL_NO_FRODOKEM_640" RESULT)
+        endif()
+        if (NOT WOLFSSL_FRODOKEM_976)
+            list(APPEND WOLFSSL_DEFINITIONS "-DWOLFSSL_NO_FRODOKEM_976")
+            set_wolfssl_definitions("WOLFSSL_NO_FRODOKEM_976" RESULT)
+        endif()
+        if (NOT WOLFSSL_FRODOKEM_1344)
+            list(APPEND WOLFSSL_DEFINITIONS "-DWOLFSSL_NO_FRODOKEM_1344")
+            set_wolfssl_definitions("WOLFSSL_NO_FRODOKEM_1344" RESULT)
+        endif()
+        # Excluded operations.
+        if (NOT WOLFSSL_FRODOKEM_MAKE_KEY)
+            list(APPEND WOLFSSL_DEFINITIONS "-DWOLFSSL_FRODOKEM_NO_MAKE_KEY")
+            set_wolfssl_definitions("WOLFSSL_FRODOKEM_NO_MAKE_KEY" RESULT)
+        endif()
+        if (NOT WOLFSSL_FRODOKEM_ENCAPSULATE)
+            list(APPEND WOLFSSL_DEFINITIONS "-DWOLFSSL_FRODOKEM_NO_ENCAPSULATE")
+            set_wolfssl_definitions("WOLFSSL_FRODOKEM_NO_ENCAPSULATE" RESULT)
+        endif()
+        if (NOT WOLFSSL_FRODOKEM_DECAPSULATE)
+            list(APPEND WOLFSSL_DEFINITIONS "-DWOLFSSL_FRODOKEM_NO_DECAPSULATE")
+            set_wolfssl_definitions("WOLFSSL_FRODOKEM_NO_DECAPSULATE" RESULT)
+        endif()
+    else()
+        message(STATUS "Looking for WOLFSSL_FRODOKEM - not found")
+    endif()
+
     # Other experimental feature detection can be added here...
 
     # Were any experimental features found? Display a message.
@@ -1110,6 +1282,9 @@ else()
     if (WOLFSSL_FALCON)
         message(FATAL_ERROR "Error: WOLFSSL_FALCON requires WOLFSSL_EXPERIMENTAL at this time.")
     endif()
+    if (WOLFSSL_FRODOKEM)
+        message(FATAL_ERROR "Error: WOLFSSL_FRODOKEM requires WOLFSSL_EXPERIMENTAL at this time.")
+    endif()
 endif()
 
 # LMS
@@ -1121,6 +1296,32 @@ add_option(WOLFSSL_LMS
 add_option(WOLFSSL_XMSS
     "Enable the wolfSSL XMSS implementation (default: disabled)"
     "no" "yes;no")
+
+add_option(WOLFSSL_XMSSVERIFYONLY
+    "Enable the XMSS/XMSS^MT verify-only implementation (default: disabled)"
+    "no" "yes;no")
+
+add_option(WOLFSSL_XMSSSMALL
+    "Enable the smaller, slower XMSS/XMSS^MT implementation (default: disabled)"
+    "no" "yes;no")
+
+if (WOLFSSL_XMSS)
+    list(APPEND WOLFSSL_DEFINITIONS "-DWOLFSSL_HAVE_XMSS")
+
+    set_wolfssl_definitions("WOLFSSL_HAVE_XMSS" RESULT)
+
+    if (WOLFSSL_XMSSVERIFYONLY)
+        list(APPEND WOLFSSL_DEFINITIONS "-DWOLFSSL_XMSS_VERIFY_ONLY")
+
+        set_wolfssl_definitions("WOLFSSL_XMSS_VERIFY_ONLY" RESULT)
+    endif()
+
+    if (WOLFSSL_XMSSSMALL)
+        list(APPEND WOLFSSL_DEFINITIONS "-DWOLFSSL_WC_XMSS_SMALL")
+
+        set_wolfssl_definitions("WOLFSSL_WC_XMSS_SMALL"    RESULT)
+    endif()
+endif()
 
 # SLH-DSA
 add_option(WOLFSSL_SLHDSA
@@ -1340,6 +1541,28 @@ add_option("WOLFSSL_SHAKE256"
 add_option("WOLFSSL_SHAKE128"
     "Enable wolfSSL SHAKE128 support (default: enabled on x86_64/aarch64)"
     "no" "yes;no;small")
+
+# cSHAKE and KMAC (NIST SP 800-185), both built on SHAKE. KMAC is built on
+# cSHAKE, so enabling KMAC also enables cSHAKE; cSHAKE can be enabled on its own.
+add_option("WOLFSSL_CSHAKE"
+    "Enable wolfSSL cSHAKE support (default: disabled)"
+    "no" "yes;no")
+
+add_option("WOLFSSL_KMAC"
+    "Enable wolfSSL KMAC support (default: disabled)"
+    "no" "yes;no")
+
+# KMAC is built on cSHAKE - enabling KMAC enables cSHAKE.
+if(WOLFSSL_KMAC)
+    override_cache(WOLFSSL_CSHAKE "yes")
+endif()
+
+# cSHAKE (and thus KMAC) require SHA-3 and SHAKE. Force-enable them.
+if(WOLFSSL_CSHAKE)
+    override_cache(WOLFSSL_SHA3 "yes")
+    override_cache(WOLFSSL_SHAKE128 "yes")
+    override_cache(WOLFSSL_SHAKE256 "yes")
+endif()
 
 # SHA512
 add_option("WOLFSSL_SHA512"
@@ -2051,6 +2274,21 @@ if(WOLFSSL_SHAKE128)
     endif()
 else()
     list(APPEND WOLFSSL_DEFINITIONS "-DWOLFSSL_NO_SHAKE128")
+endif()
+
+# cSHAKE / KMAC
+if(WOLFSSL_CSHAKE)
+    if(NOT WOLFSSL_SHA3)
+        message(FATAL_ERROR "Must have SHA-3 enabled: --enable-sha3")
+    endif()
+    # SHA-3 (and hence SHAKE/cSHAKE/KMAC) is only emitted for non-32-bit builds;
+    # keep these in step so they are never defined without SHAKE.
+    if(NOT WOLFSSL_32BIT)
+        list(APPEND WOLFSSL_DEFINITIONS "-DWOLFSSL_CSHAKE")
+        if(WOLFSSL_KMAC)
+            list(APPEND WOLFSSL_DEFINITIONS "-DWOLFSSL_KMAC")
+        endif()
+    endif()
 endif()
 
 # POLY1305
@@ -4184,6 +4422,7 @@ if(WOLFSSL_EXAMPLES)
         tests/api/test_ed25519.c
         tests/api/test_curve448.c
         tests/api/test_ed448.c
+        tests/api/test_frodokem.c
         tests/api/test_mlkem.c
         tests/api/test_mldsa.c
         tests/api/test_mldsa_legacy.c

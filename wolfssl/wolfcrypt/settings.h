@@ -3702,6 +3702,7 @@
      (defined(HAVE_ED448)      && defined(HAVE_ED448_KEY_EXPORT)) || \
      (defined(HAVE_CURVE448)   && defined(HAVE_CURVE448_KEY_EXPORT)) || \
       defined(HAVE_FALCON) || defined(HAVE_DILITHIUM) || \
+      defined(WOLFSSL_HAVE_FRODOKEM) || \
       defined(WOLFSSL_HAVE_SLHDSA) || defined(HAVE_LIBOQS) || \
      (defined(WOLFSSL_HAVE_LMS)  && !defined(WOLFSSL_LMS_VERIFY_ONLY)) || \
      (defined(WOLFSSL_HAVE_XMSS) && !defined(WOLFSSL_XMSS_VERIFY_ONLY)))
@@ -3714,6 +3715,7 @@
      (defined(HAVE_ED448)      && defined(HAVE_ED448_KEY_IMPORT)) || \
      (defined(HAVE_CURVE448)   && defined(HAVE_CURVE448_KEY_IMPORT)) || \
       defined(HAVE_FALCON) || defined(HAVE_DILITHIUM) || \
+      defined(WOLFSSL_HAVE_FRODOKEM) || \
       defined(WOLFSSL_HAVE_SLHDSA) || defined(HAVE_LIBOQS) || \
      (defined(WOLFSSL_HAVE_LMS)  && !defined(WOLFSSL_LMS_VERIFY_ONLY)) || \
      (defined(WOLFSSL_HAVE_XMSS) && !defined(WOLFSSL_XMSS_VERIFY_ONLY)))
@@ -5719,6 +5721,20 @@ blinding by defining WC_BLINDING_NO_RNG_ACKNOWLEDGE_WEAKNESS."
 #endif
 #if defined(WOLF_CRYPTO_CB_ONLY_AES) && !defined(WOLF_CRYPTO_CB)
     #error "WOLF_CRYPTO_CB_ONLY_AES requires WOLF_CRYPTO_CB"
+#endif
+#if defined(WOLF_CRYPTO_CB_ONLY_ED25519) && !defined(WOLF_CRYPTO_CB)
+    #error "WOLF_CRYPTO_CB_ONLY_ED25519 requires WOLF_CRYPTO_CB"
+#endif
+#if defined(WOLF_CRYPTO_CB_ONLY_ED25519) && !defined(HAVE_ED25519)
+    #error "WOLF_CRYPTO_CB_ONLY_ED25519 requires HAVE_ED25519"
+#endif
+#if defined(WOLF_CRYPTO_CB_ONLY_ED25519) && defined(WOLFSSL_SE050)
+    #error "WOLF_CRYPTO_CB_ONLY_ED25519 is incompatible with WOLFSSL_SE050"
+#endif
+#if defined(WOLF_CRYPTO_CB_ONLY_ED25519) && \
+    defined(WOLFSSL_ED25519_STREAMING_VERIFY)
+    #error "WOLF_CRYPTO_CB_ONLY_ED25519 with " \
+           "WOLFSSL_ED25519_STREAMING_VERIFY is not supported"
 #endif
 
 /* Early Data / Session Rules */

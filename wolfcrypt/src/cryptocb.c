@@ -64,6 +64,7 @@ Crypto Callback Build Options:
  * WOLF_CRYPTO_CB_ONLY_SHA256: Use only callbacks for SHA-256   default: off
  * WOLF_CRYPTO_CB_ONLY_SHA512: Use only callbacks for SHA-512   default: off
  * WOLF_CRYPTO_CB_ONLY_AES: Use only callbacks for AES          default: off
+ * WOLF_CRYPTO_CB_ONLY_ED25519: Use only callbacks for Ed25519  default: off
  */
 
 #include <wolfssl/wolfcrypt/libwolfssl_sources.h>
@@ -156,6 +157,8 @@ static const char* GetPkTypeStr(int pk)
         case WC_PK_TYPE_EC_GET_SIG_SIZE: return "ECC GetSigSize";
         case WC_PK_TYPE_EC_MAKE_PUB: return "ECC MakePub";
         case WC_PK_TYPE_EC_CHECK_PUB_KEY: return "ECC CheckPubKey";
+        case WC_PK_TYPE_ED25519_MAKE_PUB: return "ED25519 MakePub";
+        case WC_PK_TYPE_ED25519_CHECK_KEY: return "ED25519 CheckKey";
     }
     return NULL;
 }
@@ -1167,6 +1170,60 @@ int wc_CryptoCb_Ed25519Verify(const byte* sig, word32 sigLen,
 
     return wc_CryptoCb_TranslateErrorCode(ret);
 }
+
+int wc_CryptoCb_Ed25519MakePub(ed25519_key* key, byte* pubKey, word32 pubKeySz)
+{
+    int ret = WC_NO_ERR_TRACE(CRYPTOCB_UNAVAILABLE);
+    CryptoCb* dev;
+
+    if (key == NULL || pubKey == NULL || pubKeySz != ED25519_PUB_KEY_SIZE)
+        return ret;
+
+    /* locate registered callback */
+    dev = wc_CryptoCb_FindDevice(key->devId, WC_ALGO_TYPE_PK);
+    if (dev && dev->cb) {
+        wc_CryptoInfo cryptoInfo;
+        XMEMSET(&cryptoInfo, 0, sizeof(cryptoInfo));
+        cryptoInfo.algo_type = WC_ALGO_TYPE_PK;
+        cryptoInfo.pk.type = WC_PK_TYPE_ED25519_MAKE_PUB;
+        cryptoInfo.pk.ed25519makepub.key = key;
+        cryptoInfo.pk.ed25519makepub.pubOut = pubKey;
+        cryptoInfo.pk.ed25519makepub.pubOutSz = pubKeySz;
+
+        ret = dev->cb(dev->devId, &cryptoInfo, dev->ctx);
+    }
+
+    return wc_CryptoCb_TranslateErrorCode(ret);
+}
+
+int wc_CryptoCb_Ed25519CheckKey(ed25519_key* key)
+{
+    int ret = WC_NO_ERR_TRACE(CRYPTOCB_UNAVAILABLE);
+    CryptoCb* dev;
+
+    if (key == NULL)
+        return ret;
+
+    /* locate registered callback */
+    dev = wc_CryptoCb_FindDevice(key->devId, WC_ALGO_TYPE_PK);
+    if (dev && dev->cb) {
+        wc_CryptoInfo cryptoInfo;
+        XMEMSET(&cryptoInfo, 0, sizeof(cryptoInfo));
+        cryptoInfo.algo_type = WC_ALGO_TYPE_PK;
+        cryptoInfo.pk.type = WC_PK_TYPE_ED25519_CHECK_KEY;
+        cryptoInfo.pk.ed25519checkkey.key = key;
+        /* key->p is already the compressed wire form; cross it as bytes so a
+         * device can validate the actual input without touching key internals
+         */
+        cryptoInfo.pk.ed25519checkkey.pubKey = key->p;
+        cryptoInfo.pk.ed25519checkkey.pubKeySz = ED25519_PUB_KEY_SIZE;
+        cryptoInfo.pk.ed25519checkkey.checkPriv = key->privKeySet ? 1 : 0;
+
+        ret = dev->cb(dev->devId, &cryptoInfo, dev->ctx);
+    }
+
+    return wc_CryptoCb_TranslateErrorCode(ret);
+}
 #endif /* HAVE_ED25519 */
 
 #if defined(WOLFSSL_HAVE_LMS) || defined(WOLFSSL_HAVE_XMSS)
@@ -1317,7 +1374,7 @@ int wc_CryptoCb_PqcStatefulSigSigsLeft(int type, void* key, word32* sigsLeft)
 }
 #endif /* WOLFSSL_HAVE_LMS || WOLFSSL_HAVE_XMSS */
 
-#if defined(WOLFSSL_HAVE_MLKEM)
+#if defined(WOLFSSL_HAVE_MLKEM) || defined(WOLFSSL_HAVE_FRODOKEM)
 int wc_CryptoCb_PqcKemGetDevId(int type, void* key)
 {
     int devId = INVALID_DEVID;
@@ -1326,9 +1383,16 @@ int wc_CryptoCb_PqcKemGetDevId(int type, void* key)
         return devId;
 
     /* get devId */
+#ifdef WOLFSSL_HAVE_MLKEM
     if (type == WC_PQC_KEM_TYPE_MLKEM) {
         devId = ((MlKemKey*) key)->devId;
     }
+#endif
+#ifdef WOLFSSL_HAVE_FRODOKEM
+    if (type == WC_PQC_KEM_TYPE_FRODOKEM) {
+        devId = ((FrodoKemKey*) key)->devId;
+    }
+#endif
 
     return devId;
 }
@@ -1436,7 +1500,7 @@ int wc_CryptoCb_PqcDecapsulate(const byte* ciphertext, word32 ciphertextLen,
 
     return wc_CryptoCb_TranslateErrorCode(ret);
 }
-#endif /* WOLFSSL_HAVE_MLKEM */
+#endif /* WOLFSSL_HAVE_MLKEM || WOLFSSL_HAVE_FRODOKEM */
 
 #if defined(HAVE_FALCON) || defined(WOLFSSL_HAVE_MLDSA) || \
     defined(WOLFSSL_HAVE_SLHDSA)
