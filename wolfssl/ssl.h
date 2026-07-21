@@ -38,6 +38,7 @@
 #include <wolfssl/wolfcrypt/memory.h>
 #include <wolfssl/wolfcrypt/types.h>
 #include <wolfssl/wolfcrypt/pkcs12.h>
+#include <wolfssl/wolfcrypt/wc_compat.h>
 
 #if defined(HAVE_OCSP) || defined(HAVE_CRL) || (defined(WOLFSSL_CUSTOM_OID) && \
     defined(WOLFSSL_ASN_TEMPLATE) && defined(HAVE_OID_DECODING)) || \
@@ -632,6 +633,9 @@ struct WOLFSSL_EVP_PKEY {
 #endif /* OPENSSL_EXTRA || OPENSSL_EXTRA_X509_SMALL */
 #ifdef HAVE_ECC
     int pkey_curve;
+#endif
+#ifdef WOLFSSL_HAVE_MLDSA
+    wolfSSL_Atomic_Int mldsaOID;
 #endif
     word16 pkcs8HeaderSz;
 
@@ -2948,7 +2952,13 @@ enum {
 enum {
     WOLFSSL_OCSP_URL_OVERRIDE = 1,
     WOLFSSL_OCSP_NO_NONCE     = 2,
+    /* Check every cert in the chain, not just the leaf. Selects scope only;
+     * see WOLFSSL_OCSP_FAIL_IF_NOT_SUPPORTED for failure policy. */
     WOLFSSL_OCSP_CHECKALL     = 4,
+    /* Refuse a cert that advertises no OCSP responder, instead of the default
+     * soft-fail. Independent of WOLFSSL_OCSP_CHECKALL, which decides which
+     * certs are checked rather than how hard to fail. */
+    WOLFSSL_OCSP_FAIL_IF_NOT_SUPPORTED = 8,
 
     WOLFSSL_CRL_CHECKALL = 1,
     WOLFSSL_CRL_CHECK    = 2

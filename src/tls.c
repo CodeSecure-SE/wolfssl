@@ -3730,9 +3730,11 @@ int ProcessChainOCSPRequest(WOLFSSL* ssl)
                                  request, &csr->responses[i], ssl->heap);
                 /* Suppressing soft-fail responder errors. OCSP_CERT_REVOKED
                  * is an explicit positive assertion of revocation and must
-                 * not be ignored. */
+                 * not be ignored. OCSP_NO_URL just means there is no
+                 * responder to staple from; stapling stays best-effort. */
                 if (ret == WC_NO_ERR_TRACE(OCSP_CERT_UNKNOWN) ||
-                    ret == WC_NO_ERR_TRACE(OCSP_LOOKUP_FAIL)) {
+                    ret == WC_NO_ERR_TRACE(OCSP_LOOKUP_FAIL) ||
+                    ret == WC_NO_ERR_TRACE(OCSP_NO_URL)) {
                     ret = 0;
                 }
                 i++;
@@ -4007,9 +4009,17 @@ int TLSX_CSR_ForceRequest(WOLFSSL* ssl)
         switch (csr->status_type) {
             case WOLFSSL_CSR_OCSP:
                 if (SSL_CM(ssl)->ocspEnabled) {
+                    int ret;
                     csr->request.ocsp[0].ssl = ssl;
-                    return CheckOcspRequest(SSL_CM(ssl)->ocsp,
+                    ret = CheckOcspRequest(SSL_CM(ssl)->ocsp,
                                               &csr->request.ocsp[0], NULL, NULL);
+                    /* This is the client's fallback leaf lookup on the
+                     * verification instance, so honor the no-responder policy
+                     * just like the non-stapling leaf path. Default stays
+                     * best-effort; FAIL_IF_NOT_SUPPORTED makes it fail closed. */
+                    if (ret == WC_NO_ERR_TRACE(OCSP_NO_URL))
+                        ret = OcspNoUrlPolicy(SSL_CM(ssl));
+                    return ret;
                 }
                 else {
                     WOLFSSL_ERROR_VERBOSE(OCSP_LOOKUP_FAIL);
@@ -4542,9 +4552,17 @@ int TLSX_CSR2_ForceRequest(WOLFSSL* ssl)
 
             case WOLFSSL_CSR2_OCSP_MULTI:
                 if (SSL_CM(ssl)->ocspEnabled && csr2->requests >= 1) {
+                    int ret;
                     csr2->request.ocsp[csr2->requests-1].ssl = ssl;
-                    return CheckOcspRequest(SSL_CM(ssl)->ocsp,
+                    ret = CheckOcspRequest(SSL_CM(ssl)->ocsp,
                                           &csr2->request.ocsp[csr2->requests-1], NULL, NULL);
+                    /* This is the client's fallback leaf lookup on the
+                     * verification instance, so honor the no-responder policy
+                     * just like the non-stapling leaf path. Default stays
+                     * best-effort; FAIL_IF_NOT_SUPPORTED makes it fail closed. */
+                    if (ret == WC_NO_ERR_TRACE(OCSP_NO_URL))
+                        ret = OcspNoUrlPolicy(SSL_CM(ssl));
+                    return ret;
                 }
                 else {
                     WOLFSSL_ERROR_VERBOSE(OCSP_LOOKUP_FAIL);
@@ -18044,10 +18062,14 @@ WOLFSSL_TEST_VIS int TLSX_Parse(WOLFSSL* ssl, const byte* input, word16 length,
 #ifdef WOLFSSL_TLS13
         /* RFC 8446 4.4.2: extensions in a Certificate message MUST
          * correspond to ones offered in our prior ClientHello (client) or
-         * CertificateRequest (server). Reject anything we did not offer. */
+         * CertificateRequest (server). Reject anything we did not offer, but a
+         * CTX-level API leaves the extension on ctx->extensions, so look there
+         * too before concluding it was never offered. */
         if (msgType == certificate &&
             IsAtLeastTLSv1_3(ssl->version) &&
-            TLSX_Find(ssl->extensions, (TLSX_Type)type) == NULL) {
+            TLSX_Find(ssl->extensions, (TLSX_Type)type) == NULL &&
+            (ssl->ctx == NULL ||
+             TLSX_Find(ssl->ctx->extensions, (TLSX_Type)type) == NULL)) {
             WOLFSSL_MSG("Cert-msg extension not offered in CH/CR");
             SendAlert(ssl, alert_fatal, unsupported_extension);
             WOLFSSL_ERROR_VERBOSE(UNSUPPORTED_EXTENSION);
