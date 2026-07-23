@@ -389,6 +389,13 @@
     #define __aarch64__ 1
 #endif
 
+/* Versal Gen2 ASU port: enable the crypto callback and map WC_USE_DEVID before
+ * the rest of settings.h and before the unmodified test and benchmark read it.
+ * This header is macro only and pulls in no BSP dependencies. */
+#if defined(WOLFSSL_VERSAL_GEN2_ASU)
+    #include <wolfssl/wolfcrypt/port/xilinx/versal_gen2_asu/asu_settings.h>
+#endif
+
 /* Forward propagation of the legacy parent gate to the canonical name
  * (HAVE_DILITHIUM -> WOLFSSL_HAVE_MLDSA). Always active: required so that
  * a user_settings.h or build flag using only the legacy spelling still
@@ -5744,6 +5751,27 @@ blinding by defining WC_BLINDING_NO_RNG_ACKNOWLEDGE_WEAKNESS."
     defined(WOLFSSL_ED25519_STREAMING_VERIFY)
     #error "WOLF_CRYPTO_CB_ONLY_ED25519 with " \
            "WOLFSSL_ED25519_STREAMING_VERIFY is not supported"
+#endif
+#if defined(WOLF_CRYPTO_CB_ONLY_CURVE25519) && !defined(WOLF_CRYPTO_CB)
+    #error "WOLF_CRYPTO_CB_ONLY_CURVE25519 requires WOLF_CRYPTO_CB"
+#endif
+#if defined(WOLF_CRYPTO_CB_ONLY_CURVE25519) && !defined(HAVE_CURVE25519)
+    #error "WOLF_CRYPTO_CB_ONLY_CURVE25519 requires HAVE_CURVE25519"
+#endif
+#if defined(WOLF_CRYPTO_CB_ONLY_CURVE25519) && defined(WOLFSSL_SE050)
+    #error "WOLF_CRYPTO_CB_ONLY_CURVE25519 is incompatible with WOLFSSL_SE050"
+#endif
+#if defined(WOLF_CRYPTO_CB_ONLY_CURVE25519) && defined(FREESCALE_LTC_ECC)
+    #error "WOLF_CRYPTO_CB_ONLY_CURVE25519 is incompatible with " \
+           "FREESCALE_LTC_ECC"
+#endif
+#if defined(WOLF_CRYPTO_CB_ONLY_CURVE25519) && defined(WC_X25519_NONBLOCK)
+    #error "WOLF_CRYPTO_CB_ONLY_CURVE25519 is incompatible with " \
+           "WC_X25519_NONBLOCK"
+#endif
+#if defined(WOLF_CRYPTO_CB_ONLY_CURVE25519) && defined(WOLFSSL_ASYNC_CRYPT)
+    #error "WOLF_CRYPTO_CB_ONLY_CURVE25519 is incompatible with " \
+           "WOLFSSL_ASYNC_CRYPT"
 #endif
 
 /* Early Data / Session Rules */
