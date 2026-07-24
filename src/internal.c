@@ -9926,8 +9926,11 @@ void DtlsTxMsgListClean(WOLFSSL* ssl)
     WOLFSSL_ENTER("DtlsTxMsgListClean");
     while (head) {
         next = head->next;
-        if (VerifyForTxDtlsMsgDelete(ssl, head))
+        if (VerifyForTxDtlsMsgDelete(ssl, head)) {
+            if (ssl->dtls_tx_msg == head)
+                ssl->dtls_tx_msg = NULL;
             DtlsMsgDelete(head, ssl->heap);
+        }
         else
             /* Stored packets should be in order so break on first failed
              * verify */
@@ -11616,7 +11619,10 @@ void ShrinkInputBuffer(WOLFSSL* ssl, int forcedFree)
     int usedLength = (int)(ssl->buffers.inputBuffer.length -
                      ssl->buffers.inputBuffer.idx);
     if (!forcedFree && (usedLength > STATIC_BUFFER_LEN ||
-            ssl->buffers.clearOutputBuffer.length > 0))
+            ssl->buffers.clearOutputBuffer.length > 0 ||
+            /* Moving the data would invalidate the idx based bookkeeping
+             * of in-flight record processing. */
+            ssl->options.processReply != doProcessInit))
         return;
 
     WOLFSSL_MSG("Shrinking input buffer");
@@ -15565,10 +15571,17 @@ int DoVerifyCallback(WOLFSSL_CERT_MANAGER* cm, WOLFSSL* ssl, int cert_err,
                     if (cert_err != 0) {
                         WOLFSSL_MSG("Verify Cert callback overriding error!");
                         ret = 0;
+                        /* The app's cert verify callback replaces chain
+                         * verification in OpenSSL. Pass its good result on to
+                         * the following verify callbacks. */
+                        verify_ok = 1;
                     }
                 }
                 else {
                     verifyFail = 1;
+                    /* Pass the failure on to the following verify
+                     * callbacks. */
+                    verify_ok = 0;
                 }
             }
     #endif
@@ -21171,6 +21184,29 @@ int writeAeadAuthData(WOLFSSL* ssl, word16 sz, byte type,
     return (int)idx;
 }
 
+/* Encrypt application data records straight from the caller's buffer
+ * instead of copying the plaintext into the output buffer first. Only used
+ * with AEAD suites where the cipher input is exactly the plaintext.
+ * Excluded configs:
+ * - WOLFSSL_ASYNC_CRYPT and WOLFSSL_THREADED_CRYPT: encryption may run
+ *   after BuildMessage returns, when the caller's buffer may be gone.
+ * - WOLFSSL_CIPHER_TEXT_CHECK, WOLFSSL_CHECK_MEM_ZERO, HAVE_FUZZER and
+ *   CHACHA_AEAD_TEST: debug hooks that expect the record layout at the
+ *   cipher input.
+ * Define WOLFSSL_BUILD_MSG_NO_ZERO_COPY to always copy. */
+#if !defined(WOLFSSL_BUILD_MSG_NO_ZERO_COPY) && \
+    !defined(WOLFSSL_NO_TLS12) && !defined(WOLFSSL_ASYNC_CRYPT) && \
+    !defined(WOLFSSL_THREADED_CRYPT) && \
+    !defined(WOLFSSL_CIPHER_TEXT_CHECK) && \
+    !defined(WOLFSSL_CHECK_MEM_ZERO) && !defined(HAVE_FUZZER) && \
+    !defined(CHACHA_AEAD_TEST)
+    #define WOLFSSL_BUILD_MSG_ZERO_COPY
+#endif
+
+/* out always holds the record layout: [explicit IV | ciphertext | tag].
+ * In-place (input == out): input holds the same layout with the plaintext
+ * where the ciphertext goes. Zero-copy (input != out): input points at the
+ * plaintext itself; only the plaintext length is read from it. */
 static WC_INLINE int EncryptDo(WOLFSSL* ssl, byte* out, const byte* input,
     word16 sz, int asyncOkay, byte type)
 {
@@ -21240,6 +21276,8 @@ static WC_INLINE int EncryptDo(WOLFSSL* ssl, byte* out, const byte* input,
         {
             AES_AUTH_ENCRYPT_FUNC aes_auth_fn;
             int additionalSz;
+            const byte* plain = (input == out) ? input + AESGCM_EXP_IV_SZ
+                                               : input;
 
         #ifdef WOLFSSL_ASYNC_CRYPT
             /* initialize event */
@@ -21280,7 +21318,7 @@ static WC_INLINE int EncryptDo(WOLFSSL* ssl, byte* out, const byte* input,
             ret = NOT_COMPILED_IN;
             if (ssl->ctx && ssl->ctx->PerformTlsRecordProcessingCb) {
                 ret = ssl->ctx->PerformTlsRecordProcessingCb(ssl, 1,
-                         out + AESGCM_EXP_IV_SZ, input + AESGCM_EXP_IV_SZ,
+                         out + AESGCM_EXP_IV_SZ, plain,
                          sz - AESGCM_EXP_IV_SZ - ssl->specs.aead_mac_size,
                          ssl->encrypt.nonce, AESGCM_NONCE_SZ,
                          out + sz - ssl->specs.aead_mac_size,
@@ -21292,7 +21330,7 @@ static WC_INLINE int EncryptDo(WOLFSSL* ssl, byte* out, const byte* input,
         #endif /* HAVE_PK_CALLBACKS */
             {
                 ret = aes_auth_fn(ssl->encrypt.aes,
-                    out + AESGCM_EXP_IV_SZ, input + AESGCM_EXP_IV_SZ,
+                    out + AESGCM_EXP_IV_SZ, plain,
                     sz - (word16)(AESGCM_EXP_IV_SZ) - ssl->specs.aead_mac_size,
                     ssl->encrypt.nonce, AESGCM_NONCE_SZ,
                     out + sz - ssl->specs.aead_mac_size,
@@ -21369,6 +21407,7 @@ static WC_INLINE int EncryptDo(WOLFSSL* ssl, byte* out, const byte* input,
     #if defined(HAVE_CHACHA) && defined(HAVE_POLY1305) && \
         !defined(NO_CHAPOL_AEAD)
         case wolfssl_chacha:
+            /* No explicit IV: the plaintext is at input in both layouts. */
             ret = ChachaAEADEncrypt(ssl, out, input, sz, type);
             break;
     #endif
@@ -25377,6 +25416,33 @@ void FreeBuildMsgArgs(WOLFSSL* ssl, BuildMsgArgs* args)
 #endif
 
 /* Build SSL Message, encrypted */
+#ifdef WOLFSSL_BUILD_MSG_ZERO_COPY
+/* Can the plaintext be encrypted straight from the caller's buffer? Only
+ * for AEAD suites whose cipher input is exactly the plaintext: no trailing
+ * MAC/pad (CBC/stream) and no appended content type (CID). */
+static int BuildMsgZeroCopyOk(WOLFSSL* ssl, int type)
+{
+    if (type != application_data)
+        return 0;
+    if (ssl->specs.cipher_type != aead)
+        return 0;
+    if (ssl->specs.bulk_cipher_algorithm != wolfssl_aes_gcm &&
+            ssl->specs.bulk_cipher_algorithm != wolfssl_aes_ccm &&
+            ssl->specs.bulk_cipher_algorithm != wolfssl_chacha)
+        return 0;
+#if defined(WOLFSSL_DTLS) && defined(WOLFSSL_DTLS_CID)
+    if (ssl->options.dtls && DtlsGetCidTxSize(ssl) > 0)
+        return 0;
+#endif
+#ifdef ATOMIC_USER
+    /* MacEncryptCb reads the plaintext from the output buffer. */
+    if (ssl->ctx->MacEncryptCb != NULL)
+        return 0;
+#endif
+    return 1;
+}
+#endif /* WOLFSSL_BUILD_MSG_ZERO_COPY */
+
 int BuildMessage(WOLFSSL* ssl, byte* output, int outSz, const byte* input,
              int inSz, int type, int hashOutput, int sizeOnly, int asyncOkay,
              int epochOrder)
@@ -25385,6 +25451,9 @@ int BuildMessage(WOLFSSL* ssl, byte* output, int outSz, const byte* input,
     int ret;
     BuildMsgArgs* args;
     BuildMsgArgs  lcl_args;
+#endif
+#ifdef WOLFSSL_BUILD_MSG_ZERO_COPY
+    const byte* encInput = NULL;
 #endif
 
 #ifdef WOLFSSL_DTLS_CID
@@ -25665,7 +25734,15 @@ int BuildMessage(WOLFSSL* ssl, byte* output, int outSz, const byte* input,
                                         min(args->ivSz, MAX_IV_SZ));
                 args->idx += min(args->ivSz, MAX_IV_SZ);
             }
-            XMEMCPY(output + args->idx, input, (size_t)(inSz));
+#ifdef WOLFSSL_BUILD_MSG_ZERO_COPY
+            if (BuildMsgZeroCopyOk(ssl, type)) {
+                encInput = input;
+            }
+            else
+#endif
+            {
+                XMEMCPY(output + args->idx, input, (size_t)(inSz));
+            }
             args->idx += (word32)inSz;
 #if defined(WOLFSSL_DTLS) && defined(WOLFSSL_DTLS_CID)
             if (ssl->options.dtls && DtlsGetCidTxSize(ssl) > 0) {
@@ -25844,9 +25921,13 @@ int BuildMessage(WOLFSSL* ssl, byte* output, int outSz, const byte* input,
             else
     #endif
             {
-                ret = Encrypt(ssl, output + args->headerSz,
-                                output + args->headerSz, args->size, asyncOkay,
-                                args->type);
+                const byte* encIn = output + args->headerSz;
+#ifdef WOLFSSL_BUILD_MSG_ZERO_COPY
+                if (encInput != NULL)
+                    encIn = encInput;
+#endif
+                ret = Encrypt(ssl, output + args->headerSz, encIn,
+                                args->size, asyncOkay, args->type);
             }
     #if defined(HAVE_SECURE_RENEGOTIATION) && defined(WOLFSSL_DTLS)
             /* Restore sequence numbers */
@@ -27258,11 +27339,6 @@ int SendCertificateStatus(WOLFSSL* ssl)
             else {
                 while (ret == 0 && i < MAX_CHAIN_DEPTH &&
                             NULL != (request = ssl->ctx->chainOcspRequest[i])) {
-                    if ((i + 1) >= MAX_CERT_EXTENSIONS) {
-                        ret = MAX_CERT_EXTENSIONS_ERR;
-                        break;
-                    }
-
                     request->ssl = ssl;
                     ret = CheckOcspRequest(SSL_CM(ssl)->ocsp_stapling,
                                            request, &responses[++i], ssl->heap);
@@ -33167,7 +33243,17 @@ static void MakePSKPreMasterSecret(Arrays* arrays, byte use_psk_key)
 #ifdef WOLFSSL_TLS13
         if (IsAtLeastTLSv1_3(pv)) {
             byte type = server_hello;
-            return DoTls13ServerHello(ssl, input, inOutIdx, helloSz, &type);
+            ret = DoTls13ServerHello(ssl, input, inOutIdx, helloSz, &type);
+            if (ret != 0 &&
+                    ssl->alert_history.last_tx.level != alert_fatal) {
+                int alertType = TranslateErrorToAlert(ret);
+                if (alertType != invalid_alert) {
+                    if (SendAlert(ssl, alert_fatal, alertType) ==
+                            WC_NO_ERR_TRACE(SOCKET_ERROR_E))
+                        ret = SOCKET_ERROR_E;
+                }
+            }
+            return ret;
         }
 #endif
 

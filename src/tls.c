@@ -91,7 +91,6 @@
  * WOLFSSL_MLKEM_NO_MAKE_KEY: Disable ML-KEM key generation       default: off
  * WOLFSSL_MLKEM_NO_ENCAPSULATE: Disable ML-KEM encapsulation     default: off
  * WOLFSSL_MLKEM_NO_DECAPSULATE: Disable ML-KEM decapsulation     default: off
- * HAVE_LIBOQS:              Use liboqs for PQ algorithms          default: off
  *
  * Curves:
  * HAVE_SECRET_CALLBACK:     Enable TLS secret callback            default: off
@@ -4926,8 +4925,8 @@ int TLSX_IsGroupSupported(int namedGroup, int side)
 
 #if !defined(HAVE_ECC) && !defined(HAVE_CURVE25519) && !defined(HAVE_CURVE448) \
                        && !defined(HAVE_FFDHE) && !defined(WOLFSSL_HAVE_MLKEM)
-#error Elliptic Curves Extension requires Elliptic Curve Cryptography or liboqs groups. \
-       Use --enable-ecc and/or --enable-liboqs in the configure script or \
+#error Elliptic Curves Extension requires Elliptic Curve Cryptography or ML-KEM groups. \
+       Use --enable-ecc and/or --enable-mlkem in the configure script or \
        define HAVE_ECC. Alternatively use FFDHE for DH cipher suites.
 #endif
 
@@ -11816,8 +11815,10 @@ int TLSX_CKS_Parse(WOLFSSL* ssl, byte* input, word16 length,
 
     (void) extensions;
 
-    /* Validating the input. */
-    if (length == 0)
+    /* Validating the input. A well-formed CKS list carries at most one of each
+     * valid specifier, so reject anything longer than WOLFSSL_MAX_CKS_SIGSPEC_SZ
+     * to bound the peerSigSpec allocation below. */
+    if (length == 0 || length > WOLFSSL_MAX_CKS_SIGSPEC_SZ)
         return BUFFER_ERROR;
     for (i = 0; i < length; i++) {
         switch (input[i])

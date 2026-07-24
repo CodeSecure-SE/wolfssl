@@ -2363,10 +2363,6 @@ enum {
 */
 #ifdef STATIC_BUFFER_LEN
     /* user supplied option */
-    #if STATIC_BUFFER_LEN < 5 || STATIC_BUFFER_LEN > (RECORD_HEADER_SZ + \
-                          RECORD_SIZE + COMP_EXTRA + MTU_EXTRA + MAX_MSG_EXTRA))
-        #error Invalid static buffer length
-    #endif
 #elif defined(LARGE_STATIC_BUFFERS)
     #define STATIC_BUFFER_LEN (RECORD_HEADER_SZ + RECORD_SIZE + COMP_EXTRA + \
              MTU_EXTRA + MAX_MSG_EXTRA)
@@ -2374,6 +2370,10 @@ enum {
     /* don't fragment memory from the record header */
     #define STATIC_BUFFER_LEN RECORD_HEADER_SZ
 #endif
+
+/* RECORD_HEADER_SZ is an enum constant, so the preprocessor can't check
+ * this bound. */
+wc_static_assert(STATIC_BUFFER_LEN >= RECORD_HEADER_SZ);
 
 typedef struct {
     ALIGN16 byte staticBuffer[STATIC_BUFFER_LEN];
@@ -3809,7 +3809,7 @@ WOLFSSL_LOCAL int TLSX_KeyShare_Parse_ClientHello(const WOLFSSL* ssl,
 WOLFSSL_LOCAL int TLSX_KeyShare_HandlePqcHybridKeyServer(WOLFSSL* ssl,
         KeyShareEntry* keyShareEntry, byte* data, word16 len);
 #ifdef WOLFSSL_DUAL_ALG_CERTS
-WOLFSSL_LOCAL int TLSX_CKS_Parse(WOLFSSL* ssl, byte* input,
+WOLFSSL_TEST_VIS int TLSX_CKS_Parse(WOLFSSL* ssl, byte* input,
                                  word16 length, TLSX** extensions);
 WOLFSSL_LOCAL int TLSX_CKS_Set(WOLFSSL* ssl, TLSX** extensions);
 #endif
@@ -7461,6 +7461,7 @@ WOLFSSL_LOCAL void DtlsSetSeqNumForReply(WOLFSSL* ssl);
     #ifdef WOLFSSL_API_PREFIX_MAP
         #define Dtls13GetEpoch wolfSSL_Dtls13GetEpoch
         #define Dtls13CheckEpoch wolfSSL_Dtls13CheckEpoch
+        #define Dtls13HandshakeRecv wolfSSL_Dtls13HandshakeRecv
         #define Dtls13WriteAckMessage wolfSSL_Dtls13WriteAckMessage
         #define Dtls13RtxAddAck wolfSSL_Dtls13RtxAddAck
         #define Dtls13DoScheduledWork wolfSSL_Dtls13DoScheduledWork
@@ -7505,7 +7506,7 @@ WOLFSSL_LOCAL int Dtls13HandshakeSend(WOLFSSL* ssl, byte* output,
     int hash_output);
 WOLFSSL_LOCAL int Dtls13RecordRecvd(WOLFSSL* ssl);
 WOLFSSL_TEST_VIS int Dtls13CheckEpoch(WOLFSSL* ssl, enum HandShakeType type);
-WOLFSSL_LOCAL int Dtls13HandshakeRecv(WOLFSSL* ssl, byte* input,
+WOLFSSL_TEST_VIS int Dtls13HandshakeRecv(WOLFSSL* ssl, byte* input,
     word32* inOutIdx, word32 totalSz);
 WOLFSSL_LOCAL int Dtls13HandshakeAddHeader(WOLFSSL* ssl, byte* output,
     enum HandShakeType msg_type, word32 length);
