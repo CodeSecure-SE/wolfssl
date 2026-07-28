@@ -2650,6 +2650,15 @@ int InitSSL_Ctx(WOLFSSL_CTX* ctx, WOLFSSL_METHOD* method, void* heap)
     }
     ctx->timeout  = WOLFSSL_SESSION_TIMEOUT;
 
+#if defined(OPENSSL_EXTRA) || defined(WOLFSSL_TLS_READ_AHEAD)
+    /* Default the read-ahead window to one full record. Contexts (and the
+     * WOLFSSL objects that inherit it) then always carry a concrete window, so
+     * the receive path uses ssl->readAheadSz directly without a per-read
+     * fallback. A caller override replaces it; passing 0 resets it to this
+     * default (see wolfSSL_CTX_set_default_read_buffer_len()). */
+    ctx->readAheadSz = WOLFSSL_READ_AHEAD_SZ;
+#endif
+
 #ifdef WOLFSSL_DTLS
     if (method->version.major == DTLS_MAJOR) {
         ctx->minDowngrade = WOLFSSL_MIN_DTLS_DOWNGRADE;
@@ -3093,6 +3102,10 @@ void SSL_CtxResourceFree(WOLFSSL_CTX* ctx)
 #ifdef HAVE_TLS_EXTENSIONS
 #if !defined(NO_TLS)
     TLSX_FreeAll(ctx->extensions, ctx->heap);
+#ifdef OPENSSL_EXTRA
+    TLSX_CustomExt_FreeAll(ctx->customExt, ctx->heap);
+    ctx->customExt = NULL;
+#endif
 #endif /* !NO_TLS */
 #ifndef NO_WOLFSSL_SERVER
 #if defined(HAVE_CERTIFICATE_STATUS_REQUEST) \
@@ -3519,6 +3532,16 @@ void InitSuitesHashSigAlgo(byte* hashSigAlgo, int haveSig, int tls1_2,
     int tls1_3, int keySz, word16* len)
 {
     word16 idx = 0;
+#if !defined(NO_SHA) && (!defined(NO_OLD_TLS) || defined(WOLFSSL_ALLOW_TLS_SHA1))
+    /* RFC 9155 deprecates SHA-1 signatures for TLS 1.2. Offer them only for a
+     * TLS 1.0/1.1 handshake unless the operator opts in with
+     * WOLFSSL_ALLOW_TLS_SHA1. */
+    #ifdef WOLFSSL_ALLOW_TLS_SHA1
+    int offerSha1Sig = 1;
+    #else
+    int offerSha1Sig = !tls1_2;
+    #endif
+#endif
 
     (void)tls1_2;
     (void)tls1_3;
@@ -3559,7 +3582,10 @@ void InitSuitesHashSigAlgo(byte* hashSigAlgo, int haveSig, int tls1_2,
     #endif
     #if !defined(NO_SHA) && (!defined(NO_OLD_TLS) || \
                                             defined(WOLFSSL_ALLOW_TLS_SHA1))
-        AddSuiteHashSigAlgo(hashSigAlgo, sha_mac, ecc_dsa_sa_algo, keySz, &idx);
+        if (offerSha1Sig) {
+            AddSuiteHashSigAlgo(hashSigAlgo, sha_mac, ecc_dsa_sa_algo, keySz,
+                &idx);
+        }
     #endif
 #endif
     #ifdef HAVE_ED25519
@@ -3625,7 +3651,9 @@ void InitSuitesHashSigAlgo(byte* hashSigAlgo, int haveSig, int tls1_2,
     #endif
     #if !defined(NO_SHA) && (!defined(NO_OLD_TLS) || \
                                             defined(WOLFSSL_ALLOW_TLS_SHA1))
-        AddSuiteHashSigAlgo(hashSigAlgo, sha_mac, rsa_sa_algo, keySz, &idx);
+        if (offerSha1Sig) {
+            AddSuiteHashSigAlgo(hashSigAlgo, sha_mac, rsa_sa_algo, keySz, &idx);
+        }
     #endif
     }
 
@@ -7509,8 +7537,9 @@ int SetSSL_CTX(WOLFSSL* ssl, WOLFSSL_CTX* ctx, int writeDup)
     ssl->ConnectFilter_arg = ctx->ConnectFilter_arg;
 #endif
 
-#ifdef OPENSSL_EXTRA
+#if defined(OPENSSL_EXTRA) || defined(WOLFSSL_TLS_READ_AHEAD)
     ssl->readAhead = ctx->readAhead;
+    ssl->readAheadSz = ctx->readAheadSz;
 #endif
 #if defined(OPENSSL_EXTRA) && !defined(NO_BIO)
     /* Don't change recv callback if currently using BIO's */
@@ -9061,6 +9090,14 @@ static void FreeSSL_Extensions(WOLFSSL* ssl)
 #if !defined(NO_TLS)
     TLSX_FreeAll(ssl->extensions, ssl->heap);
     ssl->extensions = NULL;
+#ifdef OPENSSL_EXTRA
+    XFREE(ssl->customExtData, ssl->heap, DYNAMIC_TYPE_TMP_BUFFER);
+    ssl->customExtData = NULL;
+    ssl->customExtSz = 0;
+    XFREE(ssl->customExtSent, ssl->heap, DYNAMIC_TYPE_TLSX);
+    ssl->customExtSent = NULL;
+    ssl->customExtSentCnt = 0;
+#endif
 #if defined(HAVE_SECURE_RENEGOTIATION) \
  || defined(HAVE_SERVER_RENEGOTIATION_INFO)
     ssl->secure_renegotiation = NULL;
@@ -11624,6 +11661,41 @@ void ShrinkInputBuffer(WOLFSSL* ssl, int forcedFree)
              * of in-flight record processing. */
             ssl->options.processReply != doProcessInit))
         return;
+
+#ifdef WOLFSSL_TLS_READ_AHEAD
+    /* While read-ahead is enabled, retain a dynamic input buffer sized to the
+     * configured window rather than shrinking all the way back to the static
+     * buffer, so the speculative over-read is a bounded, mostly one-time
+     * allocation instead of per-record churn. A forced free during connection
+     * teardown still reclaims everything. */
+    if (!forcedFree && ssl->readAhead) {
+        /* Already within the window: keep the buffer as-is. */
+        if (ssl->buffers.inputBuffer.bufferSize <= ssl->readAheadSz)
+            return;
+
+        /* The buffer grew past the window to receive an oversized record. When
+         * the window needs a dynamic buffer, reallocate down to it so the
+         * retained footprint tracks the window, not the largest record seen;
+         * when the window fits in the static buffer, fall through and shrink to
+         * static below.
+         *
+         * GrowInputBuffer(newBytes, usedLength) resizes the input buffer to
+         * newBytes + usedLength while preserving the usedLength bytes still
+         * pending, so requesting (readAheadSz - usedLength) new bytes yields a
+         * buffer of exactly readAheadSz. usedLength is <= STATIC_BUFFER_LEN <
+         * readAheadSz here (guaranteed above), so the subtraction stays
+         * positive. */
+        if (ssl->readAheadSz > STATIC_BUFFER_LEN) {
+            if (GrowInputBuffer(ssl, (int)ssl->readAheadSz - usedLength,
+                    usedLength) != 0) {
+                /* Realloc failed: keep the current (larger) buffer rather than
+                 * dropping the buffered data. */
+                WOLFSSL_MSG("read-ahead buffer shrink failed, keeping buffer");
+            }
+            return;
+        }
+    }
+#endif
 
     WOLFSSL_MSG("Shrinking input buffer");
 
@@ -18050,6 +18122,11 @@ int ProcessPeerCerts(WOLFSSL* ssl, byte* input, word32* inOutIdx,
                 }
             #endif /* KEEP_PEER_CERT */
 
+            /* Enforced by default (RFC 5280 4.2.1.3 / RFC 8446 4.4.2.4:
+             * keyEncipherment/digitalSignature and serverAuth/clientAuth EKU
+             * on TLS certs). IGNORE_KEY_EXTENSIONS is a deliberate,
+             * RFC-non-conformant opt-out; see the macro list at the top of
+             * wolfcrypt/src/asn.c. */
             #ifndef IGNORE_KEY_EXTENSIONS
                 #if defined(OPENSSL_EXTRA)
                   /* when compatibility layer is turned on and no verify is
@@ -23239,12 +23316,16 @@ static int DoAlert(WOLFSSL* ssl, byte* input, word32* inOutIdx, int* type)
     return level;
 }
 
-static int GetInputData(WOLFSSL *ssl, word32 size)
+static int GetInputData_ex(WOLFSSL *ssl, word32 size, word32 readAhead)
 {
     int inSz;
     int maxLength;
     int usedLength;
     int dtlsExtra = 0;
+    int extra = 0;
+#ifndef WOLFSSL_TLS_READ_AHEAD
+    (void)readAhead;
+#endif
 
     if (ssl->options.disableRead)
         return WC_NO_ERR_TRACE(WANT_READ);
@@ -23281,10 +23362,27 @@ static int GetInputData(WOLFSSL *ssl, word32 size)
         }
 
         inSz = (int)(size - (word32)usedLength); /* from last partial read */
+
+#ifdef WOLFSSL_TLS_READ_AHEAD
+        /* Request more than the minimum so that a single recv() can also pull
+         * in the record body (and possibly following records), avoiding a
+         * second syscall. 'size' remains the loop-termination minimum, so a
+         * blocking socket never waits for read-ahead bytes the peer may not
+         * send. Mirrors the DTLS dtlsExtra over-read above.
+         *
+         * The buffer is grown once to hold a full record and then kept (see the
+         * ssl->readAhead guard in ShrinkInputBuffer), so this is a one-time
+         * allocation per connection, not per-record churn. */
+        if (readAhead > size) {
+            extra = (int)(readAhead - size);
+            inSz += extra;
+        }
+#endif
     }
 
     if (inSz > maxLength) {
-        if (GrowInputBuffer(ssl, (int)(size + (word32)dtlsExtra), usedLength) < 0)
+        if (GrowInputBuffer(ssl,
+                (int)(size + (word32)dtlsExtra + (word32)extra), usedLength) < 0)
             return MEMORY_E;
     }
 
@@ -23340,6 +23438,11 @@ static int GetInputData(WOLFSSL *ssl, word32 size)
 #endif
 
     return 0;
+}
+
+static int GetInputData(WOLFSSL *ssl, word32 size)
+{
+    return GetInputData_ex(ssl, size, 0);
 }
 
 #if defined(HAVE_ENCRYPT_THEN_MAC) && !defined(WOLFSSL_AEAD_ONLY)
@@ -24173,7 +24276,28 @@ static int DoProcessReplyEx(WOLFSSL* ssl, int allowSocketErr)
 
             /* get header or return error */
             if (!ssl->options.dtls) {
-                if ((ret = GetInputData(ssl, (word32)readSz)) < 0)
+                word32 readAheadSz = 0;
+            #ifdef WOLFSSL_TLS_READ_AHEAD
+                /* When read-ahead is enabled, request more than the record
+                 * header in a single recv() so the body (and possibly following
+                 * records) can be pulled in without a second syscall. The window
+                 * size is configurable via
+                 * wolfSSL_CTX_set_default_read_buffer_len():
+                 *  - 0 (unset) requests one full record, the sensible default.
+                 *  - A larger value lets one recv() coalesce several back-to-back
+                 *    records.
+                 *  - A smaller (sub-record) value caps the receive buffer's
+                 *    footprint when the peer's records are known to be small.
+                 * The value is only a speculative read window: a record larger
+                 * than it is still received correctly, as the buffer is grown to
+                 * the record's actual size on demand. */
+                if (ssl->readAhead) {
+                    /* readAheadSz is always concrete (defaulted to
+                     * WOLFSSL_READ_AHEAD_SZ at CTX init, never 0). */
+                    readAheadSz = ssl->readAheadSz;
+                }
+            #endif
+                if ((ret = GetInputData_ex(ssl, (word32)readSz, readAheadSz)) < 0)
                     return ret;
             } else {
             #ifdef WOLFSSL_DTLS
@@ -24751,6 +24875,12 @@ static int DoProcessReplyEx(WOLFSSL* ssl, int allowSocketErr)
                                  * DTLS handshake message */
                                 ssl->dtls_timeout = ssl->dtls_timeout_init;
                             }
+                            else {
+                                if (SendFatalAlertOnly(ssl, ret)
+                                        == WC_NO_ERR_TRACE(SOCKET_ERROR_E)) {
+                                    ret = SOCKET_ERROR_E;
+                                }
+                            }
                         }
 #endif /* WOLFSSL_DTLS13 */
                     }
@@ -24898,6 +25028,16 @@ static int DoProcessReplyEx(WOLFSSL* ssl, int allowSocketErr)
                             ssl->options.serverState ==
                                 SERVER_FINISHED_COMPLETE &&
                             ssl->options.handShakeState != HANDSHAKE_DONE)))
+#endif
+#ifdef WOLFSSL_TLS_READ_AHEAD
+                    /* With read-ahead, more than one record may be buffered. If
+                     * application data was just decrypted, return it now so it
+                     * is delivered to the caller before any following buffered
+                     * record (e.g. a close_notify alert) is processed, which
+                     * would otherwise discard the pending app data. The
+                     * remaining records stay buffered for the next call. */
+                    || (ssl->curRL.type == application_data &&
+                        ssl->buffers.clearOutputBuffer.length > 0)
 #endif
                     ) {
                     /* Shrink input buffer when we successfully finish record

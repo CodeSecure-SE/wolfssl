@@ -19474,6 +19474,12 @@ static int test_wolfSSL_sigalg_info(void)
     word16 len = 0;
     word16 idx = 0;
     int allSigAlgs = SIG_ECDSA | SIG_RSA | SIG_SM2 | SIG_FALCON | SIG_MLDSA;
+#if !defined(NO_SHA) && (!defined(NO_OLD_TLS) || defined(WOLFSSL_ALLOW_TLS_SHA1))
+    int sawSha1 = 0;
+#endif
+#ifndef WOLFSSL_ALLOW_TLS_SHA1
+    int tls13 = 0;
+#endif
 
     InitSuitesHashSigAlgo(hashSigAlgo, allSigAlgs, 1, 1, 0xFFFFFFFF, &len);
     for (idx = 0; idx < len; idx += 2) {
@@ -19498,6 +19504,37 @@ static int test_wolfSSL_sigalg_info(void)
 
         ExpectIntNE(hashAlgo, 0);
     }
+
+    /* RFC 9155 deprecates SHA-1 signatures for TLS 1.2, and RFC 8446 forbids
+     * them for TLS 1.3. When the negotiated version is TLS 1.2 or higher
+     * (tls1_2 argument set, whether or not tls1_3 is also set) the SHA-1
+     * schemes must not be offered unless the operator opts in with
+     * WOLFSSL_ALLOW_TLS_SHA1. */
+#ifndef WOLFSSL_ALLOW_TLS_SHA1
+    for (tls13 = 0; tls13 <= 1; tls13++) {
+        InitSuitesHashSigAlgo(hashSigAlgo, allSigAlgs, 1, tls13, 0xFFFFFFFF,
+            &len);
+        for (idx = 0; idx < len; idx += 2) {
+            ExpectFalse((hashSigAlgo[idx] == sha_mac) &&
+                ((hashSigAlgo[idx + 1] == rsa_sa_algo) ||
+                 (hashSigAlgo[idx + 1] == ecc_dsa_sa_algo)));
+        }
+    }
+#endif
+
+    /* For a TLS 1.0/1.1 handshake the SHA-1 schemes remain available when
+     * they are compiled in. */
+#if !defined(NO_SHA) && (!defined(NO_OLD_TLS) || defined(WOLFSSL_ALLOW_TLS_SHA1))
+    InitSuitesHashSigAlgo(hashSigAlgo, allSigAlgs, 0, 0, 0xFFFFFFFF, &len);
+    for (idx = 0; idx < len; idx += 2) {
+        if ((hashSigAlgo[idx] == sha_mac) &&
+            ((hashSigAlgo[idx + 1] == rsa_sa_algo) ||
+             (hashSigAlgo[idx + 1] == ecc_dsa_sa_algo))) {
+            sawSha1 = 1;
+        }
+    }
+    ExpectIntEQ(sawSha1, 1);
+#endif
 
 #endif
     return EXPECT_RESULT();
@@ -30072,8 +30109,10 @@ static int test_wolfSSL_crypto_policy_ciphers(void)
         found = crypto_policy_cipher_found(ssl, "AES_128", 0);
         ExpectIntEQ(found, !is_future);
 
+#ifndef NO_DH
         found = crypto_policy_cipher_found(ssl, "TLS_DHE_RSA_WITH_AES", 1);
         ExpectIntEQ(found, !is_future);
+#endif
 
         found = crypto_policy_cipher_found(ssl, "_SHA", -1);
         ExpectIntEQ(found, !is_future);
@@ -30081,8 +30120,10 @@ static int test_wolfSSL_crypto_policy_ciphers(void)
         found = crypto_policy_cipher_found(ssl, "AES128", 0);
         ExpectIntEQ(found, !is_future);
 
+#ifndef NO_DH
         found = crypto_policy_cipher_found(ssl, "DHE-RSA-AES", 1);
         ExpectIntEQ(found, !is_future);
+#endif
 
         found = crypto_policy_cipher_found(ssl, "-SHA", -1);
         ExpectIntEQ(found, !is_future);
@@ -36392,6 +36433,354 @@ static int test_wolfSSL_shutdown_pending_data_uaf(void)
     return EXPECT_RESULT();
 }
 
+#if defined(WOLFSSL_TLS_READ_AHEAD) && \
+    defined(HAVE_MANUAL_MEMIO_TESTS_DEPENDENCIES) && \
+    !defined(WOLFSSL_NO_TLS12) && !defined(NO_RSA)
+/* Per-test recv context: counts callbacks and forwards to the memio reader.
+ * 'coalesce' makes one callback return as many queued records as fit, to
+ * emulate TCP coalescing several TLS records into a single recv(). */
+struct test_read_ahead_ctx {
+    struct test_memio_ctx* memio;
+    int count;
+    int coalesce;
+};
+
+static int test_read_ahead_recv_cb(WOLFSSL *ssl, char *buf, int sz, void *ctx)
+{
+    struct test_read_ahead_ctx* rc = (struct test_read_ahead_ctx*)ctx;
+    int total = 0;
+    int ret;
+
+    rc->count++;
+    do {
+        ret = test_memio_read_cb(ssl, buf + total, sz - total, rc->memio);
+        if (ret <= 0)
+            break;
+        total += ret;
+    } while (rc->coalesce && total < sz);
+
+    if (total > 0)
+        return total;
+    return ret;
+}
+
+/* Read one application data record on the client, returning the number of
+ * recv() callback invocations it took. */
+static int test_wolfSSL_read_ahead_one(int enableReadAhead, int *recvCalls)
+{
+    EXPECT_DECLS;
+    WOLFSSL_CTX *ctx_c = NULL, *ctx_s = NULL;
+    WOLFSSL *ssl_c = NULL, *ssl_s = NULL;
+    struct test_memio_ctx test_ctx;
+    struct test_read_ahead_ctx recv_ctx;
+    /* Use a multi-KB record so the test exercises a realistically sized record
+     * (larger than a minimal read-ahead window) rather than a tiny one. */
+    byte msg[4000];
+    byte reply[4000];
+
+    XMEMSET(msg, 'A', sizeof(msg));
+    XMEMSET(&test_ctx, 0, sizeof(test_ctx));
+    XMEMSET(&recv_ctx, 0, sizeof(recv_ctx));
+    recv_ctx.memio = &test_ctx;
+    ExpectIntEQ(test_memio_setup(&test_ctx, &ctx_c, &ctx_s, &ssl_c, &ssl_s,
+        wolfTLSv1_2_client_method, wolfTLSv1_2_server_method), 0);
+
+    if (enableReadAhead)
+        ExpectIntEQ(wolfSSL_set_read_ahead(ssl_c, 1), WOLFSSL_SUCCESS);
+
+    ExpectIntEQ(test_memio_do_handshake(ssl_c, ssl_s, 10, NULL), 0);
+
+    /* Server sends a single application data record. */
+    ExpectIntEQ(wolfSSL_write(ssl_s, msg, (int)sizeof(msg)), (int)sizeof(msg));
+
+    /* Count the recv() callbacks used while the client reads that record. */
+    wolfSSL_SSLSetIORecv(ssl_c, test_read_ahead_recv_cb);
+    wolfSSL_SetIOReadCtx(ssl_c, &recv_ctx);
+    XMEMSET(reply, 0, sizeof(reply));
+    ExpectIntEQ(wolfSSL_read(ssl_c, reply, (int)sizeof(reply)), (int)sizeof(msg));
+    ExpectIntEQ(XMEMCMP(reply, msg, sizeof(msg)), 0);
+
+    if (recvCalls != NULL)
+        *recvCalls = recv_ctx.count;
+
+    wolfSSL_free(ssl_c);
+    wolfSSL_free(ssl_s);
+    wolfSSL_CTX_free(ctx_c);
+    wolfSSL_CTX_free(ctx_s);
+
+    return EXPECT_RESULT();
+}
+
+static int test_wolfSSL_read_ahead(void)
+{
+    EXPECT_DECLS;
+    int callsOff = 0;
+    int callsOn = 0;
+
+    ExpectIntEQ(test_wolfSSL_read_ahead_one(0, &callsOff), TEST_SUCCESS);
+    ExpectIntEQ(test_wolfSSL_read_ahead_one(1, &callsOn), TEST_SUCCESS);
+
+    /* Without read-ahead the record header and body are fetched with separate
+     * recv() calls; with read-ahead the whole record arrives in a single
+     * recv(), so the body read issues no syscall. */
+    ExpectIntGE(callsOff, 2);
+    ExpectIntEQ(callsOn, 1);
+    ExpectIntGT(callsOff, callsOn);
+
+    return EXPECT_RESULT();
+}
+
+/* When read-ahead coalesces an application data record together with a
+ * following record (here a close_notify), the app data must still be delivered
+ * before the connection-close is reported, and the buffered record must be
+ * visible to wolfSSL_has_pending(). */
+static int test_wolfSSL_read_ahead_coalesced(void)
+{
+    EXPECT_DECLS;
+    WOLFSSL_CTX *ctx_c = NULL, *ctx_s = NULL;
+    WOLFSSL *ssl_c = NULL, *ssl_s = NULL;
+    struct test_memio_ctx test_ctx;
+    struct test_read_ahead_ctx recv_ctx;
+    char msg[] = "hello wolfssl read ahead";
+    char reply[64];
+
+    XMEMSET(&test_ctx, 0, sizeof(test_ctx));
+    XMEMSET(&recv_ctx, 0, sizeof(recv_ctx));
+    recv_ctx.memio = &test_ctx;
+    recv_ctx.coalesce = 1;
+
+    ExpectIntEQ(test_memio_setup(&test_ctx, &ctx_c, &ctx_s, &ssl_c, &ssl_s,
+        wolfTLSv1_2_client_method, wolfTLSv1_2_server_method), 0);
+    ExpectIntEQ(wolfSSL_set_read_ahead(ssl_c, 1), WOLFSSL_SUCCESS);
+    ExpectIntEQ(test_memio_do_handshake(ssl_c, ssl_s, 10, NULL), 0);
+
+    /* Queue two records back-to-back: app data, then close_notify. */
+    ExpectIntEQ(wolfSSL_write(ssl_s, msg, (int)sizeof(msg)), (int)sizeof(msg));
+    wolfSSL_shutdown(ssl_s);
+
+    wolfSSL_SSLSetIORecv(ssl_c, test_read_ahead_recv_cb);
+    wolfSSL_SetIOReadCtx(ssl_c, &recv_ctx);
+
+    /* First read returns the app data, not the connection close. */
+    XMEMSET(reply, 0, sizeof(reply));
+    ExpectIntEQ(wolfSSL_read(ssl_c, reply, (int)sizeof(reply)), (int)sizeof(msg));
+    ExpectIntEQ(XMEMCMP(reply, msg, sizeof(msg)), 0);
+
+    /* The close_notify record was pulled in by read-ahead and is still
+     * buffered, so has_pending must report it even though no socket read
+     * happened. */
+    ExpectIntEQ(wolfSSL_has_pending(ssl_c), 1);
+
+    /* Next read consumes the buffered close_notify and reports the close. */
+    ExpectIntEQ(wolfSSL_read(ssl_c, reply, (int)sizeof(reply)), 0);
+    ExpectIntEQ(wolfSSL_get_error(ssl_c, 0), WOLFSSL_ERROR_ZERO_RETURN);
+
+    wolfSSL_free(ssl_c);
+    wolfSSL_free(ssl_s);
+    wolfSSL_CTX_free(ctx_c);
+    wolfSSL_CTX_free(ctx_s);
+
+    return EXPECT_RESULT();
+}
+
+/* Max per-record payload the helper can drive; actual record size is a
+ * parameter. Kept so several records stay under the 64 KB memio buffer. */
+#define TEST_READ_AHEAD_MAX_REC 16000
+
+/* Drive numRec records of recSz bytes through the client with a configurable
+ * read-ahead window. Reports how many recv() callbacks it took to drain them
+ * (recvCalls) and the input buffer's retained size afterwards (bufSize).
+ * bufLen == 0 leaves the one-record default in place. */
+static int test_wolfSSL_read_ahead_buffer_len_run(word32 bufLen, int recSz,
+    int numRec, int *recvCalls, word32 *bufSize)
+{
+    EXPECT_DECLS;
+    WOLFSSL_CTX *ctx_c = NULL, *ctx_s = NULL;
+    WOLFSSL *ssl_c = NULL, *ssl_s = NULL;
+    struct test_memio_ctx test_ctx;
+    struct test_read_ahead_ctx recv_ctx;
+    byte msg[TEST_READ_AHEAD_MAX_REC];
+    byte reply[TEST_READ_AHEAD_MAX_REC];
+    int i;
+
+    XMEMSET(msg, 'A', sizeof(msg));
+    XMEMSET(&test_ctx, 0, sizeof(test_ctx));
+    XMEMSET(&recv_ctx, 0, sizeof(recv_ctx));
+    recv_ctx.memio = &test_ctx;
+    recv_ctx.coalesce = 1;
+
+    ExpectIntEQ(test_memio_setup(&test_ctx, &ctx_c, &ctx_s, &ssl_c, &ssl_s,
+        wolfTLSv1_2_client_method, wolfTLSv1_2_server_method), 0);
+    ExpectIntEQ(wolfSSL_set_read_ahead(ssl_c, 1), WOLFSSL_SUCCESS);
+    if (bufLen > 0) {
+        ExpectIntEQ(wolfSSL_set_default_read_buffer_len(ssl_c, bufLen),
+            WOLFSSL_SUCCESS);
+        /* Values within range are stored as given (sub-record sizes are
+         * honoured, not rounded up to a record). Clamping of oversized values
+         * is covered by test_wolfSSL_read_ahead_ctx_inherit. */
+        ExpectIntEQ(wolfSSL_get_default_read_buffer_len(ssl_c), (long)bufLen);
+    }
+    ExpectIntEQ(test_memio_do_handshake(ssl_c, ssl_s, 10, NULL), 0);
+
+    /* Server queues several records back-to-back before the client reads. */
+    for (i = 0; i < numRec; i++) {
+        ExpectIntEQ(wolfSSL_write(ssl_s, msg, recSz), recSz);
+    }
+
+    wolfSSL_SSLSetIORecv(ssl_c, test_read_ahead_recv_cb);
+    wolfSSL_SetIOReadCtx(ssl_c, &recv_ctx);
+
+    for (i = 0; i < numRec; i++) {
+        XMEMSET(reply, 0, sizeof(reply));
+        ExpectIntEQ(wolfSSL_read(ssl_c, reply, recSz), recSz);
+        ExpectIntEQ(XMEMCMP(reply, msg, (size_t)recSz), 0);
+    }
+
+    if (recvCalls != NULL)
+        *recvCalls = recv_ctx.count;
+    /* Capture the retained input buffer size while the session is still alive;
+     * read-ahead keeps the grown buffer rather than shrinking per record. */
+    if (bufSize != NULL && ssl_c != NULL)
+        *bufSize = ssl_c->buffers.inputBuffer.bufferSize;
+
+    wolfSSL_free(ssl_c);
+    wolfSSL_free(ssl_s);
+    wolfSSL_CTX_free(ctx_c);
+    wolfSSL_CTX_free(ctx_s);
+
+    return EXPECT_RESULT();
+}
+
+static int test_wolfSSL_read_ahead_buffer_len(void)
+{
+    EXPECT_DECLS;
+    int callsDefault = 0;
+    int callsLarge = 0;
+    word32 bufDefault = 0;
+    word32 bufSmall = 0;
+    word32 bufShrunk = 0;
+
+    /* Coalescing: with three near-max records, a window spanning all of them
+     * pulls every record in fewer recv() callbacks than the one-record default
+     * (which can only hold one such record at a time). */
+    ExpectIntEQ(test_wolfSSL_read_ahead_buffer_len_run(0, TEST_READ_AHEAD_MAX_REC,
+        3, &callsDefault, NULL), TEST_SUCCESS);
+    ExpectIntEQ(test_wolfSSL_read_ahead_buffer_len_run(
+        3 * TEST_READ_AHEAD_MAX_REC + 4096, TEST_READ_AHEAD_MAX_REC, 3,
+        &callsLarge, NULL), TEST_SUCCESS);
+    ExpectIntGT(callsDefault, callsLarge);
+
+    /* Footprint: with small records, a sub-record window is honoured (not
+     * clamped up to a full record), so the retained input buffer is much
+     * smaller than the one-record default while data is still read correctly. */
+    ExpectIntEQ(test_wolfSSL_read_ahead_buffer_len_run(0, 1024, 4, NULL,
+        &bufDefault), TEST_SUCCESS);
+    ExpectIntEQ(test_wolfSSL_read_ahead_buffer_len_run(2048, 1024, 4, NULL,
+        &bufSmall), TEST_SUCCESS);
+    /* The footprint comparison only holds when the input buffer actually goes
+     * dynamic, i.e. the static buffer is smaller than the configured window.
+     * With LARGE_STATIC_BUFFERS (or a large user STATIC_BUFFER_LEN) the buffer
+     * never grows and both runs retain STATIC_BUFFER_LEN, so skip the size
+     * checks there; the runs above still verify the data is read correctly.
+     * STATIC_BUFFER_LEN resolves to an enum constant, so this is a runtime (not
+     * preprocessor) guard that the compiler folds away. */
+    if (STATIC_BUFFER_LEN < 2048) {
+        ExpectIntGT(bufDefault, bufSmall);
+        /* The 2 KB window retains roughly a 2 KB buffer, below one TLS record. */
+        ExpectIntLE(bufSmall, 4096);
+    }
+
+    /* Shrink-back: an 8 KB record exceeds the 2 KB window, growing the buffer to
+     * receive it, but read-ahead reallocates back down to the window afterwards,
+     * so the retained buffer tracks the window (~2 KB) rather than the record. */
+    ExpectIntEQ(test_wolfSSL_read_ahead_buffer_len_run(2048, 8000, 2, NULL,
+        &bufShrunk), TEST_SUCCESS);
+    if (STATIC_BUFFER_LEN < 2048) {
+        ExpectIntLE(bufShrunk, 4096);
+    }
+
+    return EXPECT_RESULT();
+}
+
+/* Cover the CTX-level read-buffer-len setter/getter, CTX->SSL inheritance via
+ * SetSSL_CTX(), NULL-argument handling for all four accessors, and the
+ * oversized-window clamp. */
+static int test_wolfSSL_read_ahead_ctx_inherit(void)
+{
+    EXPECT_DECLS;
+    WOLFSSL_CTX* ctx_c = NULL;
+    WOLFSSL* ssl_c = NULL;
+
+    /* NULL arguments must fail cleanly, not crash. */
+    ExpectIntEQ(wolfSSL_CTX_set_default_read_buffer_len(NULL, 4096),
+        WOLFSSL_FAILURE);
+    ExpectIntEQ(wolfSSL_set_default_read_buffer_len(NULL, 4096),
+        WOLFSSL_FAILURE);
+    ExpectIntEQ(wolfSSL_CTX_get_default_read_buffer_len(NULL), WOLFSSL_FAILURE);
+    ExpectIntEQ(wolfSSL_get_default_read_buffer_len(NULL), WOLFSSL_FAILURE);
+
+    ExpectNotNull(ctx_c = wolfSSL_CTX_new(wolfTLSv1_2_client_method()));
+
+    /* A fresh context carries the one-record default window, not 0. */
+    ExpectIntEQ(wolfSSL_CTX_get_default_read_buffer_len(ctx_c),
+        (long)WOLFSSL_READ_AHEAD_SZ);
+
+    /* CTX-level setter/getter round-trip. */
+    ExpectIntEQ(wolfSSL_CTX_set_default_read_buffer_len(ctx_c, 8192),
+        WOLFSSL_SUCCESS);
+    ExpectIntEQ(wolfSSL_CTX_get_default_read_buffer_len(ctx_c), 8192);
+
+    /* 0 resets to the one-record default rather than storing 0. */
+    ExpectIntEQ(wolfSSL_CTX_set_default_read_buffer_len(ctx_c, 0),
+        WOLFSSL_SUCCESS);
+    ExpectIntEQ(wolfSSL_CTX_get_default_read_buffer_len(ctx_c),
+        (long)WOLFSSL_READ_AHEAD_SZ);
+
+    /* A window above the maximum is clamped to WOLFSSL_MAX_READ_AHEAD_SZ, not
+     * wrapped around by the size_t->word32 store. */
+    ExpectIntEQ(wolfSSL_CTX_set_default_read_buffer_len(ctx_c,
+        (size_t)WOLFSSL_MAX_READ_AHEAD_SZ + 4096), WOLFSSL_SUCCESS);
+    ExpectIntEQ(wolfSSL_CTX_get_default_read_buffer_len(ctx_c),
+        (long)WOLFSSL_MAX_READ_AHEAD_SZ);
+
+    /* Set a plain value and confirm a freshly created WOLFSSL inherits it
+     * through SetSSL_CTX(). */
+    ExpectIntEQ(wolfSSL_CTX_set_default_read_buffer_len(ctx_c, 8192),
+        WOLFSSL_SUCCESS);
+    ExpectNotNull(ssl_c = wolfSSL_new(ctx_c));
+    ExpectIntEQ(wolfSSL_get_default_read_buffer_len(ssl_c), 8192);
+
+    /* The session-level setter overrides the inherited value. */
+    ExpectIntEQ(wolfSSL_set_default_read_buffer_len(ssl_c, 2048),
+        WOLFSSL_SUCCESS);
+    ExpectIntEQ(wolfSSL_get_default_read_buffer_len(ssl_c), 2048);
+
+    wolfSSL_free(ssl_c);
+    wolfSSL_CTX_free(ctx_c);
+
+    return EXPECT_RESULT();
+}
+
+#undef TEST_READ_AHEAD_MAX_REC
+#else
+static int test_wolfSSL_read_ahead(void)
+{
+    return TEST_SKIPPED;
+}
+static int test_wolfSSL_read_ahead_coalesced(void)
+{
+    return TEST_SKIPPED;
+}
+static int test_wolfSSL_read_ahead_buffer_len(void)
+{
+    return TEST_SKIPPED;
+}
+static int test_wolfSSL_read_ahead_ctx_inherit(void)
+{
+    return TEST_SKIPPED;
+}
+#endif
+
 static int test_wolfSSL_inject(void)
 {
     EXPECT_DECLS;
@@ -38269,6 +38658,17 @@ TEST_CASE testCases[] = {
     TEST_DECL(test_TLSX_ALPN_server_response_count),
     TEST_DECL(test_TLSX_SupportedCurve_empty_or_unsupported),
     TEST_DECL(test_TLSX_PointFormat_uncompressed_required),
+    TEST_DECL(test_wolfSSL_CTX_add_client_custom_ext),
+    TEST_DECL(test_wolfSSL_custom_ext_handshake),
+    TEST_DECL(test_wolfSSL_custom_ext_flexible_handshake),
+    TEST_DECL(test_wolfSSL_custom_ext_tls13_handshake),
+    TEST_DECL(test_wolfSSL_custom_ext_parse),
+    TEST_DECL(test_wolfSSL_custom_ext_unsolicited),
+    TEST_DECL(test_wolfSSL_custom_ext_duplicate),
+    TEST_DECL(test_wolfSSL_custom_ext_resumption_ignored),
+    TEST_DECL(test_wolfSSL_custom_ext_resumption_fallback),
+    TEST_DECL(test_wolfSSL_custom_ext_ticket_fallback),
+    TEST_DECL(test_wolfSSL_custom_ext_add_null),
     TEST_DECL(test_wolfSSL_wolfSSL_UseSecureRenegotiation),
     TEST_DECL(test_wolfSSL_clear_secure_renegotiation),
     TEST_DECL(test_wolfSSL_SCR_Reconnect),
@@ -38431,6 +38831,10 @@ TEST_CASE testCases[] = {
     TEST_DECL(test_wolfSSL_SendUserCanceled),
     TEST_DECL(test_wolfSSL_SSLDisableRead),
     TEST_DECL(test_wolfSSL_shutdown_pending_data_uaf),
+    TEST_DECL(test_wolfSSL_read_ahead),
+    TEST_DECL(test_wolfSSL_read_ahead_coalesced),
+    TEST_DECL(test_wolfSSL_read_ahead_buffer_len),
+    TEST_DECL(test_wolfSSL_read_ahead_ctx_inherit),
     TEST_DECL(test_wolfSSL_inject),
     TEST_DECL(test_ocsp_status_callback),
     TEST_DECL(test_ocsp_basic_verify),

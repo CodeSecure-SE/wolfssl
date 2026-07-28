@@ -2733,10 +2733,6 @@ WOLFSSL_API long wolfSSL_CTX_sess_set_cache_size(WOLFSSL_CTX* ctx, long sz);
 WOLFSSL_API long wolfSSL_CTX_sess_get_cache_size(WOLFSSL_CTX* ctx);
 
 WOLFSSL_API long wolfSSL_CTX_get_session_cache_mode(WOLFSSL_CTX* ctx);
-WOLFSSL_API int  wolfSSL_get_read_ahead(const WOLFSSL* ssl);
-WOLFSSL_API int  wolfSSL_set_read_ahead(WOLFSSL* ssl, int v);
-WOLFSSL_API int  wolfSSL_CTX_get_read_ahead(WOLFSSL_CTX* ctx);
-WOLFSSL_API int  wolfSSL_CTX_set_read_ahead(WOLFSSL_CTX* ctx, int v);
 WOLFSSL_API long wolfSSL_CTX_set_tlsext_opaque_prf_input_callback_arg(
         WOLFSSL_CTX* ctx, void* arg);
 WOLFSSL_API int  wolfSSL_CTX_add_client_CA(WOLFSSL_CTX* ctx, WOLFSSL_X509* x509);
@@ -2768,6 +2764,23 @@ WOLFSSL_API long wolfSSL_get_verify_result(const WOLFSSL *ssl);
 
 WOLFSSL_API void* wolfSSL_get_app_data( const WOLFSSL *ssl);
 #endif /* OPENSSL_EXTRA || OPENSSL_EXTRA_X509_SMALL */
+
+/* Read-ahead control is part of the OpenSSL compatibility layer, and is also
+ * exposed when TLS read-ahead support is built without that layer. Guard must
+ * match the definitions in ssl.c (which use the readAhead/readAheadSz struct
+ * members available only under these macros), so it deliberately excludes
+ * OPENSSL_EXTRA_X509_SMALL. */
+#if defined(OPENSSL_EXTRA) || defined(WOLFSSL_TLS_READ_AHEAD)
+WOLFSSL_API int  wolfSSL_get_read_ahead(const WOLFSSL* ssl);
+WOLFSSL_API int  wolfSSL_set_read_ahead(WOLFSSL* ssl, int v);
+WOLFSSL_API int  wolfSSL_CTX_get_read_ahead(WOLFSSL_CTX* ctx);
+WOLFSSL_API int  wolfSSL_CTX_set_read_ahead(WOLFSSL_CTX* ctx, int v);
+WOLFSSL_API int  wolfSSL_CTX_set_default_read_buffer_len(WOLFSSL_CTX* ctx,
+                                                         size_t len);
+WOLFSSL_API int  wolfSSL_set_default_read_buffer_len(WOLFSSL* ssl, size_t len);
+WOLFSSL_API long wolfSSL_CTX_get_default_read_buffer_len(WOLFSSL_CTX* ctx);
+WOLFSSL_API long wolfSSL_get_default_read_buffer_len(const WOLFSSL* ssl);
+#endif
 
 #if defined(OPENSSL_EXTRA) || defined(OPENSSL_EXTRA_X509_SMALL) || \
     defined(HAVE_WEBSERVER) || defined(HAVE_MEMCACHED)
@@ -4718,7 +4731,14 @@ WOLFSSL_API int wolfSSL_UseTrustedCA(WOLFSSL* ssl, unsigned char type,
 enum {
     WOLFSSL_ALPN_NO_MATCH = 0,
     WOLFSSL_ALPN_MATCH    = 1,
+    /* On mismatch, continue the handshake without an agreed protocol, like
+     * OpenSSL. This intentionally does NOT send the RFC 7301 section 3.2 fatal
+     * no_application_protocol alert, so it is not compliant with that SHALL
+     * requirement. Select this only when OpenSSL-compatible behavior is
+     * needed. */
     WOLFSSL_ALPN_CONTINUE_ON_MISMATCH = 2,
+    /* On mismatch, send the fatal no_application_protocol alert and fail the
+     * handshake, as required by RFC 7301 section 3.2. */
     WOLFSSL_ALPN_FAILED_ON_MISMATCH = 4
 };
 
@@ -5088,6 +5108,34 @@ WOLFSSL_API int wolfSSL_CTX_set_num_tickets(WOLFSSL_CTX* ctx, size_t mxTickets);
 #endif /* NO_WOLFSSL_SERVER */
 
 #endif /* HAVE_SESSION_TICKET */
+
+#if defined(OPENSSL_EXTRA) && defined(HAVE_TLS_EXTENSIONS)
+/* OpenSSL-compatible application-defined ("custom") TLS extension callbacks.
+ *
+ * add_cb is invoked while building an outgoing message. On return:
+ *   1  - include the extension; out and outlen describe the data to send.
+ *   0  - omit the extension.
+ *  <0  - fatal error; *al holds the TLS alert to send.
+ * If add_cb is NULL a zero-length extension is added to the ClientHello.
+ *
+ * free_cb (if set) is called after the data returned by add_cb has been
+ * copied into the message, to release any allocation it made.
+ *
+ * parse_cb is invoked for a received extension of the registered type. On
+ * return 1 the handshake continues; on return <=0 it is aborted with the
+ * alert placed in *al. */
+typedef int  (*wolfSSL_custom_ext_add_cb)(WOLFSSL* s, unsigned int ext_type,
+        const unsigned char** out, size_t* outlen, int* al, void* add_arg);
+typedef void (*wolfSSL_custom_ext_free_cb)(WOLFSSL* s, unsigned int ext_type,
+        const unsigned char* out, void* add_arg);
+typedef int  (*wolfSSL_custom_ext_parse_cb)(WOLFSSL* s, unsigned int ext_type,
+        const unsigned char* in, size_t inlen, int* al, void* parse_arg);
+
+WOLFSSL_API int wolfSSL_CTX_add_client_custom_ext(WOLFSSL_CTX* ctx,
+        unsigned int ext_type, wolfSSL_custom_ext_add_cb add_cb,
+        wolfSSL_custom_ext_free_cb free_cb, void* add_arg,
+        wolfSSL_custom_ext_parse_cb parse_cb, void* parse_arg);
+#endif /* OPENSSL_EXTRA && HAVE_TLS_EXTENSIONS */
 
 /* TLS Extended Master Secret Extension */
 WOLFSSL_API int wolfSSL_DisableExtendedMasterSecret(WOLFSSL* ssl);

@@ -2375,6 +2375,29 @@ enum {
  * this bound. */
 wc_static_assert(STATIC_BUFFER_LEN >= RECORD_HEADER_SZ);
 
+/* Default read-ahead window: when read-ahead is enabled the record header read
+ * requests up to a full record's worth of data in a single recv() so the body
+ * (and possibly following records) can be pulled in without a second syscall.
+ * Sized to one maximum TLS record (MAX_RECORD_SIZE, not the buffer-sizing
+ * RECORD_SIZE which may be small) so the whole record is captured. Defined
+ * unconditionally so the setters and CTX init can reference it as the default
+ * window even when read-ahead I/O is not built. */
+#ifndef WOLFSSL_READ_AHEAD_SZ
+#define WOLFSSL_READ_AHEAD_SZ (RECORD_HEADER_SZ + MAX_RECORD_SIZE + \
+         COMP_EXTRA + MTU_EXTRA + MAX_MSG_EXTRA)
+#endif
+
+/* Upper bound for a caller-configured read-ahead window
+ * (wolfSSL_CTX/SSL_set_default_read_buffer_len()). The window feeds signed int
+ * arithmetic in GetInputData_ex(); bounding it well below INT_MAX ensures a
+ * large caller-supplied size can never overflow that arithmetic to a negative
+ * value (which would skip GrowInputBuffer() and drive an oversized recv()).
+ * 16 MB is far above any realistic coalescing window. Defined unconditionally
+ * so the setters can clamp even when read-ahead I/O is not built. */
+#ifndef WOLFSSL_MAX_READ_AHEAD_SZ
+#define WOLFSSL_MAX_READ_AHEAD_SZ (16 * 1024 * 1024)
+#endif
+
 typedef struct {
     ALIGN16 byte staticBuffer[STATIC_BUFFER_LEN];
     byte*  buffer;       /* place holder for static or dynamic buffer */
@@ -3252,6 +3275,31 @@ struct TLSX {
     byte         resp; /* IsResponse Flag */
     struct TLSX* next; /* List Behavior   */
 };
+
+#if defined(HAVE_TLS_EXTENSIONS) && defined(OPENSSL_EXTRA)
+/* OpenSSL-compatible custom (application-defined) TLS extension.
+ * Registered on a WOLFSSL_CTX via wolfSSL_CTX_add_client_custom_ext(). These
+ * extensions are not part of the TLSX framework but are processed in parallel
+ * for unknown extension types. Currently the client side for TLS 1.2 and below
+ * is supported, mirroring SSL_CTX_add_client_custom_ext(). */
+typedef struct WOLFSSL_CustomExt {
+    word16                      ext_type;  /* extension type on the wire     */
+    wolfSSL_custom_ext_add_cb   add_cb;    /* build outgoing extension data  */
+    wolfSSL_custom_ext_free_cb  free_cb;   /* free data produced by add_cb   */
+    wolfSSL_custom_ext_parse_cb parse_cb;  /* parse incoming extension data  */
+    void*                       add_arg;   /* opaque arg for add_cb/free_cb  */
+    void*                       parse_arg; /* opaque arg for parse_cb        */
+    struct WOLFSSL_CustomExt*   next;      /* list behaviour                 */
+} WOLFSSL_CustomExt;
+
+WOLFSSL_LOCAL void TLSX_CustomExt_FreeAll(WOLFSSL_CustomExt* list, void* heap);
+#ifdef WOLFSSL_API_PREFIX_MAP
+    #define TLSX_CustomExt_BuildRequest wolfSSL_TLSX_CustomExt_BuildRequest
+#endif
+WOLFSSL_TEST_VIS int TLSX_CustomExt_BuildRequest(WOLFSSL* ssl, word16* pSz);
+WOLFSSL_LOCAL int  TLSX_CustomExt_Parse(WOLFSSL* ssl, byte msgType, word16 type,
+        const byte* input, word16 size, int* found);
+#endif /* HAVE_TLS_EXTENSIONS && OPENSSL_EXTRA */
 
 #ifdef WOLFSSL_API_PREFIX_MAP
     #define TLSX_Find wolfSSL_TLSX_Find
@@ -4234,8 +4282,16 @@ struct WOLFSSL_CTX {
     WOLFSSL_X509_STORE x509_store; /* points to ctx->cm */
     WOLFSSL_X509_STORE* x509_store_pt; /* take ownership of external store */
 #endif
-#if defined(OPENSSL_EXTRA) || defined(HAVE_WEBSERVER) || defined(WOLFSSL_WPAS_SMALL)
+#if defined(OPENSSL_EXTRA) || defined(HAVE_WEBSERVER) || \
+    defined(WOLFSSL_WPAS_SMALL) || defined(WOLFSSL_TLS_READ_AHEAD)
     byte            readAhead;
+#endif
+#if defined(OPENSSL_EXTRA) || defined(WOLFSSL_TLS_READ_AHEAD)
+    /* Read-ahead coalescing buffer size. 0 = use one record (default). See
+     * wolfSSL_CTX_set_default_read_buffer_len(). */
+    word32          readAheadSz;
+#endif
+#if defined(OPENSSL_EXTRA) || defined(HAVE_WEBSERVER) || defined(WOLFSSL_WPAS_SMALL)
     void*           userPRFArg; /* passed to prf callback */
 #endif
 #ifdef HAVE_EX_DATA
@@ -4262,6 +4318,9 @@ struct WOLFSSL_CTX {
     int             devId;              /* async device id to use */
 #ifdef HAVE_TLS_EXTENSIONS
     TLSX* extensions;                  /* RFC 6066 TLS Extensions data */
+    #ifdef OPENSSL_EXTRA
+        WOLFSSL_CustomExt* customExt;  /* App-defined custom TLS extensions */
+    #endif
     #ifndef NO_WOLFSSL_SERVER
         #if defined(HAVE_CERTIFICATE_STATUS_REQUEST) \
          || defined(HAVE_CERTIFICATE_STATUS_REQUEST_V2)
@@ -6291,8 +6350,12 @@ struct WOLFSSL {
     defined(OPENSSL_ALL)
     unsigned long    peerVerifyRet;
 #endif
-#ifdef OPENSSL_EXTRA
+#if defined(OPENSSL_EXTRA) || defined(WOLFSSL_TLS_READ_AHEAD)
     byte             readAhead;
+    /* Read-ahead coalescing buffer size; 0 = one record (default). */
+    word32           readAheadSz;
+#endif
+#ifdef OPENSSL_EXTRA
 #ifdef HAVE_PK_CALLBACKS
     void*            loggingCtx;         /* logging callback argument */
 #endif
@@ -6479,6 +6542,18 @@ struct WOLFSSL {
 #endif
 #ifdef HAVE_TLS_EXTENSIONS
     TLSX* extensions;                  /* RFC 6066 TLS Extensions data */
+    #ifdef OPENSSL_EXTRA
+        /* Pre-built wire bytes for app-defined custom extensions in the
+         * ClientHello. Produced in TLSX_GetRequestSize and consumed (then
+         * freed) in TLSX_WriteRequest. See WOLFSSL_CustomExt. */
+        byte*   customExtData;
+        word16  customExtSz;
+        /* Custom extension types actually emitted in the ClientHello, so an
+         * unsolicited type echoed by the server can be rejected. Rebuilt with
+         * customExtData; persists until the connection is freed. */
+        word16* customExtSent;
+        word16  customExtSentCnt;
+    #endif
     #ifdef HAVE_MAX_FRAGMENT
         word16 max_fragment;
     #endif

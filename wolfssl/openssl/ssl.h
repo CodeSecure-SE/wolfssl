@@ -1126,6 +1126,14 @@ wolfSSL_X509_STORE_set_verify_cb((WOLFSSL_X509_STORE *)(s), (WOLFSSL_X509_STORE_
 #define SSL_set_info_callback           wolfSSL_set_info_callback
 #define SSL_CTX_set_alpn_protos         wolfSSL_CTX_set_alpn_protos
 
+/* Application-defined ("custom") TLS extensions. */
+#if defined(OPENSSL_EXTRA) && defined(HAVE_TLS_EXTENSIONS)
+typedef wolfSSL_custom_ext_add_cb   custom_ext_add_cb;
+typedef wolfSSL_custom_ext_free_cb  custom_ext_free_cb;
+typedef wolfSSL_custom_ext_parse_cb custom_ext_parse_cb;
+#define SSL_CTX_add_client_custom_ext   wolfSSL_CTX_add_client_custom_ext
+#endif /* OPENSSL_EXTRA && HAVE_TLS_EXTENSIONS */
+
 #define SSL_CTX_keylog_cb_func          wolfSSL_CTX_keylog_cb_func
 #define SSL_CTX_set_keylog_callback     wolfSSL_CTX_set_keylog_callback
 #define SSL_CTX_get_keylog_callback     wolfSSL_CTX_get_keylog_callback
@@ -1441,6 +1449,8 @@ typedef WOLFSSL_SRTP_PROTECTION_PROFILE      SRTP_PROTECTION_PROFILE;
 #define SSL_set_read_ahead              wolfSSL_set_read_ahead
 #define SSL_CTX_get_read_ahead          wolfSSL_CTX_get_read_ahead
 #define SSL_CTX_set_read_ahead          wolfSSL_CTX_set_read_ahead
+#define SSL_CTX_set_default_read_buffer_len wolfSSL_CTX_set_default_read_buffer_len
+#define SSL_set_default_read_buffer_len wolfSSL_set_default_read_buffer_len
 #define SSL_CTX_set_tlsext_status_arg   wolfSSL_CTX_set_tlsext_status_arg
 #define SSL_CTX_set_tlsext_opaque_prf_input_callback_arg \
                             wolfSSL_CTX_set_tlsext_opaque_prf_input_callback_arg
