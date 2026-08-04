@@ -178,6 +178,115 @@ int test_wc_ed448_sign_msg(void)
 } /* END test_wc_ed448_sign_msg */
 
 /*
+ * RFC 8032 requires the Ed448 signature scalar S to be canonical (S < L).
+ * Because L times the base point is the identity, a malleated signature with
+ * S' = S + L recomputes the same R, so the S-range check is the only guard
+ * against it. Confirm a signature with S >= L (including the malleability case
+ * S + L) is rejected with BAD_FUNC_ARG, while an in-range but wrong S fails
+ * verification with SIG_VERIFY_E.
+ */
+int test_wc_ed448_verify_sig_S_range(void)
+{
+    EXPECT_DECLS;
+    /* The S-range rejection may be absent in the frozen ed448.c of older
+     * FIPS-certified modules, so restrict to non-FIPS or FIPS v7 and later. */
+#if (!defined(HAVE_FIPS) || FIPS_VERSION3_GE(7,0,0)) && \
+    defined(HAVE_ED448) && defined(HAVE_ED448_SIGN) && \
+    defined(HAVE_ED448_VERIFY)
+    ed448_key key;
+    WC_RNG    rng;
+    byte      msg[] = "Everybody gets Friday off.\n";
+    byte      sig[ED448_SIG_SIZE];
+    byte      badSig[ED448_SIG_SIZE];
+    word32    msglen = sizeof(msg);
+    word32    siglen = sizeof(sig);
+    int       verify_ok = 0;
+    int       i;
+    int       carry;
+    int       sum;
+    /* Ed448 group order L, little-endian, 57 bytes. */
+    static const byte order[] = {
+        0xf3, 0x44, 0x58, 0xab, 0x92, 0xc2, 0x78, 0x23,
+        0x55, 0x8f, 0xc5, 0x8d, 0x72, 0xc2, 0x6c, 0x21,
+        0x90, 0x36, 0xd6, 0xae, 0x49, 0xdb, 0x4e, 0xc4,
+        0xe9, 0x23, 0xca, 0x7c, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x3f,
+        0x00
+    };
+
+    XMEMSET(&key, 0, sizeof(key));
+    XMEMSET(&rng, 0, sizeof(rng));
+    XMEMSET(sig, 0, sizeof(sig));
+
+    ExpectIntEQ(wc_ed448_init(&key), 0);
+    ExpectIntEQ(wc_InitRng(&rng), 0);
+    ExpectIntEQ(wc_ed448_make_key(&rng, ED448_KEY_SIZE, &key), 0);
+
+    /* Produce a valid signature and confirm it verifies. */
+    ExpectIntEQ(wc_ed448_sign_msg(msg, msglen, sig, &siglen, &key, NULL, 0), 0);
+    ExpectIntEQ(siglen, ED448_SIG_SIZE);
+    ExpectIntEQ(wc_ed448_verify_msg(sig, siglen, msg, msglen, &verify_ok, &key,
+        NULL, 0), 0);
+    ExpectIntEQ(verify_ok, 1);
+
+    /* Malleability: S' = S + L. The same R is recomputed, so only the S-range
+     * check can reject it. */
+    XMEMCPY(badSig, sig, ED448_SIG_SIZE);
+    carry = 0;
+    for (i = 0; i < (int)sizeof(order); i++) {
+        sum = (int)badSig[ED448_SIG_SIZE / 2 + i] + (int)order[i] + carry;
+        badSig[ED448_SIG_SIZE / 2 + i] = (byte)(sum & 0xff);
+        carry = sum >> 8;
+    }
+    verify_ok = 1;
+    ExpectIntEQ(wc_ed448_verify_msg(badSig, ED448_SIG_SIZE, msg, msglen,
+        &verify_ok, &key, NULL, 0), WC_NO_ERR_TRACE(BAD_FUNC_ARG));
+    ExpectIntEQ(verify_ok, 0);
+
+    /* S exactly equal to L. */
+    XMEMCPY(badSig, sig, ED448_SIG_SIZE);
+    XMEMCPY(badSig + ED448_SIG_SIZE / 2, order, sizeof(order));
+    verify_ok = 1;
+    ExpectIntEQ(wc_ed448_verify_msg(badSig, ED448_SIG_SIZE, msg, msglen,
+        &verify_ok, &key, NULL, 0), WC_NO_ERR_TRACE(BAD_FUNC_ARG));
+    ExpectIntEQ(verify_ok, 0);
+
+    /* S greater than L in a high byte. */
+    XMEMCPY(badSig, sig, ED448_SIG_SIZE);
+    XMEMCPY(badSig + ED448_SIG_SIZE / 2, order, sizeof(order));
+    badSig[ED448_SIG_SIZE / 2 + 55] = 0x40;
+    verify_ok = 1;
+    ExpectIntEQ(wc_ed448_verify_msg(badSig, ED448_SIG_SIZE, msg, msglen,
+        &verify_ok, &key, NULL, 0), WC_NO_ERR_TRACE(BAD_FUNC_ARG));
+    ExpectIntEQ(verify_ok, 0);
+
+    /* S greater than L in a low byte. */
+    XMEMCPY(badSig, sig, ED448_SIG_SIZE);
+    XMEMCPY(badSig + ED448_SIG_SIZE / 2, order, sizeof(order));
+    badSig[ED448_SIG_SIZE / 2 + 0] = 0xf4;
+    verify_ok = 1;
+    ExpectIntEQ(wc_ed448_verify_msg(badSig, ED448_SIG_SIZE, msg, msglen,
+        &verify_ok, &key, NULL, 0), WC_NO_ERR_TRACE(BAD_FUNC_ARG));
+    ExpectIntEQ(verify_ok, 0);
+
+    /* S below L: passes the range check, fails verification instead. */
+    XMEMCPY(badSig, sig, ED448_SIG_SIZE);
+    XMEMCPY(badSig + ED448_SIG_SIZE / 2, order, sizeof(order));
+    badSig[ED448_SIG_SIZE / 2 + 0] = 0xf2;
+    verify_ok = 1;
+    ExpectIntEQ(wc_ed448_verify_msg(badSig, ED448_SIG_SIZE, msg, msglen,
+        &verify_ok, &key, NULL, 0), WC_NO_ERR_TRACE(SIG_VERIFY_E));
+    ExpectIntEQ(verify_ok, 0);
+
+    DoExpectIntEQ(wc_FreeRng(&rng), 0);
+    wc_ed448_free(&key);
+#endif
+    return EXPECT_RESULT();
+} /* END test_wc_ed448_verify_sig_S_range */
+
+/*
  * Test that wc_ed448_sign_msg() rejects a public-key-only key object.
  * A key with pubKeySet=1 but privKeySet=0 must not silently sign.
  */
@@ -1286,7 +1395,8 @@ int test_wc_ed448_import_private_only(void)
  * (the is_small_order VALUE operand's independence is already shown by
  * test_wc_ed448_reject_small_order_keys()), the (ret == 0 &&
  * XMEMCMP(...) != 0) recomputed-vs-stored public key mismatch check in the
- * have-private-key branch, and the deep Y-range check's final byte compare.
+ * have-private-key branch, and both decisions of the Y-range walk: the
+ * top-byte loop and the 0xFE compare that follows it.
  */
 int test_wc_ed448_check_key_decisions(void)
 {
@@ -1336,15 +1446,15 @@ int test_wc_ed448_check_key_decisions(void)
     key.p[0] = (byte)(key.p[0] ^ 0xff);
 
     /* Deep Y-range check: a Y value that is not one of
-     * ed448_is_small_order()'s tabulated points but still forces both
-     * range-check loops all the way down to the final byte compare (every
-     * byte except p[0] matches the encoded field prime p). Only reachable
-     * via a trusted import, which skips wc_ed448_check_key() at import
-     * time so the crafted (curve-invalid) point can be handed to a
-     * *direct* wc_ed448_check_key() call below -- same technique as
-     * test_wc_ed448_reject_small_order_keys(). Whatever the later
-     * curve-decode step decides is fine; the range-check decision itself
-     * is what's targeted here. */
+     * ed448_is_small_order()'s tabulated points but still runs the top-byte
+     * loop to exhaustion (every byte above the 0xFE position is 0xff), so
+     * the loop's index operand goes false and the 0xFE compare below it is
+     * reached and taken. Only reachable via a trusted import, which skips
+     * wc_ed448_check_key() at import time so the crafted (curve-invalid)
+     * point can be handed to a *direct* wc_ed448_check_key() call below --
+     * same technique as test_wc_ed448_reject_small_order_keys(). Whatever
+     * the later curve-decode step decides is fine; the range-check decision
+     * itself is what's targeted here. */
     XMEMSET(near_p, 0xff, sizeof(near_p));
     near_p[28] = 0xfe;
     near_p[0]  = 0x00;
@@ -1355,16 +1465,28 @@ int test_wc_ed448_check_key_decisions(void)
     ExpectTrue((rc == 0) || (rc == WC_NO_ERR_TRACE(PUBLIC_KEY_E)));
     wc_ed448_free(&freshKey);
 
-    /* Same construction but with an extra byte (p[1]) perturbed so the
-     * second range-check loop exits early with ret == 0 before the final
-     * byte compare runs -- closes that compare's PUBLIC_KEY_E
-     * guard operand's FALSE side. */
-    near_p[1] = 0x00;
+    /* Same construction with a byte inside the walked range cleared, so the
+     * loop breaks with ret == 0 instead of running out: closes the byte
+     * compare's TRUE side and the FALSE side of the public-key-error guard
+     * that follows it. */
+    near_p[29] = 0x00;
     ExpectIntEQ(wc_ed448_init(&freshKey), 0);
     ExpectIntEQ(wc_ed448_import_public_ex(near_p, ED448_PUB_KEY_SIZE,
         &freshKey, 1), 0);
     rc = wc_ed448_check_key(&freshKey);
     ExpectTrue((rc == 0) || (rc == WC_NO_ERR_TRACE(PUBLIC_KEY_E)));
+    wc_ed448_free(&freshKey);
+
+    /* Every byte 0xff, including the 0xFE position: not a tabulated
+     * small-order encoding, the walk finds no byte below 0xff and the 0xFE
+     * compare is false, so the Y value is out of range. Closes that
+     * compare's FALSE side. */
+    XMEMSET(near_p, 0xff, sizeof(near_p));
+    ExpectIntEQ(wc_ed448_init(&freshKey), 0);
+    ExpectIntEQ(wc_ed448_import_public_ex(near_p, ED448_PUB_KEY_SIZE,
+        &freshKey, 1), 0);
+    ExpectIntEQ(wc_ed448_check_key(&freshKey),
+        WC_NO_ERR_TRACE(PUBLIC_KEY_E));
     wc_ed448_free(&freshKey);
 
     DoExpectIntEQ(wc_FreeRng(&rng), 0);

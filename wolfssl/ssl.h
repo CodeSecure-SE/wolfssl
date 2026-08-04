@@ -1847,6 +1847,13 @@ WOLFSSL_API int  wolfSSL_dtls_set_timeout_init(WOLFSSL* ssl, int timeout);
 WOLFSSL_API int  wolfSSL_dtls_set_timeout_max(WOLFSSL* ssl, int timeout);
 WOLFSSL_API int  wolfSSL_dtls_got_timeout(WOLFSSL* ssl);
 WOLFSSL_API int  wolfSSL_dtls_retransmit(WOLFSSL* ssl);
+/* Defined alongside the other DTLS calls, inside the !WOLFSSL_LEANPSK block of
+ * ssl_api_dtls.c, so gate the declaration the same way rather than promising a
+ * symbol that build does not provide. */
+#if defined(WOLFSSL_DTLS13) && !defined(WOLFSSL_LEANPSK)
+WOLFSSL_API int  wolfSSL_dtls13_pending_work(WOLFSSL* ssl);
+WOLFSSL_API int  wolfSSL_dtls13_do_scheduled_work(WOLFSSL* ssl);
+#endif
 WOLFSSL_API int  wolfSSL_dtls(WOLFSSL* ssl);
 
 WOLFSSL_API void* wolfSSL_dtls_create_peer(int port, char* ip);
@@ -5017,9 +5024,13 @@ WOLFSSL_API int wolfSSL_SecureResume(WOLFSSL* ssl);
 WOLFSSL_API long wolfSSL_SSL_get_secure_renegotiation_support(WOLFSSL* ssl);
 
 #if !defined(NO_WOLFSSL_CLIENT) && !defined(WOLFSSL_NO_TLS12) && \
-    defined(WOLFSSL_HARDEN_TLS) && !defined(WOLFSSL_HARDEN_TLS_NO_SCR_CHECK)
+    defined(HAVE_SERVER_RENEGOTIATION_INFO) && \
+    !defined(WOLFSSL_HARDEN_TLS_NO_SCR_CHECK)
 WOLFSSL_API int wolfSSL_get_scr_check_enabled(const WOLFSSL* ssl);
 WOLFSSL_API int wolfSSL_set_scr_check_enabled(WOLFSSL* ssl, byte enabled);
+WOLFSSL_API int wolfSSL_CTX_get_scr_check_enabled(const WOLFSSL_CTX* ctx);
+WOLFSSL_API int wolfSSL_CTX_set_scr_check_enabled(WOLFSSL_CTX* ctx,
+                                                  byte enabled);
 #endif
 
 #endif
