@@ -9496,6 +9496,12 @@ WOLFSSL_X509_CRL* wolfSSL_d2i_X509_CRL(WOLFSSL_X509_CRL** crl,
             ret = InitCRL(newcrl, NULL);
             if (ret < 0) {
                 WOLFSSL_MSG("Init tmp CRL failed");
+                /* A failed InitCRL() has already released whatever it took,
+                 * so dispose of the memory here and keep this object away
+                 * from the wolfSSL_X509_CRL_free() below, which would destroy
+                 * the lock and the condition variable a second time. */
+                XFREE(newcrl, NULL, DYNAMIC_TYPE_CRL);
+                newcrl = NULL;
             }
             else {
                 ret = BufferLoadCRL(newcrl, in, len, WOLFSSL_FILETYPE_ASN1,
@@ -11862,6 +11868,18 @@ WOLF_STACK_OF(WOLFSSL_X509_OBJECT)* wolfSSL_sk_X509_OBJECT_deep_copy(
             cert->version = req->version;
             cert->isCA = req->isCa;
             cert->basicConstSet = req->basicConstSet;
+            cert->basicConstCrit = req->basicConstCrit;
+            if (req->pathLengthSet) {
+                if (req->pathLength > WOLFSSL_MAX_PATH_LEN) {
+                    WOLFSSL_MSG("Basic Constraints path length too large");
+                    WOLFSSL_ERROR_VERBOSE(ASN_PATHLEN_SIZE_E);
+                    ret = WOLFSSL_FAILURE;
+                }
+                else {
+                    cert->pathLen = (byte)req->pathLength;
+                    cert->pathLenSet = req->pathLengthSet;
+                }
+            }
     #ifdef WOLFSSL_CERT_EXT
             if (req->subjKeyIdSz != 0) {
                 if (req->subjKeyIdSz > CTC_MAX_SKID_SIZE) {
@@ -11875,8 +11893,7 @@ WOLF_STACK_OF(WOLFSSL_X509_OBJECT)* wolfSSL_sk_X509_OBJECT_deep_copy(
                     ret = WOLFSSL_FAILURE;
                 }
                 else {
-                    XMEMCPY(cert->skid, req->subjKeyId,
-                            req->subjKeyIdSz);
+                    XMEMCPY(cert->skid, req->subjKeyId, req->subjKeyIdSz);
                     cert->skidSz = (int)req->subjKeyIdSz;
                 }
             }
@@ -12025,8 +12042,15 @@ static int CertFromX509(Cert* cert, WOLFSSL_X509* x509)
     cert->isCA    = wolfSSL_X509_get_isCA(x509);
     cert->basicConstCrit = x509->basicConstCrit;
     cert->basicConstSet = x509->basicConstSet;
-    cert->pathLen = (byte)x509->pathLength;
-    cert->pathLenSet = x509->pathLengthSet;
+    if (x509->pathLengthSet) {
+        if (x509->pathLength > WOLFSSL_MAX_PATH_LEN) {
+            WOLFSSL_MSG("Basic Constraints path length too large");
+            WOLFSSL_ERROR_VERBOSE(ASN_PATHLEN_SIZE_E);
+            return WOLFSSL_FAILURE;
+        }
+        cert->pathLen = (byte)x509->pathLength;
+        cert->pathLenSet = x509->pathLengthSet;
+    }
 
 #ifdef WOLFSSL_CERT_EXT
     if (x509->subjKeyIdSz <= CTC_MAX_SKID_SIZE) {

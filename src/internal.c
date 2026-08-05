@@ -2355,6 +2355,11 @@ int InitSSL_Side(WOLFSSL* ssl, word16 side)
         ssl->options.haveMlDsaSig  = 1; /* always on client side */
     }
 #endif /* WOLFSSL_HAVE_MLDSA */
+#ifdef WOLFSSL_HAVE_SLHDSA
+    if (ssl->options.side == WOLFSSL_CLIENT_END) {
+        ssl->options.haveSlhDsaSig  = 1; /* always on client side */
+    }
+#endif /* WOLFSSL_HAVE_SLHDSA */
 
 #if defined(HAVE_EXTENDED_MASTER) && !defined(NO_WOLFSSL_CLIENT)
     if (ssl->options.side == WOLFSSL_CLIENT_END) {
@@ -2799,6 +2804,11 @@ int InitSSL_Ctx(WOLFSSL_CTX* ctx, WOLFSSL_METHOD* method, void* heap)
         ctx->haveMlDsaSig = 1;     /* always on client side */
                                        /* server can turn on by loading key */
 #endif /* WOLFSSL_HAVE_MLDSA */
+#ifdef WOLFSSL_HAVE_SLHDSA
+    if (method->side == WOLFSSL_CLIENT_END)
+        ctx->haveSlhDsaSig = 1;    /* always on client side */
+                                       /* server can turn on by loading key */
+#endif /* WOLFSSL_HAVE_SLHDSA */
 #ifdef HAVE_ECC
     if (method->side == WOLFSSL_CLIENT_END) {
         ctx->haveECDSAsig  = 1;        /* always on client side */
@@ -3504,6 +3514,92 @@ static WC_INLINE void AddSuiteHashSigAlgo(byte* hashSigAlgo, byte macAlgo,
         }
         else
     #endif /* WOLFSSL_HAVE_MLDSA */
+    #ifdef WOLFSSL_HAVE_SLHDSA
+      #if defined(WOLFSSL_SLHDSA_SHA2) && defined(WOLFSSL_SLHDSA_PARAM_SHA2_128S)
+        if (sigAlgo == slhdsa_sha2_128s_sa_algo) {
+            ADD_HASH_SIG_ALGO(hashSigAlgo, inOutIdx,
+                SLHDSA_SA_MAJOR, SLHDSA_SHA2_128S_SA_MINOR);
+        }
+        else
+      #endif
+      #if defined(WOLFSSL_SLHDSA_SHA2) && defined(WOLFSSL_SLHDSA_PARAM_SHA2_128F)
+        if (sigAlgo == slhdsa_sha2_128f_sa_algo) {
+            ADD_HASH_SIG_ALGO(hashSigAlgo, inOutIdx,
+                SLHDSA_SA_MAJOR, SLHDSA_SHA2_128F_SA_MINOR);
+        }
+        else
+      #endif
+      #if defined(WOLFSSL_SLHDSA_SHA2) && defined(WOLFSSL_SLHDSA_PARAM_SHA2_192S)
+        if (sigAlgo == slhdsa_sha2_192s_sa_algo) {
+            ADD_HASH_SIG_ALGO(hashSigAlgo, inOutIdx,
+                SLHDSA_SA_MAJOR, SLHDSA_SHA2_192S_SA_MINOR);
+        }
+        else
+      #endif
+      #if defined(WOLFSSL_SLHDSA_SHA2) && defined(WOLFSSL_SLHDSA_PARAM_SHA2_192F)
+        if (sigAlgo == slhdsa_sha2_192f_sa_algo) {
+            ADD_HASH_SIG_ALGO(hashSigAlgo, inOutIdx,
+                SLHDSA_SA_MAJOR, SLHDSA_SHA2_192F_SA_MINOR);
+        }
+        else
+      #endif
+      #if defined(WOLFSSL_SLHDSA_SHA2) && defined(WOLFSSL_SLHDSA_PARAM_SHA2_256S)
+        if (sigAlgo == slhdsa_sha2_256s_sa_algo) {
+            ADD_HASH_SIG_ALGO(hashSigAlgo, inOutIdx,
+                SLHDSA_SA_MAJOR, SLHDSA_SHA2_256S_SA_MINOR);
+        }
+        else
+      #endif
+      #if defined(WOLFSSL_SLHDSA_SHA2) && defined(WOLFSSL_SLHDSA_PARAM_SHA2_256F)
+        if (sigAlgo == slhdsa_sha2_256f_sa_algo) {
+            ADD_HASH_SIG_ALGO(hashSigAlgo, inOutIdx,
+                SLHDSA_SA_MAJOR, SLHDSA_SHA2_256F_SA_MINOR);
+        }
+        else
+      #endif
+      #ifdef WOLFSSL_SLHDSA_PARAM_128S
+        if (sigAlgo == slhdsa_shake_128s_sa_algo) {
+            ADD_HASH_SIG_ALGO(hashSigAlgo, inOutIdx,
+                SLHDSA_SA_MAJOR, SLHDSA_SHAKE_128S_SA_MINOR);
+        }
+        else
+      #endif
+      #ifdef WOLFSSL_SLHDSA_PARAM_128F
+        if (sigAlgo == slhdsa_shake_128f_sa_algo) {
+            ADD_HASH_SIG_ALGO(hashSigAlgo, inOutIdx,
+                SLHDSA_SA_MAJOR, SLHDSA_SHAKE_128F_SA_MINOR);
+        }
+        else
+      #endif
+      #ifdef WOLFSSL_SLHDSA_PARAM_192S
+        if (sigAlgo == slhdsa_shake_192s_sa_algo) {
+            ADD_HASH_SIG_ALGO(hashSigAlgo, inOutIdx,
+                SLHDSA_SA_MAJOR, SLHDSA_SHAKE_192S_SA_MINOR);
+        }
+        else
+      #endif
+      #ifdef WOLFSSL_SLHDSA_PARAM_192F
+        if (sigAlgo == slhdsa_shake_192f_sa_algo) {
+            ADD_HASH_SIG_ALGO(hashSigAlgo, inOutIdx,
+                SLHDSA_SA_MAJOR, SLHDSA_SHAKE_192F_SA_MINOR);
+        }
+        else
+      #endif
+      #ifdef WOLFSSL_SLHDSA_PARAM_256S
+        if (sigAlgo == slhdsa_shake_256s_sa_algo) {
+            ADD_HASH_SIG_ALGO(hashSigAlgo, inOutIdx,
+                SLHDSA_SA_MAJOR, SLHDSA_SHAKE_256S_SA_MINOR);
+        }
+        else
+      #endif
+      #ifdef WOLFSSL_SLHDSA_PARAM_256F
+        if (sigAlgo == slhdsa_shake_256f_sa_algo) {
+            ADD_HASH_SIG_ALGO(hashSigAlgo, inOutIdx,
+                SLHDSA_SA_MAJOR, SLHDSA_SHAKE_256F_SA_MINOR);
+        }
+        else
+      #endif
+    #endif /* WOLFSSL_HAVE_SLHDSA */
 #ifdef WC_RSA_PSS
         if (sigAlgo == rsa_pss_sa_algo) {
             /* RSA PSS is sig then mac */
@@ -3631,6 +3727,61 @@ void InitSuitesHashSigAlgo(byte* hashSigAlgo, int haveSig, int tls1_2,
             keySz, &idx);
     }
 #endif /* WOLFSSL_HAVE_MLDSA */
+#ifdef WOLFSSL_HAVE_SLHDSA
+    /* Only advertise the parameter sets that are actually compiled in, so we
+     * never offer a scheme we cannot sign or verify. SLH-DSA is defined for
+     * TLS 1.3 only, so it is never offered to a TLS 1.2 peer. */
+    if ((haveSig & SIG_SLHDSA) && tls1_3) {
+    #if defined(WOLFSSL_SLHDSA_SHA2) && defined(WOLFSSL_SLHDSA_PARAM_SHA2_128S)
+        AddSuiteHashSigAlgo(hashSigAlgo, no_mac, slhdsa_sha2_128s_sa_algo,
+            keySz, &idx);
+    #endif
+    #if defined(WOLFSSL_SLHDSA_SHA2) && defined(WOLFSSL_SLHDSA_PARAM_SHA2_128F)
+        AddSuiteHashSigAlgo(hashSigAlgo, no_mac, slhdsa_sha2_128f_sa_algo,
+            keySz, &idx);
+    #endif
+    #if defined(WOLFSSL_SLHDSA_SHA2) && defined(WOLFSSL_SLHDSA_PARAM_SHA2_192S)
+        AddSuiteHashSigAlgo(hashSigAlgo, no_mac, slhdsa_sha2_192s_sa_algo,
+            keySz, &idx);
+    #endif
+    #if defined(WOLFSSL_SLHDSA_SHA2) && defined(WOLFSSL_SLHDSA_PARAM_SHA2_192F)
+        AddSuiteHashSigAlgo(hashSigAlgo, no_mac, slhdsa_sha2_192f_sa_algo,
+            keySz, &idx);
+    #endif
+    #if defined(WOLFSSL_SLHDSA_SHA2) && defined(WOLFSSL_SLHDSA_PARAM_SHA2_256S)
+        AddSuiteHashSigAlgo(hashSigAlgo, no_mac, slhdsa_sha2_256s_sa_algo,
+            keySz, &idx);
+    #endif
+    #if defined(WOLFSSL_SLHDSA_SHA2) && defined(WOLFSSL_SLHDSA_PARAM_SHA2_256F)
+        AddSuiteHashSigAlgo(hashSigAlgo, no_mac, slhdsa_sha2_256f_sa_algo,
+            keySz, &idx);
+    #endif
+    #ifdef WOLFSSL_SLHDSA_PARAM_128S
+        AddSuiteHashSigAlgo(hashSigAlgo, no_mac, slhdsa_shake_128s_sa_algo,
+            keySz, &idx);
+    #endif
+    #ifdef WOLFSSL_SLHDSA_PARAM_128F
+        AddSuiteHashSigAlgo(hashSigAlgo, no_mac, slhdsa_shake_128f_sa_algo,
+            keySz, &idx);
+    #endif
+    #ifdef WOLFSSL_SLHDSA_PARAM_192S
+        AddSuiteHashSigAlgo(hashSigAlgo, no_mac, slhdsa_shake_192s_sa_algo,
+            keySz, &idx);
+    #endif
+    #ifdef WOLFSSL_SLHDSA_PARAM_192F
+        AddSuiteHashSigAlgo(hashSigAlgo, no_mac, slhdsa_shake_192f_sa_algo,
+            keySz, &idx);
+    #endif
+    #ifdef WOLFSSL_SLHDSA_PARAM_256S
+        AddSuiteHashSigAlgo(hashSigAlgo, no_mac, slhdsa_shake_256s_sa_algo,
+            keySz, &idx);
+    #endif
+    #ifdef WOLFSSL_SLHDSA_PARAM_256F
+        AddSuiteHashSigAlgo(hashSigAlgo, no_mac, slhdsa_shake_256f_sa_algo,
+            keySz, &idx);
+    #endif
+    }
+#endif /* WOLFSSL_HAVE_SLHDSA */
     if (haveSig & SIG_RSA) {
     #ifdef WC_RSA_PSS
         if (tls1_2) {
@@ -4804,6 +4955,150 @@ void InitSuites(Suites* suites, ProtocolVersion pv, int keySz, word16 haveRSA,
 #if !defined(NO_WOLFSSL_SERVER) || !defined(NO_CERTS) || \
     (!defined(NO_WOLFSSL_CLIENT) && (!defined(NO_DH) || defined(HAVE_ECC)))
 
+#ifdef WOLFSSL_HAVE_SLHDSA
+/* Map a TLS SLH-DSA signature-scheme minor byte (draft-reddy-tls-slhdsa) to
+ * the internal sa_algo. Returns invalid_sa_algo if unrecognized or the
+ * parameter family is not compiled in. */
+byte SlhDsaSigMinorToType(byte minor)
+{
+    switch (minor) {
+    #if defined(WOLFSSL_SLHDSA_SHA2) && defined(WOLFSSL_SLHDSA_PARAM_SHA2_128S)
+        case SLHDSA_SHA2_128S_SA_MINOR:  return slhdsa_sha2_128s_sa_algo;
+    #endif
+    #if defined(WOLFSSL_SLHDSA_SHA2) && defined(WOLFSSL_SLHDSA_PARAM_SHA2_128F)
+        case SLHDSA_SHA2_128F_SA_MINOR:  return slhdsa_sha2_128f_sa_algo;
+    #endif
+    #if defined(WOLFSSL_SLHDSA_SHA2) && defined(WOLFSSL_SLHDSA_PARAM_SHA2_192S)
+        case SLHDSA_SHA2_192S_SA_MINOR:  return slhdsa_sha2_192s_sa_algo;
+    #endif
+    #if defined(WOLFSSL_SLHDSA_SHA2) && defined(WOLFSSL_SLHDSA_PARAM_SHA2_192F)
+        case SLHDSA_SHA2_192F_SA_MINOR:  return slhdsa_sha2_192f_sa_algo;
+    #endif
+    #if defined(WOLFSSL_SLHDSA_SHA2) && defined(WOLFSSL_SLHDSA_PARAM_SHA2_256S)
+        case SLHDSA_SHA2_256S_SA_MINOR:  return slhdsa_sha2_256s_sa_algo;
+    #endif
+    #if defined(WOLFSSL_SLHDSA_SHA2) && defined(WOLFSSL_SLHDSA_PARAM_SHA2_256F)
+        case SLHDSA_SHA2_256F_SA_MINOR:  return slhdsa_sha2_256f_sa_algo;
+    #endif
+    #ifdef WOLFSSL_SLHDSA_PARAM_128S
+        case SLHDSA_SHAKE_128S_SA_MINOR: return slhdsa_shake_128s_sa_algo;
+    #endif
+    #ifdef WOLFSSL_SLHDSA_PARAM_128F
+        case SLHDSA_SHAKE_128F_SA_MINOR: return slhdsa_shake_128f_sa_algo;
+    #endif
+    #ifdef WOLFSSL_SLHDSA_PARAM_192S
+        case SLHDSA_SHAKE_192S_SA_MINOR: return slhdsa_shake_192s_sa_algo;
+    #endif
+    #ifdef WOLFSSL_SLHDSA_PARAM_192F
+        case SLHDSA_SHAKE_192F_SA_MINOR: return slhdsa_shake_192f_sa_algo;
+    #endif
+    #ifdef WOLFSSL_SLHDSA_PARAM_256S
+        case SLHDSA_SHAKE_256S_SA_MINOR: return slhdsa_shake_256s_sa_algo;
+    #endif
+    #ifdef WOLFSSL_SLHDSA_PARAM_256F
+        case SLHDSA_SHAKE_256F_SA_MINOR: return slhdsa_shake_256f_sa_algo;
+    #endif
+        default:                         return (byte)invalid_sa_algo;
+    }
+}
+
+/* Map an internal SLH-DSA sa_algo to its enum SlhDsaParam value. Returns -1
+ * if hsType is not an SLH-DSA scheme. */
+int SlhDsaTypeToParam(byte hsType)
+{
+    switch (hsType) {
+    #if defined(WOLFSSL_SLHDSA_SHA2) && defined(WOLFSSL_SLHDSA_PARAM_SHA2_128S)
+        case slhdsa_sha2_128s_sa_algo:  return SLHDSA_SHA2_128S;
+    #endif
+    #if defined(WOLFSSL_SLHDSA_SHA2) && defined(WOLFSSL_SLHDSA_PARAM_SHA2_128F)
+        case slhdsa_sha2_128f_sa_algo:  return SLHDSA_SHA2_128F;
+    #endif
+    #if defined(WOLFSSL_SLHDSA_SHA2) && defined(WOLFSSL_SLHDSA_PARAM_SHA2_192S)
+        case slhdsa_sha2_192s_sa_algo:  return SLHDSA_SHA2_192S;
+    #endif
+    #if defined(WOLFSSL_SLHDSA_SHA2) && defined(WOLFSSL_SLHDSA_PARAM_SHA2_192F)
+        case slhdsa_sha2_192f_sa_algo:  return SLHDSA_SHA2_192F;
+    #endif
+    #if defined(WOLFSSL_SLHDSA_SHA2) && defined(WOLFSSL_SLHDSA_PARAM_SHA2_256S)
+        case slhdsa_sha2_256s_sa_algo:  return SLHDSA_SHA2_256S;
+    #endif
+    #if defined(WOLFSSL_SLHDSA_SHA2) && defined(WOLFSSL_SLHDSA_PARAM_SHA2_256F)
+        case slhdsa_sha2_256f_sa_algo:  return SLHDSA_SHA2_256F;
+    #endif
+    #ifdef WOLFSSL_SLHDSA_PARAM_128S
+        case slhdsa_shake_128s_sa_algo: return SLHDSA_SHAKE128S;
+    #endif
+    #ifdef WOLFSSL_SLHDSA_PARAM_128F
+        case slhdsa_shake_128f_sa_algo: return SLHDSA_SHAKE128F;
+    #endif
+    #ifdef WOLFSSL_SLHDSA_PARAM_192S
+        case slhdsa_shake_192s_sa_algo: return SLHDSA_SHAKE192S;
+    #endif
+    #ifdef WOLFSSL_SLHDSA_PARAM_192F
+        case slhdsa_shake_192f_sa_algo: return SLHDSA_SHAKE192F;
+    #endif
+    #ifdef WOLFSSL_SLHDSA_PARAM_256S
+        case slhdsa_shake_256s_sa_algo: return SLHDSA_SHAKE256S;
+    #endif
+    #ifdef WOLFSSL_SLHDSA_PARAM_256F
+        case slhdsa_shake_256f_sa_algo: return SLHDSA_SHAKE256F;
+    #endif
+        default:                        return -1;
+    }
+}
+
+/* Is hsType any of the SLH-DSA signature schemes? */
+int IsSlhDsaSigAlgo(byte hsType)
+{
+    return SlhDsaTypeToParam(hsType) != -1;
+}
+
+/* Map an enum SlhDsaParam value to its internal SLH-DSA sa_algo. Returns
+ * invalid_sa_algo if the parameter set is not one of the TLS schemes. */
+byte SlhDsaParamToType(int param)
+{
+    switch (param) {
+    #if defined(WOLFSSL_SLHDSA_SHA2) && defined(WOLFSSL_SLHDSA_PARAM_SHA2_128S)
+        case SLHDSA_SHA2_128S:  return slhdsa_sha2_128s_sa_algo;
+    #endif
+    #if defined(WOLFSSL_SLHDSA_SHA2) && defined(WOLFSSL_SLHDSA_PARAM_SHA2_128F)
+        case SLHDSA_SHA2_128F:  return slhdsa_sha2_128f_sa_algo;
+    #endif
+    #if defined(WOLFSSL_SLHDSA_SHA2) && defined(WOLFSSL_SLHDSA_PARAM_SHA2_192S)
+        case SLHDSA_SHA2_192S:  return slhdsa_sha2_192s_sa_algo;
+    #endif
+    #if defined(WOLFSSL_SLHDSA_SHA2) && defined(WOLFSSL_SLHDSA_PARAM_SHA2_192F)
+        case SLHDSA_SHA2_192F:  return slhdsa_sha2_192f_sa_algo;
+    #endif
+    #if defined(WOLFSSL_SLHDSA_SHA2) && defined(WOLFSSL_SLHDSA_PARAM_SHA2_256S)
+        case SLHDSA_SHA2_256S:  return slhdsa_sha2_256s_sa_algo;
+    #endif
+    #if defined(WOLFSSL_SLHDSA_SHA2) && defined(WOLFSSL_SLHDSA_PARAM_SHA2_256F)
+        case SLHDSA_SHA2_256F:  return slhdsa_sha2_256f_sa_algo;
+    #endif
+    #ifdef WOLFSSL_SLHDSA_PARAM_128S
+        case SLHDSA_SHAKE128S:  return slhdsa_shake_128s_sa_algo;
+    #endif
+    #ifdef WOLFSSL_SLHDSA_PARAM_128F
+        case SLHDSA_SHAKE128F:  return slhdsa_shake_128f_sa_algo;
+    #endif
+    #ifdef WOLFSSL_SLHDSA_PARAM_192S
+        case SLHDSA_SHAKE192S:  return slhdsa_shake_192s_sa_algo;
+    #endif
+    #ifdef WOLFSSL_SLHDSA_PARAM_192F
+        case SLHDSA_SHAKE192F:  return slhdsa_shake_192f_sa_algo;
+    #endif
+    #ifdef WOLFSSL_SLHDSA_PARAM_256S
+        case SLHDSA_SHAKE256S:  return slhdsa_shake_256s_sa_algo;
+    #endif
+    #ifdef WOLFSSL_SLHDSA_PARAM_256F
+        case SLHDSA_SHAKE256F:  return slhdsa_shake_256f_sa_algo;
+    #endif
+        default:                return (byte)invalid_sa_algo;
+    }
+}
+#endif /* WOLFSSL_HAVE_SLHDSA */
+
 /* Decode the signature algorithm.
  *
  * input     The encoded signature algorithm.
@@ -4812,6 +5107,10 @@ void InitSuites(Suites* suites, ProtocolVersion pv, int keySz, word16 haveRSA,
  */
 void DecodeSigAlg(const byte* input, byte* hashAlgo, byte* hsType)
 {
+#ifdef WOLFSSL_HAVE_SLHDSA
+    byte slhType;
+#endif
+
     *hsType = invalid_sa_algo;
     switch (input[0]) {
         case NEW_SA_MAJOR:
@@ -4887,22 +5186,37 @@ void DecodeSigAlg(const byte* input, byte* hashAlgo, byte* hsType)
             }
             break;
     #endif /* HAVE_FALCON */
-    #ifdef WOLFSSL_HAVE_MLDSA
+    #if defined(WOLFSSL_HAVE_MLDSA) || defined(WOLFSSL_HAVE_SLHDSA)
+        /* ML-DSA and SLH-DSA share the same major byte (0x09); their minor
+         * bytes are disjoint (ML-DSA 0x04-0x06, SLH-DSA 0x11-0x1C). */
         case MLDSA_SA_MAJOR:
+        #ifdef WOLFSSL_HAVE_MLDSA
             if (input[1] == MLDSA_44_SA_MINOR) {
                 *hsType = mldsa_44_sa_algo;
                 *hashAlgo = sha256_mac;
+                break;
             }
             else if (input[1] == MLDSA_65_SA_MINOR) {
                 *hsType = mldsa_65_sa_algo;
                 *hashAlgo = sha384_mac;
+                break;
             }
             else if (input[1] == MLDSA_87_SA_MINOR) {
                 *hsType = mldsa_87_sa_algo;
                 *hashAlgo = sha512_mac;
+                break;
             }
+        #endif /* WOLFSSL_HAVE_MLDSA */
+        #ifdef WOLFSSL_HAVE_SLHDSA
+            slhType = SlhDsaSigMinorToType(input[1]);
+            if (slhType != (byte)invalid_sa_algo) {
+                *hsType = slhType;
+                /* Hash performed as part of sign/verify operation. */
+                *hashAlgo = sha512_mac;
+            }
+        #endif /* WOLFSSL_HAVE_SLHDSA */
             break;
-    #endif /* WOLFSSL_HAVE_MLDSA */
+    #endif /* WOLFSSL_HAVE_MLDSA || WOLFSSL_HAVE_SLHDSA */
         default:
             *hashAlgo = input[0];
             *hsType   = input[1];
@@ -7366,7 +7680,8 @@ int SetSSL_CTX(WOLFSSL* ssl, WOLFSSL_CTX* ctx, int writeDup)
     ssl->ecdhCurveOID = ctx->ecdhCurveOID;
 #endif
 #if defined(HAVE_ECC) || defined(HAVE_ED25519) || defined(HAVE_ED448) || \
-    defined(HAVE_FALCON) || defined(WOLFSSL_HAVE_MLDSA)
+    defined(HAVE_FALCON) || defined(WOLFSSL_HAVE_MLDSA) || \
+    defined(WOLFSSL_HAVE_SLHDSA)
     ssl->pkCurveOID = ctx->pkCurveOID;
 #endif
 
@@ -7412,7 +7727,8 @@ int SetSSL_CTX(WOLFSSL* ssl, WOLFSSL_CTX* ctx, int writeDup)
     ssl->options.haveECC          = ctx->haveECC;
     ssl->options.haveStaticECC    = ctx->haveStaticECC;
     ssl->options.haveFalconSig    = ctx->haveFalconSig;
-    ssl->options.haveMlDsaSig = ctx->haveMlDsaSig;
+    ssl->options.haveMlDsaSig     = ctx->haveMlDsaSig;
+    ssl->options.haveSlhDsaSig    = ctx->haveSlhDsaSig;
 
 #ifndef NO_PSK
     ssl->options.havePSK       = (word16)(ctx->havePSK);
@@ -8594,6 +8910,11 @@ void FreeKey(WOLFSSL* ssl, int type, void** pKey)
                 wc_MlDsaKey_Free((wc_MlDsaKey*)*pKey);
                 break;
         #endif /* WOLFSSL_HAVE_MLDSA */
+        #if defined(WOLFSSL_HAVE_SLHDSA)
+            case DYNAMIC_TYPE_SLHDSA:
+                wc_SlhDsaKey_Free((SlhDsaKey*)*pKey);
+                break;
+        #endif /* WOLFSSL_HAVE_SLHDSA */
         #ifndef NO_DH
             case DYNAMIC_TYPE_DH:
             #if defined(WC_DH_NONBLOCK) && defined(WOLFSSL_ASYNC_CRYPT_SW) && \
@@ -8702,6 +9023,11 @@ int AllocKey(WOLFSSL* ssl, int type, void** pKey)
             sz = sizeof(wc_MlDsaKey);
             break;
     #endif /* WOLFSSL_HAVE_MLDSA */
+    #if defined(WOLFSSL_HAVE_SLHDSA)
+        case DYNAMIC_TYPE_SLHDSA:
+            sz = sizeof(SlhDsaKey);
+            break;
+    #endif /* WOLFSSL_HAVE_SLHDSA */
     #ifndef NO_DH
         case DYNAMIC_TYPE_DH:
             sz = sizeof(DhKey);
@@ -8820,6 +9146,17 @@ int AllocKey(WOLFSSL* ssl, int type, void** pKey)
             ret = 0;
             break;
     #endif /* WOLFSSL_HAVE_MLDSA */
+    #if defined(WOLFSSL_HAVE_SLHDSA)
+        case DYNAMIC_TYPE_SLHDSA:
+            /* SLH-DSA requires the parameter set at init; use an always-present
+             * placeholder here and re-init with the real one once known.
+             * wc_SlhDsaKey_Init can fail before it zeroes the object, so clear
+             * it first, or the caller's FreeKey would run over raw memory. */
+            XMEMSET(*pKey, 0, sizeof(SlhDsaKey));
+            ret = wc_SlhDsaKey_Init((SlhDsaKey*)*pKey, WC_SLHDSA_DEFAULT_PARAM,
+                                    ssl->heap, ssl->devId);
+            break;
+    #endif /* WOLFSSL_HAVE_SLHDSA */
     #ifdef HAVE_CURVE448
         case DYNAMIC_TYPE_CURVE448:
             wc_curve448_init((curve448_key*)*pKey);
@@ -8866,7 +9203,8 @@ int AllocKey(WOLFSSL* ssl, int type, void** pKey)
 #if (!defined(NO_CERTS) || !defined(WOLFSSL_NO_TLS12)) && \
     (!defined(NO_RSA) || defined(HAVE_ECC) || defined(HAVE_ED25519) || \
      defined(HAVE_CURVE25519) || defined(HAVE_ED448) || \
-     defined(HAVE_CURVE448) || defined(HAVE_FALCON) || defined(WOLFSSL_HAVE_MLDSA))
+     defined(HAVE_CURVE448) || defined(HAVE_FALCON) || \
+     defined(WOLFSSL_HAVE_MLDSA) || defined(WOLFSSL_HAVE_SLHDSA))
 static int ReuseKey(WOLFSSL* ssl, int type, void* pKey)
 {
     int ret = 0;
@@ -8924,6 +9262,14 @@ static int ReuseKey(WOLFSSL* ssl, int type, void* pKey)
             ret = wc_MlDsaKey_Init((wc_MlDsaKey*)pKey, NULL, INVALID_DEVID);
             break;
     #endif /* WOLFSSL_HAVE_MLDSA */
+    #if defined(WOLFSSL_HAVE_SLHDSA)
+        case DYNAMIC_TYPE_SLHDSA:
+            wc_SlhDsaKey_Free((SlhDsaKey*)pKey);
+            /* Re-init with placeholder param; caller re-inits with real one. */
+            ret = wc_SlhDsaKey_Init((SlhDsaKey*)pKey, WC_SLHDSA_DEFAULT_PARAM, NULL,
+                                    INVALID_DEVID);
+            break;
+    #endif /* WOLFSSL_HAVE_SLHDSA */
     #ifndef NO_DH
         case DYNAMIC_TYPE_DH:
             wc_FreeDhKey((DhKey*)pKey);
@@ -9353,6 +9699,14 @@ void wolfSSL_ResourceFree(WOLFSSL* ssl)
     XFREE(ssl->buffers.tls13CookieSecret.buffer, ssl->heap,
           DYNAMIC_TYPE_COOKIE_PWD);
 #endif
+#ifdef WOLFSSL_TLS13_STREAM_CERT_VERIFY
+    /* Release any in-progress streamed CertificateVerify body (e.g. a
+     * connection torn down mid-send). */
+    XFREE(ssl->buffers.certVerifyMsg.buffer, ssl->heap,
+          DYNAMIC_TYPE_TMP_BUFFER);
+    ssl->buffers.certVerifyMsg.buffer = NULL;
+    ssl->buffers.certVerifyMsg.length = 0;
+#endif
 #ifdef WOLFSSL_DTLS
     FreeSSL_DtlsResources(ssl);
 #endif /* WOLFSSL_DTLS */
@@ -9377,6 +9731,10 @@ void wolfSSL_ResourceFree(WOLFSSL* ssl)
 #if defined(WOLFSSL_HAVE_MLDSA)
     FreeKey(ssl, DYNAMIC_TYPE_MLDSA, (void**)&ssl->peerMlDsaKey);
     ssl->peerMlDsaKeyPresent = 0;
+#endif
+#if defined(WOLFSSL_HAVE_SLHDSA)
+    FreeKey(ssl, DYNAMIC_TYPE_SLHDSA, (void**)&ssl->peerSlhDsaKey);
+    ssl->peerSlhDsaKeyPresent = 0;
 #endif
 #if defined(HAVE_FALCON)
     FreeKey(ssl, DYNAMIC_TYPE_FALCON, (void**)&ssl->peerFalconKey);
@@ -9611,6 +9969,10 @@ void FreeHandshakeResources(WOLFSSL* ssl)
         FreeKey(ssl, DYNAMIC_TYPE_MLDSA, (void**)&ssl->peerMlDsaKey);
         ssl->peerMlDsaKeyPresent = 0;
 #endif /* WOLFSSL_HAVE_MLDSA */
+#if defined(WOLFSSL_HAVE_SLHDSA)
+        FreeKey(ssl, DYNAMIC_TYPE_SLHDSA, (void**)&ssl->peerSlhDsaKey);
+        ssl->peerSlhDsaKeyPresent = 0;
+#endif /* WOLFSSL_HAVE_SLHDSA */
     }
 
 #ifdef HAVE_ECC
@@ -16564,6 +16926,32 @@ static int ProcessPeerCertAddPendingCA(WOLFSSL* ssl, buffer* cert)
     if (ret != 0) {
         goto exit_req_v2;
     }
+    /* Only a certificate that is actually usable as a CA may enter the pending
+     * signer pool. ParseCertRelative() consults that pool ahead of the
+     * certificate manager and uses the signer as a verification key without
+     * further checks, so admission has to enforce the same capabilities AddCA()
+     * requires of a chain CA.
+     *
+     * A non-CA is skipped rather than reported as an error, because
+     * ProcessPeerCerts() only offers a chain cert to AddCA() when isCA is set:
+     * such a certificate is already left out of the certificate manager without
+     * failing the handshake. */
+    if (!dCertAdd->isCA) {
+        WOLFSSL_MSG("Chain cert is not a CA, not adding as pending CA");
+        goto exit_req_v2;
+    }
+#ifndef ALLOW_INVALID_CERTSIGN
+    /* Per RFC 5280 an absent Key Usage extension implies all usages, so only
+     * enforce certificate signing when the extension is actually present.
+     * AddCA() rejects such a certificate outright, so report the same error
+     * here rather than quietly leaving it out of the pool. */
+    if (!dCertAdd->selfSigned && dCertAdd->extKeyUsageSet &&
+            (dCertAdd->extKeyUsage & KEYUSE_KEY_CERT_SIGN) == 0) {
+        WOLFSSL_MSG("Chain cert doesn't have key usage certificate signing");
+        ret = NOT_CA_ERROR;
+        goto exit_req_v2;
+    }
+#endif
     ret = AllocDer(&derBuffer, cert->length, CA_TYPE, ssl->heap);
     if (ret != 0 || derBuffer == NULL) {
         goto exit_req_v2;
@@ -16574,7 +16962,11 @@ static int ProcessPeerCertAddPendingCA(WOLFSSL* ssl, buffer* cert)
         ret = MEMORY_E;
         goto exit_req_v2;
     }
-    ret = FillSigner(s, dCertAdd, CA_TYPE, derBuffer);
+    /* WOLFSSL_CHAIN_CA, not CA_TYPE: TLSX_CSR2_MergePendingCA() promotes this
+     * signer into the certificate manager, and the unload path
+     * (wolfSSL_CertManagerUnloadIntermediateCerts()) selects entries by that
+     * type. AddCA() records chain CAs the same way. */
+    ret = FillSigner(s, dCertAdd, WOLFSSL_CHAIN_CA, derBuffer);
     if (ret != 0) {
         goto exit_req_v2;
     }
@@ -17149,6 +17541,58 @@ static int ProcessPeerCertDecodeKey(WOLFSSL* ssl, ProcPeerCertArgs* args,
             break;
         }
     #endif /* WOLFSSL_HAVE_MLDSA */
+    #if defined(WOLFSSL_HAVE_SLHDSA)
+        case SLH_DSA_SHA2_128Sk:
+        case SLH_DSA_SHA2_128Fk:
+        case SLH_DSA_SHA2_192Sk:
+        case SLH_DSA_SHA2_192Fk:
+        case SLH_DSA_SHA2_256Sk:
+        case SLH_DSA_SHA2_256Fk:
+        case SLH_DSA_SHAKE_128Sk:
+        case SLH_DSA_SHAKE_128Fk:
+        case SLH_DSA_SHAKE_192Sk:
+        case SLH_DSA_SHAKE_192Fk:
+        case SLH_DSA_SHAKE_256Sk:
+        case SLH_DSA_SHAKE_256Fk:
+        {
+            int keyRet = 0;
+            int slhParam = wc_SlhDsaOidToParam(args->dCert->keyOID);
+            if (slhParam < 0) {
+                ret = PEER_KEY_ERROR;
+                break;
+            }
+
+            if (ssl->peerSlhDsaKey == NULL) {
+                /* alloc/init on demand */
+                keyRet = AllocKey(ssl, DYNAMIC_TYPE_SLHDSA,
+                                  (void**)&ssl->peerSlhDsaKey);
+            } else if (ssl->peerSlhDsaKeyPresent) {
+                keyRet = ReuseKey(ssl, DYNAMIC_TYPE_SLHDSA,
+                                  ssl->peerSlhDsaKey);
+                ssl->peerSlhDsaKeyPresent = 0;
+            }
+
+            if (keyRet == 0) {
+                /* AllocKey/ReuseKey used a placeholder parameter
+                 * set; re-init with the certificate's. */
+                wc_SlhDsaKey_Free(ssl->peerSlhDsaKey);
+                keyRet = wc_SlhDsaKey_Init(ssl->peerSlhDsaKey,
+                            (enum SlhDsaParam)slhParam, ssl->heap, ssl->devId);
+            }
+
+            if (keyRet != 0 ||
+                wc_SlhDsaKey_ImportPublic(ssl->peerSlhDsaKey,
+                                          args->dCert->publicKey,
+                                          args->dCert->pubKeySize)
+                != 0) {
+                ret = PEER_KEY_ERROR;
+            }
+            else {
+                ssl->peerSlhDsaKeyPresent = 1;
+            }
+            break;
+        }
+    #endif /* WOLFSSL_HAVE_SLHDSA */
         default:
             break;
     }
@@ -17805,14 +18249,25 @@ int ProcessPeerCerts(WOLFSSL* ssl, byte* input, word32* inOutIdx,
                     }
                 #endif
 #if defined(HAVE_CERTIFICATE_STATUS_REQUEST_V2)
-                    if (ret == 0 && addToPendingCAs && !alreadySigner) {
-                        /* skipAddCA is only consulted later on the ret == 0
-                         * continuation path; on helper failure we goto
-                         * exit_ppc, so setting it up-front is safe. */
+                    if (ret == 0 && addToPendingCAs && !alreadySigner &&
+                            !ssl->options.verifyNone && !skipAddCA) {
+                        /* The verifyNone and skipAddCA conditions mirror the
+                         * guards on the AddCA() call below. A certificate the
+                         * surrounding code has already declined to admit as a
+                         * CA must not enter the pending pool either, and must
+                         * not be failed against CA rules. skipAddCA is set here
+                         * so AddCA() is not also run for a certificate that did
+                         * enter the pool; it is only consulted later on the
+                         * ret == 0 continuation path, so setting it up-front is
+                         * safe. */
                         skipAddCA = 1;
                         ret = ProcessPeerCertAddPendingCA(ssl,
                                 &args->certs[args->certIdx]);
-                        if (ret != 0)
+                        /* A certificate turned away for not being a usable CA
+                         * falls through to the shared error handling below so
+                         * that it fails the handshake the same way a rejection
+                         * from AddCA() does. */
+                        if (ret != 0 && ret != WC_NO_ERR_TRACE(NOT_CA_ERROR))
                             goto exit_ppc;
                     }
 #endif /* HAVE_CERTIFICATE_STATUS_REQUEST_V2 */
@@ -19901,8 +20356,8 @@ static int DoHandShakeMsg(WOLFSSL* ssl, byte* input, word32* inOutIdx,
         }
 
         /* Cap the maximum size of a handshake message to something reasonable.
-         * By default is the maximum size of a certificate message assuming
-         * nine 2048-bit RSA certificates in the chain. */
+         * By default this is the maximum size of a certificate message,
+         * MAX_CERT_MSG_DEPTH certificates of MAX_CERT_WIRE_SZ each. */
         if (size > MAX_HANDSHAKE_SZ) {
             WOLFSSL_MSG("Handshake message too large");
             WOLFSSL_ERROR_VERBOSE(HANDSHAKE_SIZE_ERROR);
@@ -26486,22 +26941,36 @@ int SendFinished(WOLFSSL* ssl)
         (defined(HAVE_CERTIFICATE_STATUS_REQUEST) || \
          defined(HAVE_CERTIFICATE_STATUS_REQUEST_V2))) || \
     (defined(WOLFSSL_TLS13) && defined(HAVE_CERTIFICATE_STATUS_REQUEST))
-/* Parses and decodes the certificate then initializes "request". In the case
- * of !ssl->buffers.weOwnCert, ssl->ctx->certOcspRequest gets set to "request".
+/* Returns the lock that guards the OCSP request cache on the WOLFSSL_CTX.
+ *
+ * The cache is a field of the CTX, so it has to be serialized with a lock whose
+ * scope is the CTX. SSL_CM(ssl) must not be used to reach that lock: with
+ * WOLFSSL_LOCAL_X509_STORE a connection can carry its own cert manager, which
+ * would leave two connections on one CTX taking different locks while doing a
+ * check-then-set on the very same field.
+ *
+ * Returns NULL when the CTX has no cert manager to take a lock from, in which
+ * case the caller skips the cache rather than running unserialized.
+ */
+static wolfSSL_Mutex* GetCtxOcspLock(WOLFSSL* ssl)
+{
+    if (ssl->ctx->cm == NULL || ssl->ctx->cm->ocsp_stapling == NULL)
+        return NULL;
+
+    return &ssl->ctx->cm->ocsp_stapling->ocspLock;
+}
+
+/* Parses and decodes the certificate then initializes "request".
  *
  * Returns 0 on success
  */
 int CreateOcspRequest(WOLFSSL* ssl, OcspRequest* request,
-                             DecodedCert* cert, byte* certData, word32 length,
-                             byte *ctxOwnsRequest)
+                             DecodedCert* cert, byte* certData, word32 length)
 {
     int ret;
 
     if (request != NULL)
         XMEMSET(request, 0, sizeof(OcspRequest));
-
-    if (ctxOwnsRequest!= NULL)
-        *ctxOwnsRequest = 0;
 
     InitDecodedCert(cert, certData, length, ssl->heap);
     /* TODO: Setup async support here */
@@ -26510,20 +26979,6 @@ int CreateOcspRequest(WOLFSSL* ssl, OcspRequest* request,
         WOLFSSL_MSG("ParseCert failed");
     if (ret == 0)
         ret = InitOcspRequest(request, cert, 0, ssl->heap);
-    if (ret == 0) {
-        /* make sure ctx OCSP request is updated */
-        if (!ssl->buffers.weOwnCert && SSL_CM(ssl) != NULL) {
-            wolfSSL_Mutex* ocspLock = &SSL_CM(ssl)->ocsp_stapling->ocspLock;
-            if (wc_LockMutex(ocspLock) == 0) {
-                if (ssl->ctx->certOcspRequest == NULL) {
-                    ssl->ctx->certOcspRequest = request;
-                    if (ctxOwnsRequest!= NULL)
-                        *ctxOwnsRequest = 1;
-                }
-                wc_UnLockMutex(ocspLock);
-            }
-        }
-    }
 
     FreeDecodedCert(cert);
 
@@ -26535,30 +26990,48 @@ int CreateOcspRequest(WOLFSSL* ssl, OcspRequest* request,
  * management for "buffer* response" is up to the caller.
  *
  * Also creates an OcspRequest in the case that ocspRequest is null or that
- * ssl->buffers.weOwnCert is set. In those cases managing ocspRequest free'ing
- * is up to the caller. NOTE: in OcspCreateRequest ssl->ctx->certOcspRequest can
- * be set to point to "ocspRequest" and it then should not be free'd since
- * wolfSSL_CTX_free will take care of it.
+ * ssl->buffers.weOwnCert is set. A newly created request may be cached on the
+ * CTX, which then owns it and frees it in wolfSSL_CTX_free(). "ctxOwnsRequest"
+ * carries that ownership: it tells this function whether the CTX already owns
+ * the request handed in, and on success it reports whether the CTX owns the
+ * request handed back. The caller may only free the request when the flag is
+ * clear. "*ocspRequest" and "*ctxOwnsRequest" are written together on success
+ * and both left untouched on failure, so the flag always describes the request
+ * the caller is actually holding.
+ *
+ * A request published to the CTX becomes shared with every other connection on
+ * it and is read without a lock, so it must be treated as immutable from that
+ * point on. See GetCtxOcspRequest().
  *
  * Returns 0 on success
  */
 int CreateOcspResponse(WOLFSSL* ssl, OcspRequest** ocspRequest,
-                       buffer* response)
+                       buffer* response, byte* ctxOwnsRequest)
 {
     int          ret = 0;
     OcspRequest* request = NULL;
     byte createdRequest  = 0;
-    byte ctxOwnsRequest = 0;
+    byte ctxOwns = 0;
 
-    if (ssl == NULL || ocspRequest == NULL || response == NULL)
+    /* Zero the output before any exit so that a caller freeing response->buffer
+     * without checking the return code never acts on an indeterminate value. */
+    if (response != NULL)
+        XMEMSET(response, 0, sizeof(*response));
+
+    if (ssl == NULL || ocspRequest == NULL || response == NULL ||
+            ctxOwnsRequest == NULL) {
         return BAD_FUNC_ARG;
+    }
 
-    XMEMSET(response, 0, sizeof(*response));
     request = *ocspRequest;
+    ctxOwns = *ctxOwnsRequest;
 
-    /* unable to fetch status. skip. */
-    if (SSL_CM(ssl) == NULL || SSL_CM(ssl)->ocspStaplingEnabled == 0)
-        return 0;
+    /* unable to fetch status. skip. The stapling object is checked here so that
+     * every use of it below needs no further guarding. */
+    if (SSL_CM(ssl) == NULL || SSL_CM(ssl)->ocspStaplingEnabled == 0 ||
+            SSL_CM(ssl)->ocsp_stapling == NULL) {
+        goto exit_cor;
+    }
 
     if (request == NULL || ssl->buffers.weOwnCert) {
         DerBuffer* der = ssl->buffers.certificate;
@@ -26566,19 +27039,50 @@ int CreateOcspResponse(WOLFSSL* ssl, OcspRequest** ocspRequest,
 
         /* unable to fetch status. skip. */
         if (der->buffer == NULL || der->length == 0)
-            return 0;
+            goto exit_cor;
 
         WC_ALLOC_VAR_EX(cert, DecodedCert, 1, ssl->heap, DYNAMIC_TYPE_DCERT,
-            return MEMORY_E);
+            { ret = MEMORY_E; goto exit_cor; });
         request = (OcspRequest*)XMALLOC(sizeof(OcspRequest), ssl->heap,
                                                      DYNAMIC_TYPE_OCSP_REQUEST);
         if (request == NULL)
             ret = MEMORY_E;
 
         createdRequest = 1;
+        ctxOwns = 0;
         if (ret == 0) {
             ret = CreateOcspRequest(ssl, request, cert, der->buffer,
-                      der->length, &ctxOwnsRequest);
+                      der->length);
+        }
+
+        /* Only a request built from a CTX-held certificate may be cached, since
+         * the cache outlives this connection.
+         *
+         * Not being able to cache is not an error. ctxOwns stays 0, so this
+         * connection keeps ownership of the request and frees it as it would
+         * any other one it built; all that is lost is the reuse by later
+         * connections on this CTX. Failing the handshake over a missed
+         * optimization would be the worse outcome. */
+        if (ret == 0 && !ssl->buffers.weOwnCert) {
+            wolfSSL_Mutex* ocspLock = GetCtxOcspLock(ssl);
+
+            /* SSL_CM(ssl) can resolve through ssl->x509_store_pt, so a stapling
+             * object on the CTX manager is not implied by the one checked
+             * above. */
+            if (ocspLock == NULL) {
+                WOLFSSL_MSG("No CTX OCSP lock, not caching the request");
+            }
+            else if (wc_LockMutex(ocspLock) != 0) {
+                WOLFSSL_MSG("Couldn't lock CTX OCSP mutex, not caching the "
+                            "request");
+            }
+            else {
+                if (ssl->ctx->certOcspRequest == NULL) {
+                    ssl->ctx->certOcspRequest = request;
+                    ctxOwns = 1;
+                }
+                wc_UnLockMutex(ocspLock);
+            }
         }
 
         if (ret != 0) {
@@ -26590,9 +27094,8 @@ int CreateOcspResponse(WOLFSSL* ssl, OcspRequest** ocspRequest,
     }
 
     if (ret == 0) {
-        request->ssl = ssl;
         ret = CheckOcspRequest(SSL_CM(ssl)->ocsp_stapling, request, response,
-                               ssl->heap);
+                               ssl);
 
         /* Suppressing soft-fail responder errors. OCSP_CERT_REVOKED is an
          * explicit positive assertion of revocation and must not be ignored.
@@ -26606,13 +27109,21 @@ int CreateOcspResponse(WOLFSSL* ssl, OcspRequest** ocspRequest,
     }
 
     /* free request up if error case found otherwise return it */
-    if (ret != 0 && createdRequest && !ctxOwnsRequest) {
+    if (ret != 0 && createdRequest && !ctxOwns) {
         FreeOcspRequest(request);
         XFREE(request, ssl->heap, DYNAMIC_TYPE_OCSP_REQUEST);
+        request = NULL;
     }
 
-    if (ret == 0)
+exit_cor:
+
+    /* The request and the flag describing it are handed back as a pair, so the
+     * caller never decides ownership against a request it is not holding. On
+     * failure both of the caller's values are left as they were. */
+    if (ret == 0) {
         *ocspRequest = request;
+        *ctxOwnsRequest = ctxOwns;
+    }
 
     return ret;
 }
@@ -27399,6 +27910,42 @@ static int BuildCertificateStatus(WOLFSSL* ssl, byte type, buffer* status,
 
 #if defined(HAVE_CERTIFICATE_STATUS_REQUEST) || \
     defined(HAVE_CERTIFICATE_STATUS_REQUEST_V2)
+/* Reads the OCSP request cached on the CTX. The field is shared by every
+ * connection on that CTX, so it is read once under GetCtxOcspLock() - the same
+ * lock the publishing side in CreateOcspResponse() takes - instead of being
+ * consulted again later. The CTX keeps ownership of what is returned, which
+ * "ctxOwnsRequest" reports to the caller.
+ *
+ * The request handed back is shared with every other connection on the CTX and
+ * is read by all of them without holding a lock, so it must be treated as
+ * immutable: no field of it may be written once it has been published. Adding a
+ * field that the stapling path writes would reintroduce a data race here.
+ *
+ * Returns the cached request, or NULL when there is none.
+ */
+static OcspRequest* GetCtxOcspRequest(WOLFSSL* ssl, byte* ctxOwnsRequest)
+{
+    wolfSSL_Mutex* ocspLock = GetCtxOcspLock(ssl);
+    OcspRequest*   request  = NULL;
+
+    *ctxOwnsRequest = 0;
+
+    if (ocspLock == NULL) {
+        WOLFSSL_MSG("No CTX OCSP lock, skipping the request cache");
+    }
+    else if (wc_LockMutex(ocspLock) != 0) {
+        WOLFSSL_MSG("Couldn't lock CTX OCSP mutex, skipping the request cache");
+    }
+    else {
+        request = ssl->ctx->certOcspRequest;
+        if (request != NULL)
+            *ctxOwnsRequest = 1;
+        wc_UnLockMutex(ocspLock);
+    }
+
+    return request;
+}
+
 static int BuildCertificateStatusWithStatusCB(WOLFSSL* ssl, byte status_type)
 {
     WOLFSSL_OCSP *ocsp;
@@ -27489,14 +28036,16 @@ int SendCertificateStatus(WOLFSSL* ssl)
         /* case WOLFSSL_CSR_OCSP: */
         case WOLFSSL_CSR2_OCSP:
         {
-            OcspRequest* request = ssl->ctx->certOcspRequest;
+            byte ctxOwnsRequest = 0;
+            OcspRequest* request = GetCtxOcspRequest(ssl, &ctxOwnsRequest);
             buffer response;
 
-            ret = CreateOcspResponse(ssl, &request, &response);
+            ret = CreateOcspResponse(ssl, &request, &response,
+                                     &ctxOwnsRequest);
 
             /* if a request was successfully created and not stored in
              * ssl->ctx then free it */
-            if (ret == 0 && request != ssl->ctx->certOcspRequest) {
+            if (ret == 0 && request != NULL && !ctxOwnsRequest) {
                 FreeOcspRequest(request);
                 XFREE(request, ssl->heap, DYNAMIC_TYPE_OCSP_REQUEST);
                 request = NULL;
@@ -27524,22 +28073,27 @@ int SendCertificateStatus(WOLFSSL* ssl)
     #if defined HAVE_CERTIFICATE_STATUS_REQUEST_V2
         case WOLFSSL_CSR2_OCSP_MULTI:
         {
-            OcspRequest* request = ssl->ctx->certOcspRequest;
-            buffer responses[1 + MAX_CHAIN_DEPTH];
+            /* Three requests with three different owners are in play, so they
+             * are kept in separate variables. "ctxOwnsRequest" tracks the leaf
+             * one only. */
             byte ctxOwnsRequest = 0;
+            OcspRequest* leafRequest = GetCtxOcspRequest(ssl, &ctxOwnsRequest);
+            buffer responses[1 + MAX_CHAIN_DEPTH];
             word32 i = 0;
 
             XMEMSET(responses, 0, sizeof(responses));
 
-            ret = CreateOcspResponse(ssl, &request, &responses[0]);
+            ret = CreateOcspResponse(ssl, &leafRequest, &responses[0],
+                                     &ctxOwnsRequest);
 
             /* if a request was successfully created and not stored in
              * ssl->ctx then free it */
-            if (ret == 0 && request != ssl->ctx->certOcspRequest) {
-                FreeOcspRequest(request);
-                XFREE(request, ssl->heap, DYNAMIC_TYPE_OCSP_REQUEST);
-                request = NULL;
+            if (ret == 0 && leafRequest != NULL && !ctxOwnsRequest) {
+                FreeOcspRequest(leafRequest);
+                XFREE(leafRequest, ssl->heap, DYNAMIC_TYPE_OCSP_REQUEST);
+                leafRequest = NULL;
             }
+            /* leafRequest is done; the chain below has its own. */
 
             if (ret == 0 && (!ssl->ctx->chainOcspRequest[0]
                                               || ssl->buffers.weOwnCertChain)) {
@@ -27547,14 +28101,20 @@ int SendCertificateStatus(WOLFSSL* ssl)
                 word32 idx = 0;
                 WC_DECLARE_VAR(cert, DecodedCert, 1, 0);
                 DerBuffer* chain;
+                /* Scratch owned by this block, reused for each chain cert */
+                OcspRequest* chainRequest = NULL;
 
+                /* Allocation failures record the error and fall through to the
+                 * cleanup at the end of the case. Returning here would leak the
+                 * leaf response that CreateOcspResponse() has already built. */
                 WC_ALLOC_VAR_EX(cert, DecodedCert, 1, ssl->heap,
-                    DYNAMIC_TYPE_DCERT, return MEMORY_E);
-                request = (OcspRequest*)XMALLOC(sizeof(OcspRequest), ssl->heap,
-                                                     DYNAMIC_TYPE_OCSP_REQUEST);
-                if (request == NULL) {
-                    WC_FREE_VAR_EX(cert, ssl->heap, DYNAMIC_TYPE_DCERT);
-                    return MEMORY_E;
+                    DYNAMIC_TYPE_DCERT, ret = MEMORY_E);
+                if (ret == 0) {
+                    chainRequest = (OcspRequest*)XMALLOC(sizeof(OcspRequest),
+                                        ssl->heap, DYNAMIC_TYPE_OCSP_REQUEST);
+                    if (chainRequest == NULL) {
+                        ret = MEMORY_E;
+                    }
                 }
 
                 /* use certChain if available, otherwise use certificate */
@@ -27563,7 +28123,7 @@ int SendCertificateStatus(WOLFSSL* ssl)
                     chain = ssl->buffers.certificate;
                 }
 
-                if (chain && chain->buffer) {
+                if (ret == 0 && chain && chain->buffer) {
                     while (ret == 0 && idx + OPAQUE24_LEN < chain->length) {
                         c24to32(chain->buffer + idx, &der.length);
                         idx += OPAQUE24_LEN;
@@ -27577,12 +28137,11 @@ int SendCertificateStatus(WOLFSSL* ssl)
                             ret = MAX_CERT_EXTENSIONS_ERR;
                             break;
                         }
-                        ret = CreateOcspRequest(ssl, request, cert, der.buffer,
-                                                der.length, &ctxOwnsRequest);
+                        ret = CreateOcspRequest(ssl, chainRequest, cert,
+                                                der.buffer, der.length);
                         if (ret == 0) {
-                            request->ssl = ssl;
                             ret = CheckOcspRequest(SSL_CM(ssl)->ocsp_stapling,
-                                        request, &responses[i + 1], ssl->heap);
+                                        chainRequest, &responses[i + 1], ssl);
 
                             /* Suppressing soft-fail responder errors.
                              * OCSP_CERT_REVOKED is an explicit positive
@@ -27598,21 +28157,21 @@ int SendCertificateStatus(WOLFSSL* ssl)
 
 
                             i++;
-                            if (!ctxOwnsRequest)
-                                FreeOcspRequest(request);
+                            FreeOcspRequest(chainRequest);
                         }
                     }
                 }
-                if (!ctxOwnsRequest)
-                    XFREE(request, ssl->heap, DYNAMIC_TYPE_OCSP_REQUEST);
+                XFREE(chainRequest, ssl->heap, DYNAMIC_TYPE_OCSP_REQUEST);
                 WC_FREE_VAR_EX(cert, ssl->heap, DYNAMIC_TYPE_DCERT);
             }
             else {
+                /* These are owned by the CTX and freed in wolfSSL_CTX_free() */
+                OcspRequest* cachedRequest;
+
                 while (ret == 0 && i < MAX_CHAIN_DEPTH &&
-                            NULL != (request = ssl->ctx->chainOcspRequest[i])) {
-                    request->ssl = ssl;
+                      NULL != (cachedRequest = ssl->ctx->chainOcspRequest[i])) {
                     ret = CheckOcspRequest(SSL_CM(ssl)->ocsp_stapling,
-                                           request, &responses[++i], ssl->heap);
+                                           cachedRequest, &responses[++i], ssl);
 
                     /* Suppressing soft-fail responder errors.
                      * OCSP_CERT_REVOKED is an explicit positive assertion of
@@ -27627,17 +28186,18 @@ int SendCertificateStatus(WOLFSSL* ssl)
                 }
             }
 
-            if (responses[0].buffer) {
-                if (ret == 0) {
-                    ret = BuildCertificateStatus(ssl, status_type, responses,
+            if (ret == 0 && responses[0].buffer) {
+                ret = BuildCertificateStatus(ssl, status_type, responses,
                                                                          i + 1);
-                }
+            }
 
-                for (i = 0; i < 1 + MAX_CHAIN_DEPTH; i++) {
-                    if (responses[i].buffer) {
-                        XFREE(responses[i].buffer, ssl->heap,
-                                                     DYNAMIC_TYPE_OCSP_REQUEST);
-                    }
+            /* Not gated on the leaf response: the chain loop can have stored
+             * responses of its own even when the leaf produced none. */
+            for (i = 0; i < 1 + MAX_CHAIN_DEPTH; i++) {
+                if (responses[i].buffer) {
+                    XFREE(responses[i].buffer, ssl->heap,
+                          DYNAMIC_TYPE_OCSP_REQUEST);
+                    responses[i].buffer = NULL;
                 }
             }
 
@@ -30926,6 +31486,9 @@ static int ParseCipherList(Suites* suites,
                 #ifdef WOLFSSL_HAVE_MLDSA
                     haveSig |= SIG_MLDSA;
                 #endif /* WOLFSSL_HAVE_MLDSA */
+                #ifdef WOLFSSL_HAVE_SLHDSA
+                    haveSig |= SIG_SLHDSA;
+                #endif /* WOLFSSL_HAVE_SLHDSA */
                 }
                 else
             #ifdef BUILD_TLS_SM4_GCM_SM3
@@ -31123,7 +31686,8 @@ int SetCipherListFromBytes(WOLFSSL_CTX* ctx, Suites* suites, const byte* list,
     int haveRSAsig       = 0;
     int haveECDSAsig     = 0;
     int haveFalconSig    = 0;
-    int haveMlDsaSig = 0;
+    int haveMlDsaSig     = 0;
+    int haveSlhDsaSig    = 0;
     int haveAnon         = 0;
     int tls1_3           = 0;
 
@@ -31198,6 +31762,9 @@ int SetCipherListFromBytes(WOLFSSL_CTX* ctx, Suites* suites, const byte* list,
         #ifdef WOLFSSL_HAVE_MLDSA
             haveMlDsaSig = 1;
         #endif /* WOLFSSL_HAVE_MLDSA */
+        #ifdef WOLFSSL_HAVE_SLHDSA
+            haveSlhDsaSig = 1;
+        #endif /* WOLFSSL_HAVE_SLHDSA */
         }
         else
     #endif /* WOLFSSL_TLS13 */
@@ -31236,6 +31803,7 @@ int SetCipherListFromBytes(WOLFSSL_CTX* ctx, Suites* suites, const byte* list,
         haveSig |= haveRSAsig ? SIG_RSA : 0;
         haveSig |= haveFalconSig ? SIG_FALCON : 0;
         haveSig |= haveMlDsaSig ? SIG_MLDSA : 0;
+        haveSig |= haveSlhDsaSig ? SIG_SLHDSA : 0;
         haveSig |= haveAnon ? SIG_ANON : 0;
         InitSuitesHashSigAlgo(suites->hashSigAlgo, haveSig, 1, tls1_3,
             keySz, &suites->hashSigAlgoSz);
@@ -31468,8 +32036,24 @@ static word32 MinRsaPssKeySz(int hashAlgo)
 
 static int MatchSigAlgo(WOLFSSL* ssl, int hashAlgo, int sigAlgo)
 {
+#ifdef WOLFSSL_HAVE_SLHDSA
+    int slhParam;
+#endif
+
     (void)hashAlgo;
 
+#ifdef WOLFSSL_HAVE_SLHDSA
+    slhParam = wc_SlhDsaOidToParam((int)ssl->pkCurveOID);
+    if (slhParam >= 0) {
+        /* Certificate has an SLH-DSA key, only match the scheme for that exact
+         * parameter set. SLH-DSA is TLS 1.3 only, so never match below it.
+         * Kept with the other certificate-type checks, above the RSA-PSS and
+         * Brainpool arms that key off ssl->options.sigAlgo. */
+        if (!IsAtLeastTLSv1_3(ssl->version))
+            return 0;
+        return sigAlgo == SlhDsaParamToType(slhParam);
+    }
+#endif /* WOLFSSL_HAVE_SLHDSA */
 #ifdef HAVE_ED25519
     if (ssl->pkCurveOID == ECC_ED25519_OID) {
         /* Certificate has Ed25519 key, only match with Ed25519 sig alg  */
@@ -31742,6 +32326,15 @@ int PickHashSigAlgo(WOLFSSL* ssl, const byte* hashSigAlgo, word32 hashSigAlgoSz,
             break;
         }
     #endif /* WOLFSSL_HAVE_MLDSA */
+    #if defined(WOLFSSL_HAVE_SLHDSA)
+        if (wc_SlhDsaOidToParam((int)ssl->pkCurveOID) >= 0) {
+            /* Matched SLH-DSA - set chosen and finished. */
+            ssl->options.sigAlgo = sigAlgo;
+            ssl->options.hashAlgo = hashAlgo;
+            ret = 0;
+            break;
+        }
+    #endif /* WOLFSSL_HAVE_SLHDSA */
     #if defined(HAVE_ECC_BRAINPOOL)
         if (ssl->pkCurveOID == ECC_BRAINPOOLP256R1_OID ||
             ssl->pkCurveOID == ECC_BRAINPOOLP384R1_OID ||
@@ -32103,13 +32696,16 @@ int PickHashSigAlgo(WOLFSSL* ssl, const byte* hashSigAlgo, word32 hashSigAlgoSz,
  * hsType  Type of the key to create.
  * heap    Custom heap to use for mallocs/frees
  * devId   Id for device.
+ * slhParam  SLH-DSA parameter set for DYNAMIC_TYPE_SLHDSA, whose set cannot
+ *           be derived from an id or label. Pass -1 for other key types.
  * return  0 on success.
+ * return  ALGO_ID_E if slhParam is not a parameter set for an SLH-DSA key.
  * return  NOT_COMPILED_IN if algorithm type not supported.
  * return  MEMORY_E on memory allocation failure.
  * return  other internal error
  */
 int CreateDevPrivateKey(void** pkey, byte* data, word32 length, int hsType,
-                        int label, int id, void* heap, int devId)
+                        int label, int id, void* heap, int devId, int slhParam)
 {
     int ret = WC_NO_ERR_TRACE(NOT_COMPILED_IN);
 
@@ -32208,7 +32804,40 @@ int CreateDevPrivateKey(void** pkey, byte* data, word32 length, int hsType,
         }
 #endif
     }
+    else if (hsType == DYNAMIC_TYPE_SLHDSA) {
+#if defined(WOLFSSL_HAVE_SLHDSA)
+        SlhDsaKey* slhKey;
 
+        /* Unlike the other algorithms, the parameter set cannot be derived
+         * from a device-side identifier, so the caller supplies it. */
+        if (slhParam < 0) {
+            return ALGO_ID_E;
+        }
+
+        slhKey = (SlhDsaKey*)XMALLOC(sizeof(SlhDsaKey), heap,
+                                     DYNAMIC_TYPE_SLHDSA);
+        if (slhKey == NULL) {
+            return MEMORY_E;
+        }
+
+        if (label) {
+            ret = wc_SlhDsaKey_Init_label(slhKey, (enum SlhDsaParam)slhParam,
+                                          (char*)data, heap, devId);
+        }
+        else if (id) {
+            ret = wc_SlhDsaKey_Init_id(slhKey, (enum SlhDsaParam)slhParam,
+                                       data, (int)length, heap, devId);
+        }
+        if (ret == 0) {
+            *pkey = (void*)slhKey;
+        }
+        else {
+            XFREE(slhKey, heap, DYNAMIC_TYPE_SLHDSA);
+        }
+#endif
+    }
+
+    (void)slhParam;
     return ret;
 }
 #endif /* WOLF_PRIVATE_KEY_ID && !NO_CHECK_PRIVATE_KEY */
@@ -32236,6 +32865,9 @@ static int DecodePrivateKey_ex(WOLFSSL *ssl, byte keyType, const DerBuffer* key,
     int      ret = WC_NO_ERR_TRACE(BAD_FUNC_ARG);
     int      keySzDecoded;
     word32   idx;
+#if defined(WOLF_PRIVATE_KEY_ID) && !defined(NO_CHECK_PRIVATE_KEY)
+    int      devSlhParam = -1;
+#endif
 
     /* make sure private key exists */
     if (key == NULL || key->buffer == NULL) {
@@ -32271,12 +32903,24 @@ static int DecodePrivateKey_ex(WOLFSSL *ssl, byte keyType, const DerBuffer* key,
                  (keyType == mldsa_65_sa_algo) ||
                  (keyType == mldsa_87_sa_algo))
             *hsType = DYNAMIC_TYPE_MLDSA;
+#ifdef WOLFSSL_HAVE_SLHDSA
+        else if (IsSlhDsaSigAlgo(keyType)) {
+            *hsType = DYNAMIC_TYPE_SLHDSA;
+            /* The parameter set is not recoverable from a device-side
+             * identifier, so take it from the algorithm the key was loaded
+             * as. */
+            devSlhParam = SlhDsaTypeToParam(keyType);
+            if (devSlhParam < 0) {
+                ERROR_OUT(ALGO_ID_E, exit_dpk);
+            }
+        }
+#endif
 
         /* Create the private key */
         ret = CreateDevPrivateKey(hsKey, key->buffer,
                                   key->length, *hsType,
                                   keyLabelSet, keyIdSet, ssl->heap,
-                                  keyDevId);
+                                  keyDevId, devSlhParam);
         if (ret != 0) {
             goto exit_dpk;
         }
@@ -32354,6 +32998,20 @@ static int DecodePrivateKey_ex(WOLFSSL *ssl, byte keyType, const DerBuffer* key,
                 /* Return the maximum signature length. */
                 *sigLen = wc_MlDsaKey_SigSize((wc_MlDsaKey*)*hsKey);
             }
+    #else
+            ret = NOT_COMPILED_IN;
+    #endif
+        }
+        else if (*hsType == DYNAMIC_TYPE_SLHDSA) {
+    #if defined(WOLFSSL_HAVE_SLHDSA)
+            int slhSigSz = wc_SlhDsaKey_SigSize((SlhDsaKey*)*hsKey);
+
+            /* SLH-DSA has one fixed key size per parameter set, so there is no
+             * minimum-size policy to apply here. */
+            if (slhSigSz <= 0) {
+                ERROR_OUT(ALGO_ID_E, exit_dpk);
+            }
+            *sigLen = (word32)slhSigSz;
     #else
             ret = NOT_COMPILED_IN;
     #endif
@@ -32698,6 +33356,57 @@ static int DecodePrivateKey_ex(WOLFSSL *ssl, byte keyType, const DerBuffer* key,
         }
     }
 #endif /* WOLFSSL_HAVE_MLDSA */
+#if defined(WOLFSSL_HAVE_SLHDSA) && !defined(WOLFSSL_SLHDSA_VERIFY_ONLY)
+    #if !defined(NO_RSA) || defined(HAVE_ECC)
+        FreeKey(ssl, (int)*hsType, hsKey);
+    #endif
+
+    /* Unlike the ML-DSA block above, this matches only a concrete SLH-DSA
+     * algorithm, not keyType == 0. SLH-DSA key load always records the specific
+     * slhdsa_*_sa_algo in ssl->buffers.keyType (ProcessBufferTryDecodeSlhDsa),
+     * so keyType == 0 never denotes an SLH-DSA key here; the unknown-format
+     * (keyType == 0) probe is owned by the ML-DSA block. */
+    if (IsSlhDsaSigAlgo(keyType)) {
+        int slhParam = SlhDsaTypeToParam(keyType);
+
+        *hsType = DYNAMIC_TYPE_SLHDSA;
+        ret = AllocKey(ssl, (int)*hsType, hsKey);
+        if (ret != 0) {
+            goto exit_dpk;
+        }
+
+        /* AllocKey initialised the key with a placeholder parameter set;
+         * re-init with the parameter set matching the loaded key. */
+        wc_SlhDsaKey_Free((SlhDsaKey*)*hsKey);
+        ret = wc_SlhDsaKey_Init((SlhDsaKey*)*hsKey, (enum SlhDsaParam)slhParam,
+                                ssl->heap, ssl->devId);
+        if (ret != 0) {
+            goto exit_dpk;
+        }
+
+        WOLFSSL_MSG("Trying SLH-DSA private key");
+
+        /* Set start of data to beginning of buffer. */
+        idx = 0;
+        PRIVATE_KEY_UNLOCK();
+        ret = wc_SlhDsaKey_PrivateKeyDecode(key->buffer, &idx,
+                                            (SlhDsaKey*)*hsKey, key->length);
+        PRIVATE_KEY_LOCK();
+        if (ret == 0) {
+            int slhSigSz;
+            WOLFSSL_MSG("Using SLH-DSA private key");
+
+            /* Return the maximum signature length. */
+            slhSigSz = wc_SlhDsaKey_SigSize((SlhDsaKey*)*hsKey);
+            if (slhSigSz <= 0) {
+                ERROR_OUT(ALGO_ID_E, exit_dpk);
+            }
+            *sigLen = (word32)slhSigSz;
+
+            goto exit_dpk;
+        }
+    }
+#endif /* WOLFSSL_HAVE_SLHDSA */
 
     (void)idx;
     (void)keySzDecoded;
@@ -36510,7 +37219,12 @@ int SendCertificateVerify(WOLFSSL* ssl)
                 return 0;  /* sent blank cert, can't verify */
             }
 
-            args->sendSz = WC_MAX_CERT_VERIFY_SZ + MAX_MSG_EXTRA;
+            /* TLS 1.2 and earlier only ever produce a classic signature
+             * (RSA/ECC/EdDSA); PQC signatures are TLS 1.3 only and handled by
+             * SendTls13CertificateVerify. Size the record to the classic tier
+             * rather than WC_MAX_CERT_VERIFY_SZ, which balloons to ~50KB when
+             * SLH-DSA is enabled. Matches the ssl->buffers.sig sizing below. */
+            args->sendSz = MAX_ENCODED_CLASSIC_SIG_SZ + MAX_MSG_EXTRA;
             if (IsEncryptionOn(ssl, 1)) {
                 args->sendSz += MAX_MSG_EXTRA;
             }
@@ -36552,6 +37266,18 @@ int SendCertificateVerify(WOLFSSL* ssl)
 
             if (args->length == 0) {
                 ERROR_OUT(NO_PRIVATE_KEY, exit_scv);
+            }
+
+            /* No signature scheme below TLS 1.3 covers a post-quantum key, so
+             * such a key can never sign this message. Reject it here: the
+             * record is sized for a classic signature and the signing switches
+             * below have no PQC case, so continuing would send the reserved
+             * buffer's uninitialized tail. */
+            if (ssl->hsType == DYNAMIC_TYPE_FALCON ||
+                    ssl->hsType == DYNAMIC_TYPE_MLDSA ||
+                    ssl->hsType == DYNAMIC_TYPE_SLHDSA) {
+                WOLFSSL_MSG("PQC private key requires TLS 1.3");
+                ERROR_OUT(SIG_TYPE_E, exit_scv);
             }
 
             /* idx is used to track verify pointer offset to output */
@@ -37327,6 +38053,7 @@ static int DoSessionTicket(WOLFSSL* ssl, const byte* input, word32* inOutIdx,
             case WC_NO_ERR_TRACE(BAD_CERTIFICATE_STATUS_ERROR):
                 return bad_certificate_status_response;
             case WC_NO_ERR_TRACE(OUT_OF_ORDER_E):
+            case WC_NO_ERR_TRACE(DUPLICATE_MSG_E):
                 return unexpected_message;
             default:
                 return invalid_alert;

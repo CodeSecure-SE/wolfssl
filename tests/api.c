@@ -1695,7 +1695,10 @@ static int test_dual_alg_ecdsa_mldsa(void)
                                             alt_pub_sz, 1);
     ExpectIntGT(alt_pub_sz, 0);
 
-    alt_sig_alg_sz = SetAlgoID(CTC_SHA256wECDSA, alt_sig_alg, oidSigType, 0);
+    /* The alternative signature below is made with the ML-DSA key, so the
+     * altSignatureAlgorithm extension has to name ML-DSA too; otherwise the
+     * certificate declares one algorithm and carries another. */
+    alt_sig_alg_sz = SetAlgoID(CTC_ML_DSA_44, alt_sig_alg, oidSigType, 0);
     ExpectIntGT(alt_sig_alg_sz, 0);
 
     /**
@@ -1740,6 +1743,12 @@ static int test_dual_alg_ecdsa_mldsa(void)
     ret = wc_ParseCert(&d_cert, CERT_TYPE, NO_VERIFY, NULL);
     ExpectIntEQ(ret, 0);
 
+    /* An undersized output buffer must never look like success. The encoder
+     * surfaces this as WOLFSSL_FAILURE, which is 0, so callers have to treat
+     * every non-positive return as failure; ParseCertRelative depends on that
+     * to avoid skipping the alternative-signature check entirely. */
+    ExpectIntLE(wc_GeneratePreTBS(&d_cert, tbs_der, 1), 0);
+
     tbs_der_sz = wc_GeneratePreTBS(&d_cert, tbs_der, tbs_der_sz);
     ExpectIntGT(tbs_der_sz, 0);
 
@@ -1766,6 +1775,15 @@ static int test_dual_alg_ecdsa_mldsa(void)
     /* Load the certificate into CertManager. */
     if (cm != NULL && final_der_sz > 0) {
         ret = wolfSSL_CertManagerLoadCABuffer(cm, final_der, final_der_sz,
+                                              WOLFSSL_FILETYPE_ASN1);
+        ExpectIntEQ(ret, WOLFSSL_SUCCESS);
+    }
+
+    /* Verify the certificate so ParseCertRelative runs its alternative
+     * signature check, which builds the PreTBS and confirms the alt signature
+     * against the SAPKI. Without this the alt-verify path is never executed. */
+    if (cm != NULL && final_der_sz > 0) {
+        ret = wolfSSL_CertManagerVerifyBuffer(cm, final_der, final_der_sz,
                                               WOLFSSL_FILETYPE_ASN1);
         ExpectIntEQ(ret, WOLFSSL_SUCCESS);
     }
@@ -3729,7 +3747,9 @@ static int test_wolfSSL_CertRsaPss(void)
     RSA_MAX_SIZE >= 3072
     const char* rsaPssSha384Cert = "./certs/rsapss/ca-3072-rsapss.der";
 #endif
-#if defined(WOLFSSL_SHA384) && RSA_MAX_SIZE >= 3072
+#if defined(WOLFSSL_SHA384) && RSA_MAX_SIZE >= 3072 && \
+    (!defined(WOLFSSL_X509_TINY) || defined(WOLFSSL_X509_TINY_AKI) || \
+     defined(WOLFSSL_PSS_LONG_SALT))
 #ifdef WOLFSSL_PEM_TO_DER
     const char* rsaPssRootSha384Cert = "./certs/rsapss/root-3072-rsapss.pem";
 #else
@@ -3746,7 +3766,8 @@ static int test_wolfSSL_CertRsaPss(void)
     ExpectIntEQ(WOLFSSL_SUCCESS,
         wolfSSL_CertManagerLoadCA(cm, rsaPssRootSha256Cert, NULL));
 #endif
-#if defined(WOLFSSL_SHA384) && RSA_MAX_SIZE >= 3072
+#if defined(WOLFSSL_SHA384) && RSA_MAX_SIZE >= 3072 && \
+    (!defined(WOLFSSL_X509_TINY) || defined(WOLFSSL_X509_TINY_AKI))
     ExpectIntEQ(WOLFSSL_SUCCESS,
         wolfSSL_CertManagerLoadCA(cm, rsaPssRootSha384Cert, NULL));
 #endif
@@ -3765,6 +3786,14 @@ static int test_wolfSSL_CertRsaPss(void)
 
 #if defined(WOLFSSL_SHA384) && defined(WOLFSSL_PSS_LONG_SALT) && \
     RSA_MAX_SIZE >= 3072
+#if defined(WOLFSSL_X509_TINY) && !defined(WOLFSSL_X509_TINY_AKI)
+    /* Without AKI, same-subject roots must be verified independently. */
+    wolfSSL_CertManagerFree(cm);
+    cm = NULL;
+    ExpectNotNull(cm = wolfSSL_CertManagerNew());
+    ExpectIntEQ(WOLFSSL_SUCCESS,
+        wolfSSL_CertManagerLoadCA(cm, rsaPssRootSha384Cert, NULL));
+#endif
     ExpectTrue((f = XFOPEN(rsaPssSha384Cert, "rb")) != XBADFILE);
     ExpectIntGT(bytes = (int)XFREAD(buf, 1, sizeof(buf), f), 0);
     if (f != XBADFILE)
@@ -19699,7 +19728,8 @@ static int test_wolfSSL_sigalg_info(void)
     byte hashSigAlgo[WOLFSSL_MAX_SIGALGO];
     word16 len = 0;
     word16 idx = 0;
-    int allSigAlgs = SIG_ECDSA | SIG_RSA | SIG_SM2 | SIG_FALCON | SIG_MLDSA;
+    int allSigAlgs = SIG_ECDSA | SIG_RSA | SIG_SM2 | SIG_FALCON | SIG_MLDSA |
+                     SIG_SLHDSA;
 #if !defined(NO_SHA) && (!defined(NO_OLD_TLS) || defined(WOLFSSL_ALLOW_TLS_SHA1))
     int sawSha1 = 0;
 #endif
@@ -39102,6 +39132,7 @@ TEST_CASE testCases[] = {
     TEST_DECL(test_TLSX_TCA_Find),
     TEST_DECL(test_TLSX_SNI_GetSize_overflow),
     TEST_DECL(test_TLSX_ECH_msg_type_validation),
+    TEST_DECL(test_TLSX_CSR2_tls13_msg_type_validation),
     TEST_DECL(test_TLSX_SRTP_msg_type_validation),
     TEST_DECL(test_TLSX_ALPN_server_response_count),
     TEST_DECL(test_TLSX_SupportedCurve_empty_or_unsupported),
@@ -39300,6 +39331,7 @@ TEST_CASE testCases[] = {
     TEST_DECL(test_ocsp_cert_unknown_crl_fallback_nonleaf),
     TEST_DECL(test_ocsp_no_url_policy),
     TEST_DECL(test_tls13_nonblock_ocsp_low_mfl),
+    TEST_DECL(test_ocsp_ctx_request_cache),
     TEST_DECL(test_ocsp_responder),
     TEST_DECL(test_wolfIO_DecodeUrl_crlf_reject),
     TEST_TLS_DECLS,

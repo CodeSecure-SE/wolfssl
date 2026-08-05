@@ -1631,6 +1631,10 @@ enum wc_PkType {
     #undef _WC_PK_TYPE_MAX
     #define _WC_PK_TYPE_MAX WC_PK_TYPE_ECIES_DECRYPT
 #endif
+    WC_PK_TYPE_CURVE25519_MAKE_PUB = 40,
+    WC_PK_TYPE_CURVE25519_GENERIC  = 41,
+    #undef _WC_PK_TYPE_MAX
+    #define _WC_PK_TYPE_MAX WC_PK_TYPE_CURVE25519_GENERIC
     WC_PK_TYPE_MAX = _WC_PK_TYPE_MAX
 };
 
@@ -1818,6 +1822,9 @@ WOLFSSL_API word32 CheckRunTimeSettings(void);
     #define WOLFSSL_ALIGN(x) /* null expansion */
 #endif
 
+#ifndef ALIGN4
+    #define ALIGN4   WOLFSSL_ALIGN(4)
+#endif
 #ifndef ALIGN8
     #define ALIGN8   WOLFSSL_ALIGN(8)
 #endif
@@ -1964,6 +1971,19 @@ WOLFSSL_API word32 CheckRunTimeSettings(void);
     } THREAD_TYPE;
     #define WOLFSSL_THREAD
     extern void* wolfsslThreadHeapHint;
+    /* Native Zephyr condition variable (k_condvar) built on a k_mutex; no
+     * POSIX pthread layer required. Only reached when !SINGLE_THREADED, so
+     * wolfSSL_Mutex is k_mutex and <zephyr/kernel.h> is already included.
+     * k_condvar was introduced in Zephyr 2.4, so gate the capability on the
+     * kernel version: an older target builds without condition-variable
+     * support (WOLFSSL_COND undefined), exactly as it did before. */
+    #if KERNEL_VERSION_NUMBER >= 0x20400
+    typedef struct COND_TYPE {
+        wolfSSL_Mutex mutex;
+        struct k_condvar cond;
+    } COND_TYPE;
+    #define WOLFSSL_COND
+    #endif
 #elif defined(NETOS)
     typedef UINT        THREAD_RETURN;
     typedef struct {

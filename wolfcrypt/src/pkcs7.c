@@ -245,15 +245,22 @@ static void wc_PKCS7_ResetStream(wc_PKCS7* pkcs7)
         XFREE(pkcs7->stream->tag, pkcs7->heap, DYNAMIC_TYPE_PKCS7);
         XFREE(pkcs7->stream->nonce, pkcs7->heap, DYNAMIC_TYPE_PKCS7);
         XFREE(pkcs7->stream->buffer, pkcs7->heap, DYNAMIC_TYPE_PKCS7);
+        /* stream->bufferPt holds the AuthEnvelopedData encryptedContent
+         * buffer across WANT_READ re-entries. wc_PKCS7_DecodeAuthEnveloped
+         * Data() only frees it on its own error paths; if the stream is torn
+         * down while a decode is still pending (e.g. wc_PKCS7_Free() called
+         * after a WANT_READ), it must be freed here or it leaks. */
+        XFREE(pkcs7->stream->bufferPt, pkcs7->heap, DYNAMIC_TYPE_PKCS7);
         /* stream->key is always allocated with MAX_ENCRYPTED_KEY_SZ */
         if (pkcs7->stream->key != NULL)
             ForceZero(pkcs7->stream->key, MAX_ENCRYPTED_KEY_SZ);
         XFREE(pkcs7->stream->key, pkcs7->heap, DYNAMIC_TYPE_PKCS7);
-        pkcs7->stream->aad    = NULL;
-        pkcs7->stream->tag    = NULL;
-        pkcs7->stream->nonce  = NULL;
-        pkcs7->stream->buffer = NULL;
-        pkcs7->stream->key    = NULL;
+        pkcs7->stream->aad      = NULL;
+        pkcs7->stream->tag      = NULL;
+        pkcs7->stream->nonce    = NULL;
+        pkcs7->stream->buffer   = NULL;
+        pkcs7->stream->bufferPt = NULL;
+        pkcs7->stream->key      = NULL;
 
         /* reset values, note that content and tmpCert are saved */
         pkcs7->stream->maxLen   = 0;
@@ -1755,9 +1762,8 @@ typedef struct ESD {
                         byte issuerSnSeq[MAX_SEQ_SZ];
                             byte issuerName[MAX_SEQ_SZ];
                             byte issuerSn[MAX_SN_SZ];
-                        /* OR subjectKeyIdentifier */
+                        /* OR subjectKeyIdentifier (implicit [0] header) */
                         byte issuerSKIDSeq[MAX_SEQ_SZ];
-                            byte issuerSKID[MAX_OCTET_STR_SZ];
                         byte signerDigAlgoId[MAX_ALGO_SZ];
 #if defined(WC_RSA_PSS)
                         byte digEncAlgoId[128]; /* RSASSA-PSS needs full params */
@@ -1778,7 +1784,7 @@ typedef struct ESD {
     word32 outerSeqSz, outerContentSz, innerSeqSz, versionSz, digAlgoIdSetSz,
            singleDigAlgoIdSz, certsSetSz;
     word32 signerInfoSetSz, signerInfoSeqSz, signerVersionSz,
-           issuerSnSeqSz, issuerNameSz, issuerSnSz, issuerSKIDSz,
+           issuerSnSeqSz, issuerNameSz, issuerSnSz,
            issuerSKIDSeqSz, signerDigAlgoIdSz, digEncAlgoIdSz, signerDigestSz;
     word32 encContentDigestSz, signedAttribsSz, signedAttribsCount,
            signedAttribSetSz, signedAttribsCap;
@@ -3705,13 +3711,13 @@ static int PKCS7_EncodeSigned(wc_PKCS7* pkcs7,
         }
 
     } else if (pkcs7->sidType == CMS_SKID) {
-        /* SubjectKeyIdentifier */
-        esd->issuerSKIDSz = SetOctetString((word32)keyIdSize, esd->issuerSKID);
-        esd->issuerSKIDSeqSz = SetExplicit(0, esd->issuerSKIDSz +
+        /* SubjectKeyIdentifier is implicit [0] tagged, RFC 5652 uses IMPLICIT
+         * TAGS. The context tag replaces the OCTET STRING tag (0x80 len value)
+         * instead of an explicit [0] wrapper. */
+        esd->issuerSKIDSeqSz = SetImplicit(ASN_OCTET_STRING, 0,
                                            (word32)keyIdSize,
                                            esd->issuerSKIDSeq, 0);
-        signerInfoSz += (esd->issuerSKIDSz + esd->issuerSKIDSeqSz +
-                         (word32)keyIdSize);
+        signerInfoSz += (esd->issuerSKIDSeqSz + (word32)keyIdSize);
 
         /* version MUST be 3 */
         esd->signerVersionSz = (word32)SetMyVersion(3, esd->signerVersion, 0);
@@ -4145,13 +4151,11 @@ static int PKCS7_EncodeSigned(wc_PKCS7* pkcs7,
                 esd->issuerSn, esd->issuerSnSz);
         idx += (int)esd->issuerSnSz;
     } else if (pkcs7->sidType == CMS_SKID) {
-        /* SubjectKeyIdentifier */
+        /* SubjectKeyIdentifier, the implicit [0] header directly precedes the
+         * raw key identifier value (no inner OCTET STRING header). */
         wc_PKCS7_WriteOut(pkcs7, (output2)? (output2 + idx) : NULL,
                 esd->issuerSKIDSeq, esd->issuerSKIDSeqSz);
         idx += (int)esd->issuerSKIDSeqSz;
-        wc_PKCS7_WriteOut(pkcs7, (output2)? (output2 + idx) : NULL,
-                esd->issuerSKID, esd->issuerSKIDSz);
-        idx += (int)esd->issuerSKIDSz;
 
         if (pkcs7->customSKID) {
             wc_PKCS7_WriteOut(pkcs7, (output2)? (output2 + idx) : NULL,
@@ -16424,6 +16428,9 @@ authenv_atrbend:
             ForceZero(encryptedContent, (word32)encryptedContentSz);
             XFREE(encryptedContent, pkcs7->heap, DYNAMIC_TYPE_PKCS7);
             encryptedContent = NULL;
+        #ifndef NO_PKCS7_STREAM
+            pkcs7->stream->bufferPt = NULL;
+        #endif
             ForceZero(decryptedKey, MAX_ENCRYPTED_KEY_SZ);
             XFREE(decryptedKey, pkcs7->heap, DYNAMIC_TYPE_PKCS7);
             decryptedKey = NULL;
