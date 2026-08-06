@@ -2803,19 +2803,29 @@ int ProcessBuffer(WOLFSSL_CTX* ctx, const unsigned char* buff, long sz,
 static int ProcessChainBufferCRL(WOLFSSL_CTX* ctx, const unsigned char* buff,
     long sz, long* consumed)
 {
-    int           ret;
-    DerBuffer*    der = NULL;
-    EncryptedInfo info;
+    int        ret = 0;
+    DerBuffer* der = NULL;
+    WC_DECLARE_VAR(info, EncryptedInfo, 1, 0);
 
     WOLFSSL_MSG("Trying a CRL");
-    ret = PemToDer(buff, sz, CRL_TYPE, &der, NULL, &info, NULL);
+
+    /* A PEM CRL has no Proc-Type header, so the encryption information must
+     * start zeroed or PemToDer() acts on a stale encrypted-key flag. */
+    WC_CALLOC_VAR_EX(info, EncryptedInfo, 1, ctx->heap,
+        DYNAMIC_TYPE_ENCRYPTEDINFO, ret = MEMORY_E);
+
+    if (ret == 0) {
+        ret = PemToDer(buff, sz, CRL_TYPE, &der, NULL, info, NULL);
+    }
     if (ret == 0) {
         WOLFSSL_MSG("   Processed a CRL");
         wolfSSL_CertManagerLoadCRLBuffer(ctx->cm, der->buffer, der->length,
             WOLFSSL_FILETYPE_ASN1);
         FreeDer(&der);
-        *consumed = info.consumed;
+        *consumed = info->consumed;
     }
+
+    WC_FREE_VAR_EX(info, ctx->heap, DYNAMIC_TYPE_ENCRYPTEDINFO);
 
     return ret;
 }
@@ -5471,6 +5481,8 @@ int wolfSSL_add0_chain_cert(WOLFSSL* ssl, WOLFSSL_X509* x509)
         if (ret == 1) {
             /* We now own cert chain. */
             ssl->buffers.weOwnCertChain = 1;
+            /* Account for the certificate just added to the chain. */
+            ssl->buffers.certChainCnt++;
             /* Create a stack to put certificate into. */
             if (ssl->ourCertChain == NULL) {
                 ssl->ourCertChain = wolfSSL_sk_X509_new_null();

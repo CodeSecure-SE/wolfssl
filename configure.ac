@@ -3973,10 +3973,12 @@ ENABLED_ARMASM_INLINE="no"
 ENABLED_ARMASM_SHA256_SMALL="no"
 ENABLED_ARMASM_SHA3="unknown"
 ENABLED_ARMASM_CRYPTO_SM4="no"
+ENABLED_ARMASM_NO_BASE_IMPL="no"
+ENABLED_ARMASM_NO_NEON_IMPL="no"
 # ARM Assembly
 # Both SHA3 and SHA512 instructions available with ARMV8.2-a
 AC_ARG_ENABLE([armasm],
-    [AS_HELP_STRING([--enable-armasm],[Enable wolfSSL ARMv8 ASM support (default: disabled). Set to sha512-crypto or sha3-crypto to use SHA512 and SHA3 instructions with Aarch64 CPU.])],
+    [AS_HELP_STRING([--enable-armasm],[Enable wolfSSL ARMv8 ASM support (default: disabled). Set to sha512-crypto or sha3-crypto to use SHA512 and SHA3 instructions with Aarch64 CPU. On 32-bit ARM, no-base and no-neon-impl drop the base/NEON run-time fallbacks when the crypto extension is always present.])],
     [ ENABLED_ARMASM=$enableval ],
     [ ENABLED_ARMASM=no ]
     )
@@ -4081,13 +4083,33 @@ then
             esac
             ENABLED_ARMASM_AES_BLOCK_INLINE=yes
             ;;
+        no-base)
+            case $host_cpu in
+            *arm*)
+                ;;
+            *)
+                AC_MSG_ERROR([no-base option only available on 32-bit ARM CPU.])
+                break;;
+            esac
+            ENABLED_ARMASM_NO_BASE_IMPL=yes
+            ;;
+        no-neon-impl)
+            case $host_cpu in
+            *arm*)
+                ;;
+            *)
+                AC_MSG_ERROR([no-neon-impl option only available on 32-bit ARM CPU.])
+                break;;
+            esac
+            ENABLED_ARMASM_NO_NEON_IMPL=yes
+            ;;
         *)
             case $host_cpu in
             *aarch64*)
                 AC_MSG_ERROR([Invalid choice of ARM asm inclusions (yes, inline, no-crypto, sha512-crypto, sha3-crypto, no-sha512-crypto, no-sha3-crypto, barrier-sb, barrier-detect): $ENABLED_ARMASM.])
                 break;;
             *arm*)
-                AC_MSG_ERROR([Invalid choice of ARM asm inclusions (yes, inline, no-crypto, sha256-small, aes-block-dup): $ENABLED_ARMASM.])
+                AC_MSG_ERROR([Invalid choice of ARM asm inclusions (yes, inline, no-crypto, sha256-small, aes-block-dup, no-base, no-neon-impl): $ENABLED_ARMASM.])
                 break;;
             esac
             break;;
@@ -4249,6 +4271,17 @@ fi
 if test "$ENABLED_ARMASM_NEON" = "no"; then
     AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_ARMASM_NO_NEON"
     AM_CCASFLAGS="$AM_CCASFLAGS -DWOLFSSL_ARMASM_NO_NEON"
+fi
+# 32-bit ARM run-time dispatch: drop a fallback implementation when the crypto
+# extension is always present.  Gates both the C dispatch and the generated
+# assembly, so define for the C and assembler flags.
+if test "$ENABLED_ARMASM_NO_BASE_IMPL" = "yes"; then
+    AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_ARMASM_NO_BASE_IMPL"
+    AM_CCASFLAGS="$AM_CCASFLAGS -DWOLFSSL_ARMASM_NO_BASE_IMPL"
+fi
+if test "$ENABLED_ARMASM_NO_NEON_IMPL" = "yes"; then
+    AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_ARMASM_NO_NEON_IMPL"
+    AM_CCASFLAGS="$AM_CCASFLAGS -DWOLFSSL_ARMASM_NO_NEON_IMPL"
 fi
 
 if test "$ENABLED_ARMASM_INLINE" = "yes"; then
@@ -11321,7 +11354,29 @@ AC_ARG_ENABLE([cryptocb-sw-test],
     [ ENABLED_CRYPTOCB_SW_TEST=yes ]
     )
 
-if test "x$ENABLED_PKCS11" = "xyes" || test "x$ENABLED_WOLFTPM" = "xyes" || test "$ENABLED_CAAM" != "no" || test "x$ENABLED_RTL8735B" != "xno"
+# WISeKey/SealSQ VaultIC secure element. Parsed here, ahead of the crypto
+# callback aggregation below, so it can promote PK callbacks and crypto
+# callbacks before the checks that depend on them.
+AC_ARG_ENABLE([vaultic],
+    [AS_HELP_STRING([--enable-vaultic],[Enable WISeKey/SealSQ VaultIC secure element support (default: disabled)])],
+    [ ENABLED_VAULTIC=$enableval ],
+    [ ENABLED_VAULTIC=no ]
+    )
+
+if test "$ENABLED_VAULTIC" != "no"
+then
+    AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_VAULTIC"
+    ENABLED_VAULTIC=yes
+    # VaultIC port supports TLS PK callbacks and wolfCrypt crypto callbacks.
+    # CRYPTOCB is promoted through the aggregation below; promote PK callbacks
+    # here.
+    if test "$ENABLED_PKCALLBACKS" = "no"; then
+        ENABLED_PKCALLBACKS=yes
+        AM_CFLAGS="$AM_CFLAGS -DHAVE_PK_CALLBACKS"
+    fi
+fi
+
+if test "x$ENABLED_PKCS11" = "xyes" || test "x$ENABLED_WOLFTPM" = "xyes" || test "$ENABLED_CAAM" != "no" || test "x$ENABLED_RTL8735B" != "xno" || test "x$ENABLED_VAULTIC" = "xyes"
 then
     ENABLED_CRYPTOCB=yes
 fi
@@ -13140,6 +13195,7 @@ AM_CONDITIONAL([BUILD_CAAM],[test "x$ENABLED_CAAM" != "xno"])
 AM_CONDITIONAL([BUILD_QNXCAAM],[test "x$ENABLED_CAAM_QNX" = "xyes"])
 AM_CONDITIONAL([BUILD_IOTSAFE],[test "x$ENABLED_IOTSAFE" = "xyes"])
 AM_CONDITIONAL([BUILD_IOTSAFE_HWRNG],[test "x$ENABLED_IOTSAFE_HWRNG" = "xyes"])
+AM_CONDITIONAL([BUILD_VAULTIC],[test "x$ENABLED_VAULTIC" = "xyes"])
 AM_CONDITIONAL([BUILD_SE050],[test "x$ENABLED_SE050" = "xyes"])
 AM_CONDITIONAL([BUILD_STSAFE],[test "x$ENABLED_STSAFE" != "xno"])
 AM_CONDITIONAL([BUILD_RTL8735B],[test "x$ENABLED_RTL8735B" != "xno"])
@@ -13749,6 +13805,7 @@ echo "   * PK callbacks:               $ENABLED_PKCALLBACKS"
 echo "   * Crypto callbacks:           $ENABLED_CRYPTOCB"
 echo "   * i.MX CAAM:                  $ENABLED_CAAM"
 echo "   * IoT-Safe:                   $ENABLED_IOTSAFE"
+echo "   * WISeKey/SealSQ VaultIC:     $ENABLED_VAULTIC"
 echo "   * IoT-Safe HWRNG:             $ENABLED_IOTSAFE_HWRNG"
 echo "   * NXP SE050:                  $ENABLED_SE050"
 echo "   * STMicro STSAFE:             $ENABLED_STSAFE"

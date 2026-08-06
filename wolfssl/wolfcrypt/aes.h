@@ -41,6 +41,32 @@ block cipher mechanism that uses n-bit binary string parameter key with 128-bits
     #define GCM_TABLE_4BIT
 #endif
 
+/* WOLFSSL_ARM32_AES_HW_FLAGS - whether the Aes object carries the run-time
+ * implementation-selection flags on 32-bit Arm.
+ *
+ * On 32-bit Arm both the base (table) AES and the Armv8 crypto-extension AES
+ * are compiled into one object by default, and the implementation is chosen at
+ * run time through aes->use_aes_hw_crypto - mirroring the AArch64 path.  The
+ * base fallback can be dropped with WOLFSSL_ARMASM_NO_BASE_IMPL (crypto always
+ * present), and WOLFSSL_ARMASM_NO_HW_CRYPTO keeps only the base, both of which
+ * revert to direct calls with no run-time check.  Thumb-2 has base assembly
+ * only - no crypto-extension AES - so it never dispatches either.
+ *
+ * aes.c performs the dispatch under WOLFSSL_ARM32_AES_DISPATCH, deliberately
+ * the same test as here with HAVE_CPUID_ARM32 added: a build with no run-time
+ * detection to dispatch on falls back to the compile-time choice.  The flags
+ * are not conditional on it because HAVE_CPUID_ARM32 depends on __ARM_ARCH,
+ * which comes from -march rather than from options.h, and the layout of a
+ * public structure must not vary with a compiler flag the application is not
+ * obliged to match.  A build with the flags but no run-time detection simply
+ * never reads them. */
+#if defined(WOLFSSL_ARMASM) && !defined(__aarch64__) && \
+    !defined(WOLFSSL_ARMASM_THUMB2) && \
+    !defined(WOLFSSL_ARMASM_NO_HW_CRYPTO) && \
+    !defined(WOLFSSL_ARMASM_NO_BASE_IMPL)
+    #define WOLFSSL_ARM32_AES_HW_FLAGS
+#endif
+
 #if !defined(NO_AES) || defined(WOLFSSL_SM4)
 
 typedef struct Gcm {
@@ -327,14 +353,20 @@ struct Aes {
         #define WC_FLAG_DONT_USE_VECTOR_OPS 2
     #endif
 #endif /* WOLFSSL_AESNI */
-#if defined(__aarch64__) && defined(WOLFSSL_ARMASM) && \
-    !defined(WOLFSSL_ARMASM_NO_HW_CRYPTO)
+/* Run-time implementation-selection flags.  Present when a hardware-crypto and
+ * a fallback implementation are both compiled in and chosen at run time: always
+ * on AArch64, and on 32-bit Arm when WOLFSSL_ARM32_AES_HW_FLAGS says so. */
+#if (defined(WOLFSSL_ARMASM) && !defined(WOLFSSL_ARMASM_NO_HW_CRYPTO) && \
+     defined(__aarch64__)) || defined(WOLFSSL_ARM32_AES_HW_FLAGS)
     byte use_aes_hw_crypto;
 #ifdef HAVE_AESGCM
     byte use_pmull_hw_crypto;
+#ifdef __aarch64__
     byte use_sha3_hw_crypto;
 #endif
-#endif /* __aarch64__ && WOLFSSL_ARMASM && !WOLFSSL_ARMASM_NO_HW_CRYPTO */
+#endif
+#endif /* (WOLFSSL_ARMASM && !WOLFSSL_ARMASM_NO_HW_CRYPTO && __aarch64__) ||
+        * WOLFSSL_ARM32_AES_HW_FLAGS */
 #if defined(WOLF_CRYPTO_CB)
     int    devId;
     void*  devCtx;  /* Opaque handle for CryptoCB device */
@@ -933,7 +965,11 @@ WOLFSSL_API int wc_AesCtsDecryptFinal(Aes* aes, byte* out, word32* outSz);
 #endif
 
 #if defined(WOLFSSL_ARMASM)
-#if defined(__aarch64__) || defined(WOLFSSL_ARMASM_NO_HW_CRYPTO)
+/* Base (table) AES is available on AArch64, in a no-crypto build, and in a
+ * 32-bit crypto build that keeps the base fallback for run-time selection
+ * (i.e. unless WOLFSSL_ARMASM_NO_BASE_IMPL drops it). */
+#if defined(__aarch64__) || defined(WOLFSSL_ARMASM_NO_HW_CRYPTO) || \
+    !defined(WOLFSSL_ARMASM_NO_BASE_IMPL)
 WOLFSSL_LOCAL void AES_set_encrypt_key(const unsigned char* key, word32 len,
     unsigned char* ks);
 WOLFSSL_LOCAL void AES_invert_key(unsigned char* ks, word32 rounds);
@@ -962,7 +998,8 @@ WOLFSSL_LOCAL void AES_XTS_encrypt(const byte* in, byte* out, word32 sz,
 WOLFSSL_LOCAL void AES_XTS_decrypt(const byte* in, byte* out, word32 sz,
     const byte* i, byte* key, byte* key2, byte* tmp, int nr);
 #endif
-#endif /* __aarch64__ || WOLFSSL_ARMASM_NO_HW_CRYPTO */
+#endif /* __aarch64__ || WOLFSSL_ARMASM_NO_HW_CRYPTO ||
+        * !WOLFSSL_ARMASM_NO_BASE_IMPL */
 
 #if defined(__aarch64__) && !defined(WOLFSSL_ARMASM_NO_NEON)
 WOLFSSL_LOCAL void AES_set_encrypt_key_NEON(const unsigned char* key,
