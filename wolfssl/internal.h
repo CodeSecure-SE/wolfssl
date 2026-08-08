@@ -221,6 +221,17 @@
     extern "C" {
 #endif
 
+/* ML-KEM client support requires generating a key pair (encapsulation key) and
+ * decapsulating the server's ciphertext. */
+#if defined(WOLFSSL_HAVE_MLKEM) && !defined(WOLFSSL_MLKEM_NO_MAKE_KEY) && \
+     !defined(WOLFSSL_MLKEM_NO_DECAPSULATE)
+    #define WOLFSSL_HAVE_MLKEM_CLIENT_SUPPORT
+#endif
+/* ML-KEM server support requires encapsulating to the client's key. */
+#if defined(WOLFSSL_HAVE_MLKEM) && !defined(WOLFSSL_MLKEM_NO_ENCAPSULATE)
+    #define WOLFSSL_HAVE_MLKEM_SERVER_SUPPORT
+#endif
+
 /* Define or comment out the cipher suites you'd like to be compiled in
    make sure to use at least one BUILD_SSL_xxx or BUILD_TLS_xxx is defined
 
@@ -854,7 +865,10 @@
 #if !defined(WOLFCRYPT_ONLY) && defined(NO_PSK) && \
     (defined(NO_DH) || !defined(HAVE_ANON)) && \
     defined(NO_RSA) && !defined(HAVE_ECC) && \
-    !defined(HAVE_ED25519) && !defined(HAVE_ED448)
+    !defined(HAVE_ED25519) && !defined(HAVE_ED448) && \
+    (!defined(WOLFSSL_TLS13) || \
+     (!defined(HAVE_FALCON) && !defined(WOLFSSL_HAVE_MLDSA) && \
+      !defined(WOLFSSL_HAVE_SLHDSA)))
    #error "No cipher suites available with this build"
 #endif
 
@@ -6279,6 +6293,11 @@ typedef struct Dtls13Epoch {
 #define DTLS13_EPOCH_SIZE 4
 #endif
 
+/* our epoch, peer epoch, peer epoch - 1 and a free slot for a new epoch */
+#if DTLS13_EPOCH_SIZE < 4
+#error "DTLS13_EPOCH_SIZE must be at least 4"
+#endif
+
 #ifndef DTLS13_RETRANS_RN_SIZE
 #define DTLS13_RETRANS_RN_SIZE 3
 #endif
@@ -7694,6 +7713,7 @@ WOLFSSL_LOCAL void DtlsSetSeqNumForReply(WOLFSSL* ssl);
 #ifdef WOLFSSL_DTLS13
     #ifdef WOLFSSL_API_PREFIX_MAP
         #define Dtls13GetEpoch wolfSSL_Dtls13GetEpoch
+        #define Dtls13NewEpoch wolfSSL_Dtls13NewEpoch
         #define Dtls13CheckEpoch wolfSSL_Dtls13CheckEpoch
         #define Dtls13HandshakeRecv wolfSSL_Dtls13HandshakeRecv
         #define Dtls13WriteAckMessage wolfSSL_Dtls13WriteAckMessage
@@ -7705,7 +7725,7 @@ WOLFSSL_TEST_VIS struct Dtls13Epoch* Dtls13GetEpoch(WOLFSSL* ssl,
     w64wrapper epochNumber);
 WOLFSSL_LOCAL void Dtls13SetOlderEpochSide(WOLFSSL* ssl, w64wrapper epochNumber,
     int side);
-WOLFSSL_LOCAL int Dtls13NewEpoch(WOLFSSL* ssl, w64wrapper epochNumber,
+WOLFSSL_TEST_VIS int Dtls13NewEpoch(WOLFSSL* ssl, w64wrapper epochNumber,
     int side);
 WOLFSSL_LOCAL int Dtls13SetEpochKeys(WOLFSSL* ssl, w64wrapper epochNumber,
     enum encrypt_side side);

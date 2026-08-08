@@ -9243,7 +9243,8 @@ int AllocKey(WOLFSSL* ssl, int type, void** pKey)
     (!defined(NO_RSA) || defined(HAVE_ECC) || defined(HAVE_ED25519) || \
      defined(HAVE_CURVE25519) || defined(HAVE_ED448) || \
      defined(HAVE_CURVE448) || defined(HAVE_FALCON) || \
-     defined(WOLFSSL_HAVE_MLDSA) || defined(WOLFSSL_HAVE_SLHDSA))
+     (defined(WOLFSSL_HAVE_MLDSA) && !defined(WOLFSSL_MLDSA_NO_VERIFY)) || \
+     defined(WOLFSSL_HAVE_SLHDSA))
 static int ReuseKey(WOLFSSL* ssl, int type, void* pKey)
 {
     int ret = 0;
@@ -9737,6 +9738,17 @@ void wolfSSL_ResourceFree(WOLFSSL* ssl)
     }
     XFREE(ssl->buffers.tls13CookieSecret.buffer, ssl->heap,
           DYNAMIC_TYPE_COOKIE_PWD);
+#endif
+#if !defined(NO_CERTS) && defined(WOLFSSL_TLS13) && \
+    defined(HAVE_CERTIFICATE_STATUS_REQUEST) && !defined(NO_WOLFSSL_SERVER)
+    {
+        /* Release the certificate status extensions of a Certificate message
+         * that was never sent in full. */
+        int extIdx;
+
+        for (extIdx = 0; extIdx < MAX_CERT_EXTENSIONS; extIdx++)
+            FreeDer(&ssl->buffers.certExts[extIdx]);
+    }
 #endif
 #ifdef WOLFSSL_TLS13_STREAM_CERT_VERIFY
     /* Release any in-progress streamed CertificateVerify body (e.g. a
@@ -12916,9 +12928,6 @@ static int GetDtls13RecordHeader(WOLFSSL* ssl, word32* inOutIdx,
     if (w64IsZero(epochNumber))
         return SEQUENCE_ERROR;
 
-    if (ssl->dtls13DecryptEpoch == NULL)
-        return BAD_STATE_E;
-
 #ifdef WOLFSSL_EARLY_DATA
     if (w64Equal(epochNumber, w64From32(0x0, DTLS13_EPOCH_EARLYDATA)) &&
             ssl->options.handShakeDone) {
@@ -12927,7 +12936,8 @@ static int GetDtls13RecordHeader(WOLFSSL* ssl, word32* inOutIdx,
     }
 #endif /* WOLFSSL_DTLS13 */
 
-    if (!w64Equal(ssl->dtls13DecryptEpoch->epochNumber, epochNumber)) {
+    if (ssl->dtls13DecryptEpoch == NULL ||
+        !w64Equal(ssl->dtls13DecryptEpoch->epochNumber, epochNumber)) {
         ret = Dtls13SetEpochKeys(ssl, epochNumber, DECRYPT_SIDE_ONLY);
         if (ret != 0)
             return SEQUENCE_ERROR;
@@ -13075,8 +13085,18 @@ static int GetDtlsRecordHeader(WOLFSSL* ssl, word32* inOutIdx,
             return SEQUENCE_ERROR;
 
         w64Zero(&ssl->keys.curEpoch64);
-        if (!w64IsZero(ssl->dtls13DecryptEpoch->epochNumber))
-            Dtls13SetEpochKeys(ssl, ssl->keys.curEpoch64, DECRYPT_SIDE_ONLY);
+
+        /* no plaintext messages after the handshake is done */
+        if (ssl->options.handShakeDone)
+            return SEQUENCE_ERROR;
+
+        if (ssl->dtls13DecryptEpoch == NULL ||
+                !w64IsZero(ssl->dtls13DecryptEpoch->epochNumber)) {
+            ret = Dtls13SetEpochKeys(ssl, ssl->keys.curEpoch64,
+                DECRYPT_SIDE_ONLY);
+            if (ret != 0)
+                return SEQUENCE_ERROR;
+        }
     }
 #endif /* WOLFSSL_DTLS13 */
 
@@ -15403,9 +15423,12 @@ int CopyDecodedToX509(WOLFSSL_X509* x509, DecodedCert* dCert)
             ret = MEMORY_E;
     }
 #endif
-#if defined(HAVE_ECC) || defined(HAVE_ED25519) || defined(HAVE_ED448)
+#if defined(HAVE_ECC) || defined(HAVE_ED25519) || defined(HAVE_ED448) || \
+    defined(HAVE_FALCON) || defined(WOLFSSL_HAVE_MLDSA) || \
+    defined(WOLFSSL_HAVE_SLHDSA)
     x509->pkCurveOID = dCert->pkCurveOID;
-#endif /* HAVE_ECC || HAVE_CURVE25519 || HAVE_CURVE448 */
+#endif /* HAVE_ECC || HAVE_ED25519 || HAVE_ED448 || HAVE_FALCON ||
+        * WOLFSSL_HAVE_MLDSA || WOLFSSL_HAVE_SLHDSA */
 
 #ifdef WOLFSSL_DUAL_ALG_CERTS
     copyRet = CopyDecodedDualAlg(x509, dCert);
@@ -17171,6 +17194,10 @@ static int ProcessPeerCertDecodeKey(WOLFSSL* ssl, ProcPeerCertArgs* args,
                                     int* pRet)
 {
     int ret = *pRet;
+
+    /* Every case below sits under an algorithm guard, so a build with no
+     * peer-verifiable key type leaves this unused. */
+    (void)ssl;
 
     switch (args->dCert->keyOID) {
     #ifndef NO_RSA
@@ -20523,8 +20550,11 @@ int SendFatalAlertOnly(WOLFSSL *ssl, int error)
     case WC_NO_ERR_TRACE(ECC_OUT_OF_RANGE_E):
         why = bad_record_mac;
         break;
-    case WC_NO_ERR_TRACE(MATCH_SUITE_ERROR):
     case WC_NO_ERR_TRACE(VERSION_ERROR):
+        why = wolfssl_alert_protocol_version;
+        break;
+    /* listed for symmetry with TranslateErrorToAlert(); default covers it */
+    case WC_NO_ERR_TRACE(MATCH_SUITE_ERROR):
     default:
         why = handshake_failure;
         break;
@@ -29383,6 +29413,9 @@ static const char* wolfSSL_ERR_reason_error_string_OpenSSL(unsigned long e)
     /* TODO: -WOLFSSL_X509_V_ERR_CERT_SIGNATURE_FAILURE. Conflicts with
      *       -WOLFSSL_ERROR_WANT_CONNECT.
      */
+    case WOLFSSL_X509_V_ERR_UNSPECIFIED:
+        return "unspecified certificate verification error";
+
     case WOLFSSL_X509_V_ERR_CRL_HAS_EXPIRED:
         return "CRL has expired";
 
@@ -32937,6 +32970,9 @@ static int DecodePrivateKey_ex(WOLFSSL *ssl, byte keyType, const DerBuffer* key,
 #if defined(WOLF_PRIVATE_KEY_ID) && !defined(NO_CHECK_PRIVATE_KEY)
     int      devSlhParam = -1;
 #endif
+
+    /* Every reader below sits under an algorithm guard. */
+    (void)ssl;
 
     /* make sure private key exists */
     if (key == NULL || key->buffer == NULL) {
@@ -38108,9 +38144,12 @@ static int DoSessionTicket(WOLFSSL* ssl, const byte* input, word32* inOutIdx,
             case WC_NO_ERR_TRACE(PSK_KEY_ERROR):
             case WC_NO_ERR_TRACE(INVALID_PARAMETER):
             case WC_NO_ERR_TRACE(HRR_COOKIE_ERROR):
-            case WC_NO_ERR_TRACE(BAD_BINDER):
             case WC_NO_ERR_TRACE(DUPLICATE_TLS_EXT_E):
                 return illegal_parameter;
+            /* RFC 8446 Section 6.2. The no-PSK-match path reuses BAD_BINDER
+             * for identity protection, so both share this alert. */
+            case WC_NO_ERR_TRACE(BAD_BINDER):
+                return decrypt_error;
             case WC_NO_ERR_TRACE(INCOMPLETE_DATA):
                 return missing_extension;
             case WC_NO_ERR_TRACE(MATCH_SUITE_ERROR):
@@ -40681,6 +40720,7 @@ static int AddPSKtoPreMasterSecret(WOLFSSL* ssl)
         int             ret = 0;
         byte            lesserVersion;
         byte            maxMinor;
+        byte            preMaskMinor;
 
         WOLFSSL_START(WC_FUNC_CLIENT_HELLO_DO);
         WOLFSSL_ENTER("DoClientHello");
@@ -40762,9 +40802,19 @@ static int AddPSKtoPreMasterSecret(WOLFSSL* ssl)
             word16 havePSK = 0;
             int    keySz   = 0;
 
+            /* RFC 5246 7.2.2 and RFC 8446 6.2: a version that cannot be
+             * negotiated must be refused with a fatal protocol_version alert.
+             * SendFatalAlertOnly() in ProcessReply is compiled out unless
+             * WOLFSSL_EXTRA_ALERTS is defined, so alert here. */
             if (!ssl->options.downgrade) {
                 WOLFSSL_MSG("Client trying to connect with lesser version");
                 ret = VERSION_ERROR;
+                /* propagate socket errors to avoid re-calling send alert */
+                if (SendAlert(ssl, alert_fatal,
+                        wolfssl_alert_protocol_version)
+                        == WC_NO_ERR_TRACE(SOCKET_ERROR_E)) {
+                    ret = SOCKET_ERROR_E;
+                }
                 goto out;
             }
 
@@ -40778,6 +40828,12 @@ static int AddPSKtoPreMasterSecret(WOLFSSL* ssl)
             if (belowMinDowngrade) {
                 WOLFSSL_MSG("\tversion below minimum allowed, fatal error");
                 ret = VERSION_ERROR;
+                /* propagate socket errors to avoid re-calling send alert */
+                if (SendAlert(ssl, alert_fatal,
+                        wolfssl_alert_protocol_version)
+                        == WC_NO_ERR_TRACE(SOCKET_ERROR_E)) {
+                    ret = SOCKET_ERROR_E;
+                }
                 goto out;
             }
 
@@ -40835,6 +40891,13 @@ static int AddPSKtoPreMasterSecret(WOLFSSL* ssl)
                        TRUE, TRUE, TRUE, TRUE, ssl->options.side);
         }
 
+        /* Version the record layer is on before the mask walk below steps it
+         * down. It is one the client offered (or the server's own maximum
+         * when the client offered more), so the two alert exits inside that
+         * block restore it rather than alerting with the masked-off version
+         * the walk stopped at, which the peer may reject outright. */
+        preMaskMinor = ssl->version.minor;
+
         /* check if option is set to not allow the current version
          * set from either wolfSSL_set_options or wolfSSL_CTX_set_options */
         if (!ssl->options.dtls && ssl->options.downgrade &&
@@ -40874,15 +40937,28 @@ static int AddPSKtoPreMasterSecret(WOLFSSL* ssl)
                 WOLFSSL_OP_NO_SSLv3) {
                 WOLFSSL_MSG("\tError, option set to not allow SSLv3");
                 ret = VERSION_ERROR;
-#ifdef WOLFSSL_EXTRA_ALERTS
-                SendAlert(ssl, alert_fatal, wolfssl_alert_protocol_version);
-#endif
+                /* alert with a version the client will accept */
+                ssl->version.minor = preMaskMinor;
+                /* propagate socket errors to avoid re-calling send alert */
+                if (SendAlert(ssl, alert_fatal,
+                        wolfssl_alert_protocol_version)
+                        == WC_NO_ERR_TRACE(SOCKET_ERROR_E)) {
+                    ret = SOCKET_ERROR_E;
+                }
                 goto out;
             }
 
             if (ssl->version.minor < ssl->options.minDowngrade) {
                 WOLFSSL_MSG("\tversion below minimum allowed, fatal error");
                 ret = VERSION_ERROR;
+                /* alert with a version the client will accept */
+                ssl->version.minor = preMaskMinor;
+                /* propagate socket errors to avoid re-calling send alert */
+                if (SendAlert(ssl, alert_fatal,
+                        wolfssl_alert_protocol_version)
+                        == WC_NO_ERR_TRACE(SOCKET_ERROR_E)) {
+                    ret = SOCKET_ERROR_E;
+                }
                 goto out;
             }
 
@@ -42862,7 +42938,13 @@ static int AddPSKtoPreMasterSecret(WOLFSSL* ssl)
             const byte* id, psk_sess_free_cb_ctx* freeCtx)
     {
         const WOLFSSL_SESSION* sess = NULL;
+#ifndef NO_SESSION_CACHE
         int ret;
+#endif
+
+        (void)ssl;
+        (void)id;
+
         XMEMSET(freeCtx, 0, sizeof(*freeCtx));
 #ifdef HAVE_EXT_CACHE
         if (ssl->ctx->get_sess_cb != NULL) {
@@ -42877,12 +42959,14 @@ static int AddPSKtoPreMasterSecret(WOLFSSL* ssl)
             }
         }
 #endif
+#ifndef NO_SESSION_CACHE
         if (sess == NULL) {
             ret = TlsSessionCacheGetAndRdLock(id, &sess, &freeCtx->row,
                     (byte)ssl->options.side);
             if (ret != 0)
                 sess = NULL;
         }
+#endif /* !NO_SESSION_CACHE */
         return sess;
     }
 
@@ -42891,16 +42975,19 @@ static int AddPSKtoPreMasterSecret(WOLFSSL* ssl)
     {
         (void)ssl;
         (void)sess;
+        (void)freeCtx;
 #ifdef HAVE_EXT_CACHE
         if (freeCtx->extCache) {
             if (freeCtx->freeSess)
                 /* In this case sess is not longer const and the external cache
                  * wants us to free it. */
                 wolfSSL_FreeSession(ssl->ctx, (WOLFSSL_SESSION*)sess);
+            return;
         }
-        else
 #endif
-            TlsSessionCacheUnlockRow(freeCtx->row);
+#ifndef NO_SESSION_CACHE
+        TlsSessionCacheUnlockRow(freeCtx->row);
+#endif /* !NO_SESSION_CACHE */
     }
 
     /* Parse ticket sent by client, returns callback return value. Doesn't
