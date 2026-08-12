@@ -10156,6 +10156,14 @@ int wc_ecc_import_point_der_ex(const byte* in, word32 inLen,
         return ECC_BAD_ARG_E;
     }
 
+    /* validate point format byte before any memory operations */
+    pointType = in[0];
+    if (pointType != ECC_POINT_UNCOMP &&
+            pointType != ECC_POINT_COMP_EVEN &&
+            pointType != ECC_POINT_COMP_ODD) {
+        return ASN_PARSE_E;
+    }
+
     /* clear if previously allocated */
     mp_clear(point->x);
     mp_clear(point->y);
@@ -10176,13 +10184,7 @@ int wc_ecc_import_point_der_ex(const byte* in, word32 inLen,
         return MEMORY_E;
 #endif
 
-    /* check for point type (4, 2, or 3) */
-    pointType = in[0];
-    if (pointType != ECC_POINT_UNCOMP && pointType != ECC_POINT_COMP_EVEN &&
-                                         pointType != ECC_POINT_COMP_ODD) {
-        err = ASN_PARSE_E;
-    }
-
+    /* pointType already validated above; check for compressed format */
     if (pointType == ECC_POINT_COMP_EVEN || pointType == ECC_POINT_COMP_ODD) {
 #ifdef HAVE_COMP_KEY
         compressed = 1;
@@ -16902,7 +16904,12 @@ int wc_ecc_oid_cache_init(void)
 {
     int ret = 0;
 #if !defined(SINGLE_THREADED) && !defined(WOLFSSL_MUTEX_INITIALIZER)
-    ret = wc_InitMutex(&ecc_oid_cache_lock);
+    if (eccOidLockInit == 0) {
+        ret = wc_InitMutex(&ecc_oid_cache_lock);
+        if (ret == 0) {
+            eccOidLockInit = 1;
+        }
+    }
 #endif
     return ret;
 }
@@ -16911,6 +16918,7 @@ void wc_ecc_oid_cache_free(void)
 {
 #if !defined(SINGLE_THREADED) && !defined(WOLFSSL_MUTEX_INITIALIZER)
     wc_FreeMutex(&ecc_oid_cache_lock);
+    eccOidLockInit = 0;
 #endif
 }
 #endif /* HAVE_OID_ENCODING */
@@ -16931,7 +16939,10 @@ int wc_ecc_get_oid(word32 oidSum, const byte** oid, word32* oidSz)
     #ifndef WOLFSSL_MUTEX_INITIALIZER
         /* extra sanity check if wolfCrypt_Init not called */
         if (eccOidLockInit == 0) {
-            wc_InitMutex(&ecc_oid_cache_lock);
+            ret = wc_InitMutex(&ecc_oid_cache_lock);
+            if (ret != 0) {
+                return BAD_MUTEX_E;
+            }
             eccOidLockInit = 1;
         }
     #endif
