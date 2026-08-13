@@ -1115,12 +1115,11 @@ WOLFSSL_X509_EXTENSION* wolfSSL_X509_set_ext(WOLFSSL_X509* x509, int loc)
             (ext->obj->obj == NULL)) {
             byte* tmp;
         #ifdef WOLFSSL_NO_REALLOC
+            /* Don't carry the old OID over: objSz is the mapped NID's
+             * canonical length, which can exceed the certificate's OID. The
+             * buffer is rewritten from oidBuf below. */
             tmp = (byte*)XMALLOC(objSz, NULL, DYNAMIC_TYPE_ASN1);
-            if (tmp != NULL && ext->obj->obj != NULL) {
-                XMEMCPY(tmp, ext->obj->obj, ext->obj->objSz);
-                XFREE((byte*)ext->obj->obj, NULL, DYNAMIC_TYPE_ASN1);
-            }
-            else if (tmp == NULL) {
+            if (ext->obj->obj != NULL) {
                 XFREE((byte*)ext->obj->obj, NULL, DYNAMIC_TYPE_ASN1);
             }
             ext->obj->obj = tmp;
@@ -6181,25 +6180,19 @@ static WOLFSSL_X509* loadX509orX509REQFromBuffer(
     /* ready to be decoded. */
     if (der != NULL && der->buffer != NULL) {
         WC_DECLARE_VAR(cert, DecodedCert, 1, 0);
-        /* For TRUSTED_CERT_TYPE, the DER buffer contains the certificate
-         * followed by auxiliary trust info. ParseCertRelative expects CERT_TYPE
-         * and will parse only the certificate portion, ignoring the rest. */
-        int parseType = (type == TRUSTED_CERT_TYPE) ? CERT_TYPE : type;
 
         WC_ALLOC_VAR_EX(cert, DecodedCert, 1, NULL, DYNAMIC_TYPE_DCERT,
             ret=MEMORY_ERROR);
         if (WC_VAR_OK(cert))
         {
             InitDecodedCert(cert, der->buffer, der->length, NULL);
-            ret = ParseCertRelative(cert, parseType, 0, NULL, NULL);
+            /* For TRUSTED_CERT_TYPE the DER buffer holds the certificate
+             * followed by auxiliary trust info. ParseCertRelative() recognizes
+             * the type: it parses only the certificate, permits the trailing
+             * aux data, and treats it as CERT_TYPE for verification.
+             * CopyDecodedToX509() bounds the stored DER to the certificate. */
+            ret = ParseCertRelative(cert, type, 0, NULL, NULL);
             if (ret == 0) {
-                /* For TRUSTED_CERT_TYPE, truncate the DER buffer to exclude
-                 * auxiliary trust data. ParseCertRelative sets srcIdx to the
-                 * end of the certificate, so we adjust cert->maxIdx accordingly. */
-                if (type == TRUSTED_CERT_TYPE && cert->srcIdx < cert->maxIdx) {
-                    cert->maxIdx = cert->srcIdx;
-                }
-
                 x509 = (WOLFSSL_X509*)XMALLOC(sizeof(WOLFSSL_X509), NULL,
                                                              DYNAMIC_TYPE_X509);
                 if (x509 != NULL) {
