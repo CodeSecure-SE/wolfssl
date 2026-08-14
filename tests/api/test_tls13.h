@@ -26,6 +26,7 @@
 
 int test_tls13_apis(void);
 int test_tls13_cipher_suites(void);
+int test_tls13_cipher_list_no_tls13_ctx(void);
 int test_tls13_bad_psk_binder(void);
 int test_tls13_rpk_handshake(void);
 int test_tls13_rpk_handshake_no_negotiation(void);
@@ -55,6 +56,7 @@ int test_tls13_pqc_hybrid_truncated_keyshare(void);
 int test_tls13_pqc_hybrid_malformed_ecdh(void);
 int test_tls13_empty_record_limit(void);
 int test_tls13_short_session_ticket(void);
+int test_tls13_zero_length_session_ticket(void);
 int test_tls13_new_session_ticket_max_lifetime(void);
 int test_tls13_fragmented_session_ticket(void);
 int test_tls13_early_data_0rtt_replay(void);
@@ -111,6 +113,7 @@ int test_tls13_pha_status_request(void);
 #define TEST_TLS13_DECLS                                        \
     TEST_DECL_GROUP("tls13", test_tls13_apis),                  \
     TEST_DECL_GROUP("tls13", test_tls13_cipher_suites),         \
+    TEST_DECL_GROUP("tls13", test_tls13_cipher_list_no_tls13_ctx), \
     TEST_DECL_GROUP("tls13", test_tls13_bad_psk_binder),        \
     TEST_DECL_GROUP("tls13", test_tls13_rpk_handshake),         \
     TEST_DECL_GROUP("tls13", test_tls13_rpk_handshake_no_negotiation), \
@@ -138,6 +141,7 @@ int test_tls13_pha_status_request(void);
     TEST_DECL_GROUP("tls13", test_tls13_pqc_hybrid_malformed_ecdh), \
     TEST_DECL_GROUP("tls13", test_tls13_empty_record_limit),    \
     TEST_DECL_GROUP("tls13", test_tls13_short_session_ticket),  \
+    TEST_DECL_GROUP("tls13", test_tls13_zero_length_session_ticket),  \
     TEST_DECL_GROUP("tls13", test_tls13_new_session_ticket_max_lifetime), \
     TEST_DECL_GROUP("tls13", test_tls13_fragmented_session_ticket), \
     TEST_DECL_GROUP("tls13", test_tls13_early_data_0rtt_replay), \

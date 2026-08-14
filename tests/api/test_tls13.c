@@ -2476,6 +2476,83 @@ int test_tls13_cipher_suites(void)
     return EXPECT_RESULT();
 }
 
+#if defined(WOLFSSL_TLS13) && defined(OPENSSL_EXTRA) && \
+    !defined(NO_WOLFSSL_CLIENT) && !defined(WOLFSSL_NO_TLS12) && \
+    defined(BUILD_TLS_AES_128_GCM_SHA256) && defined(HAVE_ECC) && \
+    defined(BUILD_TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256)
+/* Suites has a bitfield member (setSuites:1) trailed by compiler padding
+ * whose value is indeterminate, so a whole-struct XMEMCMP is unreliable.
+ * Compare the meaningful members individually instead. */
+static int test_tls13_suites_eq(const Suites* a, const Suites* b)
+{
+    return a->suiteSz == b->suiteSz &&
+           a->hashSigAlgoSz == b->hashSigAlgoSz &&
+           a->setSuites == b->setSuites &&
+           XMEMCMP(a->suites, b->suites, sizeof(a->suites)) == 0 &&
+           XMEMCMP(a->hashSigAlgo, b->hashSigAlgo, sizeof(a->hashSigAlgo))
+               == 0;
+}
+#endif
+
+int test_tls13_cipher_list_no_tls13_ctx(void)
+{
+    EXPECT_DECLS;
+#if defined(WOLFSSL_TLS13) && defined(OPENSSL_EXTRA) && \
+    !defined(NO_WOLFSSL_CLIENT) && !defined(WOLFSSL_NO_TLS12) && \
+    defined(BUILD_TLS_AES_128_GCM_SHA256) && defined(HAVE_ECC) && \
+    defined(BUILD_TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256)
+    const char* tls12Suite = "ECDHE-RSA-AES128-GCM-SHA256";
+    WOLFSSL_CTX* ctx = NULL;
+    WOLFSSL* ssl = NULL;
+    Suites suitesBefore;
+
+    /* ctx->method caps the connection at TLS 1.2, so a cipher list that
+     * names only TLS 1.3 suites can never take effect on it. */
+    ExpectNotNull(ctx = wolfSSL_CTX_new(wolfTLSv1_2_client_method()));
+
+    /* Configure a real <= TLS 1.2 suite first so the "unchanged" checks
+     * below compare against a known, non-empty suite list instead of
+     * two empty ones. */
+    ExpectIntEQ(wolfSSL_CTX_set_cipher_list(ctx, tls12Suite),
+        WOLFSSL_SUCCESS);
+    ExpectNotNull((ctx != NULL) ? ctx->suites : NULL);
+    if (ctx != NULL && ctx->suites != NULL) {
+        ExpectIntGT(ctx->suites->suiteSz, 0);
+        XMEMCPY(&suitesBefore, ctx->suites, sizeof(Suites));
+    }
+
+    /* A TLS 1.3-only list is unusable on this ctx: the call must fail and
+     * must not mutate the previously configured suites. */
+    ExpectIntEQ(wolfSSL_CTX_set_cipher_list(ctx, "TLS13-AES128-GCM-SHA256"),
+        WOLFSSL_FAILURE);
+    if (ctx != NULL && ctx->suites != NULL) {
+        ExpectIntEQ(test_tls13_suites_eq(ctx->suites, &suitesBefore), 1);
+    }
+
+    /* ssl->version inherits the same TLS 1.2 cap from ctx->method, so
+     * wolfSSL_set_cipher_list() must behave the same as the ctx call
+     * above. This exercises the ssl->version branch of the condition,
+     * not just the ctx->method->version branch. */
+    ExpectNotNull(ssl = wolfSSL_new(ctx));
+    ExpectIntEQ(wolfSSL_set_cipher_list(ssl, tls12Suite), WOLFSSL_SUCCESS);
+    ExpectNotNull((ssl != NULL) ? ssl->suites : NULL);
+    if (ssl != NULL && ssl->suites != NULL) {
+        ExpectIntGT(ssl->suites->suiteSz, 0);
+        XMEMCPY(&suitesBefore, ssl->suites, sizeof(Suites));
+    }
+
+    ExpectIntEQ(wolfSSL_set_cipher_list(ssl, "TLS13-AES128-GCM-SHA256"),
+        WOLFSSL_FAILURE);
+    if (ssl != NULL && ssl->suites != NULL) {
+        ExpectIntEQ(test_tls13_suites_eq(ssl->suites, &suitesBefore), 1);
+    }
+    wolfSSL_free(ssl);
+
+    wolfSSL_CTX_free(ctx);
+#endif
+    return EXPECT_RESULT();
+}
+
 
 #if defined(WOLFSSL_TLS13) && defined(HAVE_MANUAL_MEMIO_TESTS_DEPENDENCIES)\
     && !defined(NO_PSK)
@@ -7335,7 +7412,6 @@ int test_tls13_empty_record_limit(void)
  * (32 bytes) does not cause an unsigned integer underflow / OOB read in
  * SetTicket. Uses a full memio handshake, then injects a crafted
  * NewSessionTicket with a 5-byte ticket into the client's read path. */
-
 int test_tls13_short_session_ticket(void)
 {
     EXPECT_DECLS;
@@ -7396,6 +7472,74 @@ int test_tls13_short_session_ticket(void)
     return EXPECT_RESULT();
 }
 
+/* Test valid looking session ticket, but with zero length ticket.
+ *  */
+int test_tls13_zero_length_session_ticket(void)
+{
+    EXPECT_DECLS;
+#if defined(HAVE_MANUAL_MEMIO_TESTS_DEPENDENCIES) && \
+    defined(WOLFSSL_TLS13) && defined(HAVE_SESSION_TICKET)
+    struct test_memio_ctx test_ctx;
+    WOLFSSL_CTX *ctx_c = NULL, *ctx_s = NULL;
+    WOLFSSL *ssl_c = NULL, *ssl_s = NULL;
+    char buf[64];
+    byte rec[256];
+    byte ticketMsg[18];
+    int  recSz = 0;
+    int  i = 0;
+    int  idx = 0;
+
+    XMEMSET(&test_ctx, 0, sizeof(test_ctx));
+    ExpectIntEQ(test_memio_setup(&test_ctx, &ctx_c, &ctx_s, &ssl_c, &ssl_s,
+                    wolfTLSv1_3_client_method, wolfTLSv1_3_server_method), 0);
+
+    /* Complete a TLS 1.3 handshake. The server will send a
+     * NewSessionTicket as part of post-handshake messages. */
+    ExpectIntEQ(test_memio_do_handshake(ssl_c, ssl_s, 10, NULL), 0);
+    /* Read on client to consume the server's NewSessionTicket. */
+    ExpectIntEQ(wolfSSL_read(ssl_c, buf, sizeof(buf)), -1);
+    ExpectIntEQ(wolfSSL_get_error(ssl_c, -1), WOLFSSL_ERROR_WANT_READ);
+
+    /* Encode a valid looking session ticket but with zero length. */
+    if (EXPECT_SUCCESS()) {
+        idx = 0;
+        ticketMsg[idx++] = session_ticket;            /* handshake msg type */
+        ticketMsg[idx++] = 0x00;                       /* 24-bit body length */
+        ticketMsg[idx++] = 0x00;
+        ticketMsg[idx++] = 0x0E;                       /* = 14 */
+        ticketMsg[idx++] = 0x00; ticketMsg[idx++] = 0x00; /* lifetime = 3600 */
+        ticketMsg[idx++] = 0x0E; ticketMsg[idx++] = 0x10;
+        ticketMsg[idx++] = 0x01; ticketMsg[idx++] = 0x02; /* ticket_age_add */
+        ticketMsg[idx++] = 0x03; ticketMsg[idx++] = 0x04;
+        ticketMsg[idx++] = 0x01;                       /* nonce length */
+        for (i = 0; i < 1; i++)
+            ticketMsg[idx++] = (byte)(0xA0 + i);       /* nonce */
+        ticketMsg[idx++] = 0x00; ticketMsg[idx++] = 0x00; /* ticket length=0 */
+        /* zero ticket data to add */
+        ticketMsg[idx++] = 0x00; ticketMsg[idx++] = 0x00; /* extensions: none */
+        ExpectIntEQ(idx, (int)sizeof(ticketMsg));
+    }
+
+    if (EXPECT_SUCCESS()) {
+        recSz = BuildTls13Message(ssl_s, rec, (int)sizeof(rec), ticketMsg,
+                                  idx, handshake, 0, 0, 0);
+        ExpectIntGT(recSz, 0);
+        ExpectIntEQ(test_memio_inject_message(&test_ctx, 1, (const char*)rec,
+                                              recSz), 0);
+    }
+
+    /* Read on client to consume the server's NewSessionTicket.
+     * The zero length ticket should return BUFFER_ERROR. */
+    ExpectIntEQ(wolfSSL_read(ssl_c, buf, sizeof(buf)), -1);
+    ExpectIntEQ(wolfSSL_get_error(ssl_c, -1), BUFFER_ERROR);
+
+    wolfSSL_free(ssl_c);
+    wolfSSL_free(ssl_s);
+    wolfSSL_CTX_free(ctx_c);
+    wolfSSL_CTX_free(ctx_s);
+#endif
+    return EXPECT_RESULT();
+}
 
 #if defined(HAVE_MANUAL_MEMIO_TESTS_DEPENDENCIES) && \
     defined(WOLFSSL_TLS13) && defined(HAVE_SESSION_TICKET)

@@ -9440,6 +9440,16 @@ static void FreeSSL_DtlsResources(WOLFSSL* ssl)
     }
     XFREE(ssl->buffers.dtlsCookieSecret.buffer, ssl->heap,
           DYNAMIC_TYPE_COOKIE_PWD);
+    ssl->buffers.dtlsCookieSecret.buffer = NULL;
+    ssl->buffers.dtlsCookieSecret.length = 0;
+    if (ssl->buffers.dtlsCookieSecretSecondary.buffer != NULL) {
+        ForceZero(ssl->buffers.dtlsCookieSecretSecondary.buffer,
+            ssl->buffers.dtlsCookieSecretSecondary.length);
+    }
+    XFREE(ssl->buffers.dtlsCookieSecretSecondary.buffer, ssl->heap,
+          DYNAMIC_TYPE_COOKIE_PWD);
+    ssl->buffers.dtlsCookieSecretSecondary.buffer = NULL;
+    ssl->buffers.dtlsCookieSecretSecondary.length = 0;
 #endif
 
 #ifdef WOLFSSL_DTLS13
@@ -9738,6 +9748,16 @@ void wolfSSL_ResourceFree(WOLFSSL* ssl)
     }
     XFREE(ssl->buffers.tls13CookieSecret.buffer, ssl->heap,
           DYNAMIC_TYPE_COOKIE_PWD);
+    ssl->buffers.tls13CookieSecret.buffer = NULL;
+    ssl->buffers.tls13CookieSecret.length = 0;
+    if (ssl->buffers.tls13CookieSecretSecondary.buffer != NULL) {
+        ForceZero(ssl->buffers.tls13CookieSecretSecondary.buffer,
+            ssl->buffers.tls13CookieSecretSecondary.length);
+    }
+    XFREE(ssl->buffers.tls13CookieSecretSecondary.buffer, ssl->heap,
+          DYNAMIC_TYPE_COOKIE_PWD);
+    ssl->buffers.tls13CookieSecretSecondary.buffer = NULL;
+    ssl->buffers.tls13CookieSecretSecondary.length = 0;
 #endif
 #if !defined(NO_CERTS) && defined(WOLFSSL_TLS13) && \
     defined(HAVE_CERTIFICATE_STATUS_REQUEST) && !defined(NO_WOLFSSL_SERVER)
@@ -14630,11 +14650,11 @@ int CheckHostName(DecodedCert* dCert, const char *domainName,
     return ret;
 }
 
-int CheckIPAddr(DecodedCert* dCert, const char* ipasc)
+int CheckIPAddr(DecodedCert* dCert, const char* ipasc, size_t ipascLen)
 {
     WOLFSSL_MSG("Checking IPAddr");
 
-    return CheckHostName(dCert, ipasc, (size_t)XSTRLEN(ipasc), 0, 1);
+    return CheckHostName(dCert, ipasc, ipascLen, 0, 1);
 }
 
 
@@ -16057,6 +16077,9 @@ int DoVerifyCallback(WOLFSSL_CERT_MANAGER* cm, WOLFSSL* ssl, int cert_err,
 #if defined(OPENSSL_EXTRA)
     /* Perform domain and IP check only for the leaf certificate */
     if (args->certIdx == 0) {
+        size_t ipascLen = ((ssl != NULL) && (ssl->param != NULL)) ?
+                              XSTRLEN(ssl->param->ipasc) : 0;
+
         /* perform domain name check on the peer certificate */
         if (args->dCertInit && args->dCert && (ssl != NULL) &&
                 ssl->param && ssl->param->hostName[0]) {
@@ -16097,8 +16120,8 @@ int DoVerifyCallback(WOLFSSL_CERT_MANAGER* cm, WOLFSSL* ssl, int cert_err,
 
         /* perform IP address check on the peer certificate */
         if ((args->dCertInit != 0) && (args->dCert != NULL) && (ssl != NULL) &&
-            (ssl->param != NULL) && (XSTRLEN(ssl->param->ipasc) > 0)) {
-            if (CheckIPAddr(args->dCert, ssl->param->ipasc) != 0) {
+            (ssl->param != NULL) && (ipascLen > 0)) {
+            if (CheckIPAddr(args->dCert, ssl->param->ipasc, ipascLen) != 0) {
                 if (cert_err == 0) {
                     ret = IPADDR_MISMATCH;
                     WOLFSSL_ERROR_VERBOSE(ret);
@@ -18920,7 +18943,8 @@ int ProcessPeerCerts(WOLFSSL* ssl, byte* input, word32* inOutIdx,
 #ifndef OPENSSL_EXTRA
                 if (!ssl->options.verifyNone && ssl->buffers.ipasc.buffer) {
                     if (CheckIPAddr(args->dCert,
-                            (const char*)ssl->buffers.ipasc.buffer) != 0) {
+                            (const char*)ssl->buffers.ipasc.buffer,
+                            (size_t)ssl->buffers.ipasc.length) != 0) {
                         WOLFSSL_MSG("IPAddr match on alt names failed");
                         ret = IPADDR_MISMATCH;
                         WOLFSSL_ERROR_VERBOSE(ret);
