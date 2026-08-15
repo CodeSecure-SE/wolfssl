@@ -20909,6 +20909,73 @@ defined(OPENSSL_EXTRA) && defined(WOLFSSL_DH_EXTRA)
     return EXPECT_RESULT();
 }
 
+static int test_wolfSSL_i2d_PUBKEY_bio(void)
+{
+    EXPECT_DECLS;
+/* Guards must match wolfSSL_i2d_PUBKEY_bio() in wolfcrypt/src/evp_pk.c. */
+#if defined(OPENSSL_EXTRA) && !defined(WOLFCRYPT_ONLY) && \
+    !defined(NO_CERTS) && !defined(NO_BIO) && !defined(NO_ASN) && \
+    !defined(NO_PWDBASED)
+    BIO* bio = NULL;
+    EVP_PKEY* pkey = NULL;
+    EVP_PKEY* pkey2 = NULL;
+
+    /* NULL parameter tests */
+    ExpectIntEQ(i2d_PUBKEY_bio(NULL, NULL), WOLFSSL_FAILURE);
+
+#if defined(USE_CERT_BUFFERS_2048) && !defined(NO_RSA)
+    {
+        const unsigned char* p = client_keypub_der_2048;
+        /* Load an RSA public key from DER buffer */
+        ExpectNotNull(pkey = d2i_PUBKEY(NULL, &p,
+            sizeof_client_keypub_der_2048));
+
+        /* Write it to BIO */
+        ExpectNotNull(bio = BIO_new(BIO_s_mem()));
+        ExpectIntEQ(i2d_PUBKEY_bio(bio, pkey), WOLFSSL_SUCCESS);
+
+        /* Read it back and verify round-trip */
+        ExpectNotNull(pkey2 = d2i_PUBKEY_bio(bio, NULL));
+
+        EVP_PKEY_free(pkey2);
+        pkey2 = NULL;
+        EVP_PKEY_free(pkey);
+        pkey = NULL;
+        BIO_free(bio);
+        bio = NULL;
+    }
+#endif
+
+#if defined(USE_CERT_BUFFERS_256) && defined(HAVE_ECC)
+    {
+        const unsigned char* p = ecc_clikeypub_der_256;
+        /* Load an ECC public key from DER buffer */
+        ExpectNotNull(pkey = d2i_PUBKEY(NULL, &p,
+            sizeof_ecc_clikeypub_der_256));
+
+        /* Write it to BIO */
+        ExpectNotNull(bio = BIO_new(BIO_s_mem()));
+        ExpectIntEQ(i2d_PUBKEY_bio(bio, pkey), WOLFSSL_SUCCESS);
+
+        /* Read it back and verify round-trip */
+        ExpectNotNull(pkey2 = d2i_PUBKEY_bio(bio, NULL));
+
+        EVP_PKEY_free(pkey2);
+        pkey2 = NULL;
+        EVP_PKEY_free(pkey);
+        pkey = NULL;
+        BIO_free(bio);
+        bio = NULL;
+    }
+#endif
+
+    (void)pkey;
+    (void)pkey2;
+    (void)bio;
+#endif
+    return EXPECT_RESULT();
+}
+
 #if (defined(OPENSSL_ALL) || defined(WOLFSSL_ASIO)) && !defined(NO_RSA) && \
     !defined(NO_TLS)
 static int test_wolfSSL_d2i_PrivateKeys_bio(void)
@@ -24187,6 +24254,92 @@ static int test_wc_EncryptPKCS8Key_rc4NoPad(void)
 #if defined(HAVE_PKCS8) && !defined(NO_ASN) && !defined(NO_PWDBASED) \
  && !defined(NO_RC4) && !defined(NO_SHA) && !defined(NO_ASN_CRYPT)
     EXPECT_TEST(enc_pkcs8_pad_check(1, PBE_SHA1_RC4_128, 0, 0));
+#endif
+    return EXPECT_RESULT();
+}
+
+/* Negative: PKCS5v2 with a valid encryption algorithm but an hmacOid that maps
+ * to no OID must return a clean ALGO_ID_E, not dereference a NULL OidFromId()
+ * result. Exercises the NULL guards added in wc_EncryptPKCS8Key_ex. */
+static int test_wc_EncryptPKCS8Key_ex_badHmac(void)
+{
+    EXPECT_DECLS;
+#if defined(HAVE_PKCS8) && !defined(NO_ASN) && !defined(NO_PWDBASED) \
+ && defined(WOLFSSL_AES_256) && !defined(NO_AES_CBC) && !defined(NO_ASN_CRYPT)
+    WC_RNG rng;
+    word32 outSz = 0;
+    /* At least HMAC_FIPS_MIN_KEY (14) bytes: a FIPS module older than v6.0.0
+     * rejects a shorter PBKDF2 password with HMAC_MIN_KEYLEN_E. */
+    const char password[] = "Lorem ipsum dolor sit amet";
+    byte plain[48];
+
+    XMEMSET(plain, 0, sizeof(plain));
+    plain[0] = ASN_SEQUENCE | ASN_CONSTRUCTED;
+    plain[1] = (byte)(sizeof(plain) - 2);
+    XMEMSET(&rng, 0, sizeof(rng));
+    ExpectIntEQ(wc_InitRng(&rng), 0);
+    PRIVATE_KEY_UNLOCK();
+    /* out == NULL would normally return LENGTH_ONLY_E, but the hmacOid guard
+     * runs first, so a bogus hmacOid yields ALGO_ID_E cleanly (no crash). */
+    ExpectIntEQ(wc_EncryptPKCS8Key_ex(plain, (word32)sizeof(plain), NULL, &outSz,
+        password, (int)XSTRLEN(password), PKCS5, PBES2, AES256CBCb, NULL, 0,
+        WC_PKCS12_ITT_DEFAULT, 99999 /* hmacOid with no OID */, &rng, NULL),
+        WC_NO_ERR_TRACE(ALGO_ID_E));
+    PRIVATE_KEY_LOCK();
+    wc_FreeRng(&rng);
+#endif
+    return EXPECT_RESULT();
+}
+
+/* Positive control for the guard above. The same call with a valid hmacOid
+ * must get past the hmacOid check and reach the normal length-query path
+ * (LENGTH_ONLY_E for out == NULL), proving the negative case really was
+ * rejected by the hmacOid guard and not by something earlier; then a full
+ * encrypt + wc_DecryptPKCS8Key round-trip recovers the input. */
+static int test_wc_EncryptPKCS8Key_ex_goodHmac(void)
+{
+    EXPECT_DECLS;
+#if defined(HAVE_PKCS8) && !defined(NO_ASN) && !defined(NO_PWDBASED) \
+ && defined(WOLFSSL_AES_256) && !defined(NO_AES_CBC) && !defined(NO_ASN_CRYPT) \
+ && !defined(NO_SHA256) && !defined(NO_HMAC)
+    WC_RNG rng;
+    word32 outSz = 0;
+    word32 encSz = 0;
+    /* At least HMAC_FIPS_MIN_KEY (14) bytes: a FIPS module older than v6.0.0
+     * rejects a shorter PBKDF2 password with HMAC_MIN_KEYLEN_E. */
+    const char password[] = "Lorem ipsum dolor sit amet";
+    byte plain[48];
+    byte* enc = NULL;
+
+    XMEMSET(plain, 0, sizeof(plain));
+    plain[0] = ASN_SEQUENCE | ASN_CONSTRUCTED;
+    plain[1] = (byte)(sizeof(plain) - 2);
+    XMEMSET(&rng, 0, sizeof(rng));
+    ExpectIntEQ(wc_InitRng(&rng), 0);
+
+    PRIVATE_KEY_UNLOCK();
+    /* Length query: a valid hmacOid must pass the guard and report a size. */
+    ExpectIntEQ(wc_EncryptPKCS8Key_ex(plain, (word32)sizeof(plain), NULL,
+        &outSz, password, (int)XSTRLEN(password), PKCS5, PBES2, AES256CBCb,
+        NULL, 0, WC_PKCS12_ITT_DEFAULT, HMAC_SHA256_OID, &rng, NULL),
+        WC_NO_ERR_TRACE(LENGTH_ONLY_E));
+    ExpectIntGT(outSz, 0);
+
+    ExpectNotNull(enc = (byte*)XMALLOC(outSz, NULL, DYNAMIC_TYPE_TMP_BUFFER));
+    if (enc != NULL) {
+        encSz = outSz;
+        ExpectIntGT(encSz = (word32)wc_EncryptPKCS8Key_ex(plain,
+            (word32)sizeof(plain), enc, &encSz, password,
+            (int)XSTRLEN(password), PKCS5, PBES2, AES256CBCb, NULL, 0,
+            WC_PKCS12_ITT_DEFAULT, HMAC_SHA256_OID, &rng, NULL), 0);
+        /* Round-trip: decrypt in place and recover the original DER. */
+        ExpectIntGE(wc_DecryptPKCS8Key(enc, encSz, password,
+            (int)XSTRLEN(password)), (int)sizeof(plain));
+        ExpectBufEQ(enc, plain, sizeof(plain));
+        XFREE(enc, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    }
+    PRIVATE_KEY_LOCK();
+    wc_FreeRng(&rng);
 #endif
     return EXPECT_RESULT();
 }
@@ -31080,16 +31233,41 @@ static int test_wolfSSL_CTX_set_timeout(void)
 static int test_wolfSSL_OpenSSL_version(void)
 {
     EXPECT_DECLS;
-#if defined(OPENSSL_EXTRA)
+#if defined(OPENSSL_EXTRA) && !defined(WOLFCRYPT_ONLY)
     const char* ver;
 
-#if defined(OPENSSL_VERSION_NUMBER) && OPENSSL_VERSION_NUMBER >= 0x10100000L
-    ExpectNotNull(ver = OpenSSL_version(0));
+    ExpectNotNull(ver = OpenSSL_version(OPENSSL_VERSION));
+    ExpectStrEQ(ver, "wolfSSL " LIBWOLFSSL_VERSION_STRING);
+
+    /* Test OPENSSL_CFLAGS type */
+    ExpectNotNull(ver = OpenSSL_version(OPENSSL_CFLAGS));
+    ExpectStrEQ(ver, "compiler: information not available");
+
+    /* Test OPENSSL_BUILT_ON type */
+    ExpectNotNull(ver = OpenSSL_version(OPENSSL_BUILT_ON));
+#ifdef HAVE_REPRODUCIBLE_BUILD
+    ExpectStrEQ(ver, "built on: date not available");
 #else
-    ExpectNotNull(ver = OpenSSL_version());
+    /* __DATE__/__TIME__ differ between translation units, so just check
+     * the prefix is present. */
+    ExpectNotNull(XSTRSTR(ver, "built on: "));
 #endif
-    ExpectIntEQ(XMEMCMP(ver, "wolfSSL " LIBWOLFSSL_VERSION_STRING,
-        XSTRLEN("wolfSSL " LIBWOLFSSL_VERSION_STRING)), 0);
+
+    /* Test OPENSSL_PLATFORM type */
+    ExpectNotNull(ver = OpenSSL_version(OPENSSL_PLATFORM));
+    ExpectStrEQ(ver, "platform: information not available");
+
+    /* Test OPENSSL_DIR type */
+    ExpectNotNull(ver = OpenSSL_version(OPENSSL_DIR));
+    ExpectStrEQ(ver, "OPENSSLDIR: N/A");
+
+    /* Test OPENSSL_ENGINES_DIR type */
+    ExpectNotNull(ver = OpenSSL_version(OPENSSL_ENGINES_DIR));
+    ExpectStrEQ(ver, "ENGINESDIR: N/A");
+
+    /* Unknown selector returns the OpenSSL fallback string. */
+    ExpectNotNull(ver = OpenSSL_version(99));
+    ExpectStrEQ(ver, "not available");
 #endif
     return EXPECT_RESULT();
 }
@@ -39117,6 +39295,8 @@ TEST_CASE testCases[] = {
     TEST_DECL(test_wc_EncryptPKCS8Key_blockAligned),
     TEST_DECL(test_wc_EncryptPKCS8Key_pbes1BlockAligned),
     TEST_DECL(test_wc_EncryptPKCS8Key_rc4NoPad),
+    TEST_DECL(test_wc_EncryptPKCS8Key_ex_badHmac),
+    TEST_DECL(test_wc_EncryptPKCS8Key_ex_goodHmac),
     TEST_DECL(test_wc_DecryptedPKCS8Key),
     TEST_DECL(test_wc_GetPkcs8TraditionalOffset),
 
@@ -39216,6 +39396,7 @@ TEST_CASE testCases[] = {
     TEST_DECL(test_wolfSSL_d2i_and_i2d_PublicKey_ecc),
 #ifndef NO_BIO
     TEST_DECL(test_wolfSSL_d2i_PUBKEY),
+    TEST_DECL(test_wolfSSL_i2d_PUBKEY_bio),
 #if defined(OPENSSL_EXTRA) && defined(WOLFSSL_HAVE_MLDSA) && \
     defined(WOLFSSL_MLDSA_NO_ASN1) && !defined(WOLFSSL_NO_ML_DSA_44) && \
     !defined(WOLFSSL_NO_ML_DSA_65) && !defined(WOLFSSL_MLDSA_NO_VERIFY)

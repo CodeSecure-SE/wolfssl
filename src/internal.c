@@ -3854,6 +3854,44 @@ int AllocateCtxSuites(WOLFSSL_CTX* ctx)
     return 0;
 }
 
+/* Lazily allocate and derive ctx->suites, holding the CTX mutex so the paths
+ * that may share a CTX between threads (wolfSSL_new, wolfSSL_set_SSL_CTX)
+ * cannot both allocate and leak one of the Suites. The CTX setup APIs
+ * (wolfSSL_CTX_set_cipher_list, wolfSSL_CTX_use_certificate, ...) still
+ * allocate without the lock and must not be called concurrently with these
+ * paths on a shared CTX.
+ *
+ * returns 0 on success, otherwise an error code.
+ */
+int InitCtxSuitesWithMutex(WOLFSSL_CTX* ctx)
+{
+    int ret;
+
+    if (ctx == NULL)
+        return BAD_FUNC_ARG;
+
+    ret = wolfSSL_RefWithMutexLock(&ctx->ref);
+    if (ret != 0) {
+        WOLFSSL_MSG("Failed to lock CTX mutex for suites init");
+        return ret;
+    }
+    if (ctx->suites == NULL) {
+        ret = AllocateCtxSuites(ctx);
+        if (ret == 0)
+            InitSSL_CTX_Suites(ctx);
+    }
+    if (wolfSSL_RefWithMutexUnlock(&ctx->ref) != 0) {
+        WOLFSSL_MSG("Failed to unlock CTX mutex after suites init");
+        /* A stuck lock would deadlock every later use of ctx->ref, so surface
+         * it as an error. Keep any earlier suites-init error, as that is the
+         * more meaningful failure. */
+        if (ret == 0)
+            ret = BAD_MUTEX_E;
+    }
+
+    return ret;
+}
+
 /* Call this when the ssl object needs to have its own ssl->suites object */
 int AllocateSuites(WOLFSSL* ssl)
 {
@@ -5325,6 +5363,19 @@ void FreeX509Name(WOLFSSL_X509_NAME* name)
 }
 
 
+/* Zero the X509 and set up its fields. The ref is zeroed too; the caller
+ * must initialize or restore it afterward. */
+static void InitX509Fields(WOLFSSL_X509* x509, int dynamicFlag, void* heap)
+{
+    XMEMSET(x509, 0, sizeof(WOLFSSL_X509));
+
+    x509->heap = heap;
+    InitX509Name(&x509->issuer, 0, heap);
+    InitX509Name(&x509->subject, 0, heap);
+    x509->dynamicMemory  = (byte)dynamicFlag;
+}
+
+
 /* Initialize wolfSSL X509 type */
 void InitX509(WOLFSSL_X509* x509, int dynamicFlag, void* heap)
 {
@@ -5333,12 +5384,7 @@ void InitX509(WOLFSSL_X509* x509, int dynamicFlag, void* heap)
         return;
     }
 
-    XMEMSET(x509, 0, sizeof(WOLFSSL_X509));
-
-    x509->heap = heap;
-    InitX509Name(&x509->issuer, 0, heap);
-    InitX509Name(&x509->subject, 0, heap);
-    x509->dynamicMemory  = (byte)dynamicFlag;
+    InitX509Fields(x509, dynamicFlag, heap);
 #if defined(OPENSSL_EXTRA_X509_SMALL) || defined(OPENSSL_EXTRA)
     {
         int ret;
@@ -5349,8 +5395,8 @@ void InitX509(WOLFSSL_X509* x509, int dynamicFlag, void* heap)
 }
 
 
-/* Free wolfSSL X509 type */
-void FreeX509(WOLFSSL_X509* x509)
+/* Free the contents of an X509, leaving the ref untouched */
+static void FreeX509Contents(WOLFSSL_X509* x509)
 {
     #if defined(WOLFSSL_CERT_REQ) && defined(OPENSSL_ALL) \
     &&  defined( WOLFSSL_CUSTOM_OID)
@@ -5464,10 +5510,46 @@ void FreeX509(WOLFSSL_X509* x509)
         x509->altSigValDer= NULL;
     }
     #endif /* WOLFSSL_DUAL_ALG_CERTS */
+}
 
+
+/* Free wolfSSL X509 type */
+void FreeX509(WOLFSSL_X509* x509)
+{
+    if (x509 == NULL)
+        return;
+
+    FreeX509Contents(x509);
     #if defined(OPENSSL_EXTRA_X509_SMALL) || defined(OPENSSL_EXTRA)
         wolfSSL_RefFree(&x509->ref);
     #endif
+}
+
+
+/* Free an X509's contents and re-initialize it for reuse. Unlike FreeX509()
+ * followed by InitX509(), the object's heap and reference state carry across,
+ * so references held elsewhere stay counted. */
+void ReinitX509(WOLFSSL_X509* x509)
+{
+#if defined(OPENSSL_EXTRA_X509_SMALL) || defined(OPENSSL_EXTRA)
+    wolfSSL_Ref ref;
+#endif
+    void* heap;
+    byte  dynamic;
+
+    if (x509 == NULL)
+        return;
+
+    heap = x509->heap;
+    dynamic = x509->dynamicMemory;
+#if defined(OPENSSL_EXTRA_X509_SMALL) || defined(OPENSSL_EXTRA)
+    ref = x509->ref;
+#endif
+    FreeX509Contents(x509);
+    InitX509Fields(x509, dynamic, heap);
+#if defined(OPENSSL_EXTRA_X509_SMALL) || defined(OPENSSL_EXTRA)
+    x509->ref = ref;
+#endif
 }
 
 
@@ -8700,13 +8782,11 @@ int InitSSL(WOLFSSL* ssl, WOLFSSL_CTX* ctx, int writeDup)
         }
 #endif
 
-        if (ctx->suites == NULL) {
-            /* suites */
-            ret = AllocateCtxSuites(ctx);
-            if (ret != 0)
-                return ret;
-            InitSSL_CTX_Suites(ctx);
-        }
+        /* suites, allocated and derived under the CTX mutex as the CTX may be
+         * shared with other threads */
+        ret = InitCtxSuitesWithMutex(ctx);
+        if (ret != 0)
+            return ret;
 #ifdef OPENSSL_ALL
         ssl->suitesStack = NULL;
 #endif
@@ -9060,6 +9140,12 @@ int AllocKey(WOLFSSL* ssl, int type, void** pKey)
     if (*pKey == NULL) {
         return MEMORY_E;
     }
+
+    /* Zero the allocation before initializing. XMALLOC does not clear memory,
+     * and the key-specific init below may fail before it has zeroed/initialized
+     * the structure's members.  Starting from all-zero makes any partial-init
+     * failure safe to free. */
+    XMEMSET(*pKey, 0, sz);
 
     /* Initialize key */
     switch (type) {
@@ -13456,6 +13542,8 @@ static int BuildMD5(WOLFSSL* ssl, Hashes* hashes, const byte* sender)
         }
     }
 
+    ForceZero(md5_result, WC_MD5_DIGEST_SIZE);
+
     WC_FREE_VAR_EX(md5, ssl->heap, DYNAMIC_TYPE_HASHCTX);
 
     return ret;
@@ -13500,6 +13588,8 @@ static int BuildSHA(WOLFSSL* ssl, Hashes* hashes, const byte* sender)
             wc_ShaFree(sha);
         }
     }
+
+    ForceZero(sha_result, WC_SHA_DIGEST_SIZE);
 
     WC_FREE_VAR_EX(sha, ssl->heap, DYNAMIC_TYPE_HASHCTX);
 
@@ -15964,7 +16054,7 @@ int SetupStoreCtxCallback(WOLFSSL_X509_STORE_CTX** store_pt,
         if (args->certIdx == 0) {
             FreeX509(&ssl->peerCert);
             InitX509(&ssl->peerCert, 0, ssl->heap);
-            if (CopyDecodedToX509(&ssl->peerCert, args->dCert) == 0)
+            if (CopyDecodedToX509(&ssl->peerCert, args->dCert) != 0)
                 WOLFSSL_MSG("Unable to copy to ssl->peerCert");
             store->current_cert = &ssl->peerCert; /* use existing X509 */
         }
@@ -24629,6 +24719,14 @@ static int CheckResumptionConsistency(WOLFSSL* ssl)
 static int DoChangeCipherSpecTls13(WOLFSSL* ssl)
 {
     word32 i = ssl->buffers.inputBuffer.idx;
+#ifdef WOLFSSL_DTLS13
+    if (ssl->options.dtls) {
+        /* CCS is not part of DTLS 1.3; discard the record without alerting so a
+         * spoofed CCS cannot tear down the handshake. */
+        ssl->buffers.inputBuffer.idx += ssl->curSize;
+        return 0;
+    }
+#endif
     if (ssl->options.handShakeState == HANDSHAKE_DONE) {
         SendAlert(ssl, alert_fatal, unexpected_message);
         WOLFSSL_ERROR_VERBOSE(UNKNOWN_RECORD_TYPE);
@@ -26156,6 +26254,8 @@ static int BuildMD5_CertVerify(const WOLFSSL* ssl, byte* digest)
         }
     }
 
+    ForceZero(md5_result, WC_MD5_DIGEST_SIZE);
+
     WC_FREE_VAR_EX(md5, ssl->heap, DYNAMIC_TYPE_HASHCTX);
 
     return ret;
@@ -26201,6 +26301,8 @@ static int BuildSHA_CertVerify(const WOLFSSL* ssl, byte* digest)
             wc_ShaFree(sha);
         }
     }
+
+    ForceZero(sha_result, WC_SHA_DIGEST_SIZE);
 
     WC_FREE_VAR_EX(sha, ssl->heap, DYNAMIC_TYPE_HASHCTX);
 
@@ -43949,8 +44051,18 @@ static int DefTicketEncCb(WOLFSSL* ssl, byte key_name[WOLFSSL_TICKET_NAME_SZ],
         /* Update AAD with index. */
         aad[WOLFSSL_TICKET_NAME_SZ - 1] |= keyIdx;
 
+#ifndef SINGLE_THREADED
+        /* Hold the lock over the key/expiry read so a concurrent regen can't swap the key mid-decrypt. */
+        if (wc_LockMutex(&keyCtx->mutex) != 0) {
+            WOLFSSL_MSG("Couldn't lock key context mutex");
+            return WOLFSSL_TICKET_RET_REJECT;
+        }
+#endif
         /* Check expirary */
         if (keyCtx->expirary[keyIdx] <= LowResTimer()) {
+#ifndef SINGLE_THREADED
+            wc_UnLockMutex(&keyCtx->mutex);
+#endif
             return WOLFSSL_TICKET_RET_REJECT;
         }
 
@@ -43958,6 +44070,9 @@ static int DefTicketEncCb(WOLFSSL* ssl, byte key_name[WOLFSSL_TICKET_NAME_SZ],
         ret = TicketEncDec(keyCtx->key[keyIdx], WOLFSSL_TICKET_KEY_SZ, iv, aad,
                            aadSz, ticket, inLen, ticket, outLen, mac, ssl->heap,
                            0);
+#ifndef SINGLE_THREADED
+        wc_UnLockMutex(&keyCtx->mutex);
+#endif
         if (ret != 0) {
             return WOLFSSL_TICKET_RET_REJECT;
         }

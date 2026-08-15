@@ -5619,12 +5619,7 @@ size_t wolfSSL_get_client_random(const WOLFSSL* ssl, unsigned char* out,
 
     const char* wolfSSLeay_version(int type)
     {
-        (void)type;
-#if defined(OPENSSL_VERSION_NUMBER) && OPENSSL_VERSION_NUMBER >= 0x10100000L
         return wolfSSL_OpenSSL_version(type);
-#else
-        return wolfSSL_OpenSSL_version();
-#endif
     }
 #endif /* OPENSSL_EXTRA */
 
@@ -6065,19 +6060,39 @@ const char* wolfSSL_lib_version(void)
 }
 
 #ifdef OPENSSL_EXTRA
-#if defined(OPENSSL_VERSION_NUMBER) && OPENSSL_VERSION_NUMBER >= 0x10100000L
-const char* wolfSSL_OpenSSL_version(int a)
+/* Signature deliberately does not depend on OPENSSL_VERSION_NUMBER. That macro
+ * can evaluate differently in the library and in the application (e.g. under
+ * OPENSSL_COEXIST the library also sees the real OpenSSL headers), which would
+ * make the caller and the definition disagree on the argument list. */
+const char* wolfSSL_OpenSSL_version(int type)
 {
-    (void)a;
-    return "wolfSSL " LIBWOLFSSL_VERSION_STRING;
-}
+    WOLFSSL_ENTER("wolfSSL_OpenSSL_version");
+    switch (type) {
+        case OPENSSL_VERSION:
+            return "wolfSSL " LIBWOLFSSL_VERSION_STRING;
+        case OPENSSL_CFLAGS:
+            return "compiler: information not available";
+        case OPENSSL_BUILT_ON:
+        /* Kernel module builds compile with -Werror=date-time.  Define
+         * WOLFSSL_OPENSSL_NO_BUILD_DATE to drop the date without needing the
+         * full reproducible-build option. */
+#if defined(HAVE_REPRODUCIBLE_BUILD) || defined(WOLFSSL_LINUXKM) || \
+    defined(WOLFSSL_OPENSSL_NO_BUILD_DATE)
+            return "built on: date not available";
 #else
-const char* wolfSSL_OpenSSL_version(void)
-{
-    return "wolfSSL " LIBWOLFSSL_VERSION_STRING;
-}
-#endif /* WOLFSSL_QT */
+            return "built on: " __DATE__ " " __TIME__;
 #endif
+        case OPENSSL_PLATFORM:
+            return "platform: information not available";
+        case OPENSSL_DIR:
+            return "OPENSSLDIR: N/A";
+        case OPENSSL_ENGINES_DIR:
+            return "ENGINESDIR: N/A";
+        default:
+            return "not available";
+    }
+}
+#endif /* OPENSSL_EXTRA */
 
 
 /* current library version in hex */
@@ -7976,7 +7991,13 @@ void wolfSSL_SetFuzzerCb(WOLFSSL* ssl, CallbackFuzzer cbf, void* fCtx)
     {
     #if defined(OPENSSL_EXTRA) || defined(OPENSSL_EXTRA_X509_SMALL)
         WOLFSSL_ENTER("wolfSSL_set_verify_depth");
-        ssl->options.verifyDepth = (byte)depth;
+        /* Reject out-of-range depths; valid range is 0 to MAX_CHAIN_DEPTH. */
+        if ((ssl == NULL) || (depth < 0) || (depth > MAX_CHAIN_DEPTH)) {
+            WOLFSSL_MSG("Bad depth argument, too large or less than 0");
+        }
+        else {
+            ssl->options.verifyDepth = (byte)depth;
+        }
     #endif
     }
 
@@ -8718,12 +8739,11 @@ WOLFSSL_CTX* wolfSSL_set_SSL_CTX(WOLFSSL* ssl, WOLFSSL_CTX* ctx)
     if (ssl->ctx == ctx)
         return ssl->ctx;
 
-    if (ctx->suites == NULL) {
-        /* suites */
-        if (AllocateCtxSuites(ctx) != 0)
-            return NULL;
-        InitSSL_CTX_Suites(ctx);
-    }
+    /* suites, allocated and derived under the CTX mutex as this CTX may be
+     * shared with other threads. Done before taking a reference below so that
+     * a failure here returns without having changed anything. */
+    if (InitCtxSuitesWithMutex(ctx) != 0)
+        return NULL;
 
     wolfSSL_RefWithMutexInc(&ctx->ref, &ret);
 #ifdef WOLFSSL_REFCNT_ERROR_RETURN
@@ -8735,6 +8755,7 @@ WOLFSSL_CTX* wolfSSL_set_SSL_CTX(WOLFSSL* ssl, WOLFSSL_CTX* ctx)
 #else
     (void)ret;
 #endif
+
     if (ssl->ctx != NULL)
         wolfSSL_CTX_free(ssl->ctx);
     ssl->ctx = ctx;
@@ -10771,20 +10792,44 @@ int wolfSSL_FIPS_drbg_uninstantiate(WOLFSSL_DRBG_CTX *ctx)
 void wolfSSL_FIPS_drbg_free(WOLFSSL_DRBG_CTX *ctx)
 {
     if (ctx != NULL) {
+        int locked = 0;
+        int haveMutex = 1;
         /* As safety check if free'ing the default drbg, then mark global NULL.
          * Technically the user should not call free on the default drbg. */
-        if (ctx == gDrbgDefCtx) {
-            gDrbgDefCtx = NULL;
+    #ifndef WOLFSSL_MUTEX_INITIALIZER
+        /* wolfSSL_Cleanup may free the mutex before this runs. */
+        haveMutex = (globalRNGMutex_valid == 1);
+    #endif
+        if (haveMutex && (wc_LockMutex(&globalRNGMutex) == 0))
+            locked = 1;
+        /* Touch the global under the lock, or unlocked only when no mutex. */
+        if (locked || !haveMutex) {
+            if (ctx == gDrbgDefCtx) {
+                gDrbgDefCtx = NULL;
+            }
         }
+        if (locked)
+            wc_UnLockMutex(&globalRNGMutex);
         wolfSSL_FIPS_drbg_uninstantiate(ctx);
         XFREE(ctx, NULL, DYNAMIC_TYPE_OPENSSL);
     }
 }
 WOLFSSL_DRBG_CTX* wolfSSL_FIPS_get_default_drbg(void)
 {
-    if (gDrbgDefCtx == NULL) {
-        gDrbgDefCtx = wolfSSL_FIPS_drbg_new(0, 0);
+    int locked = 0;
+    int haveMutex = 1;
+#ifndef WOLFSSL_MUTEX_INITIALIZER
+    haveMutex = (globalRNGMutex_valid == 1);
+#endif
+    if (haveMutex && (wc_LockMutex(&globalRNGMutex) == 0))
+        locked = 1;
+    if (locked || !haveMutex) {
+        if (gDrbgDefCtx == NULL) {
+            gDrbgDefCtx = wolfSSL_FIPS_drbg_new(0, 0);
+        }
     }
+    if (locked)
+        wc_UnLockMutex(&globalRNGMutex);
     return gDrbgDefCtx;
 }
 void wolfSSL_FIPS_get_timevec(unsigned char* buf, unsigned long* pctr)

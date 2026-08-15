@@ -3755,7 +3755,10 @@ then
     AC_MSG_NOTICE([--enable-rtl8735b also enables AES-ECB build-wide (HAVE_AES_ECB)])
     # WOLF_CRYPTO_CB_COPY/FREE: the HUK HMAC hangs its accumulation buffer on the
     # inner SHA-256 devCtx and relies on the cryptocb copy/free ops (see the port).
-    AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_RTL8735B_HUK -DWOLFSSL_RTL8735B_HOST_TEST -DHAVE_AES_ECB -DWOLF_CRYPTO_CB_COPY -DWOLF_CRYPTO_CB_FREE"
+    # WOLFSSL_RTL8735B_AES: the plaintext-key AES device (runs a caller key on the
+    # HW engine, no HUK binding); built alongside the HUK device so the compile
+    # test covers both, selectable at run time by devId.
+    AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_RTL8735B_HUK -DWOLFSSL_RTL8735B_AES -DWOLFSSL_RTL8735B_HOST_TEST -DHAVE_AES_ECB -DWOLF_CRYPTO_CB_COPY -DWOLF_CRYPTO_CB_FREE"
 fi
 
 
@@ -11390,8 +11393,13 @@ if test "$ENABLED_SP_ASM" = "yes" && test "$ENABLED_SP" = "yes"; then
     AM_CCASFLAGS="$AM_CCASFLAGS -DWOLFSSL_SP_X86_64_ASM"
     ENABLED_SP_X86_64_ASM=yes
     ;;
+  *riscv64*)
+    AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_SP_RISCV64_ASM"
+    AM_CCASFLAGS="$AM_CCASFLAGS -DWOLFSSL_SP_RISCV64_ASM"
+    ENABLED_SP_RISCV64_ASM=yes
+    ;;
   *)
-    AC_MSG_ERROR([SP ASM not available for CPU. Supported CPUs: x86_64, aarch64, arm])
+    AC_MSG_ERROR([SP ASM not available for CPU. Supported CPUs: x86_64, aarch64, arm, riscv64])
     ;;
   esac
 
@@ -12248,10 +12256,13 @@ then
         ENABLED_CERTEXT="yes"
     fi
 
-    # Requires md5
-    if test "$ENABLED_MD5" = "no"
+    # Has option for md5 hashing, enabled by default for non-FIPS 140-3
+    if test "$ENABLED_FIPS" = "no" || test $HAVE_FIPS_VERSION -lt 5
     then
         ENABLED_MD5="yes"
+    elif test "$enable_md5" != "yes"
+    then
+        ENABLED_MD5="no"
     fi
 
     # Requires aesctr
@@ -12273,7 +12284,7 @@ then
     fi
 
     # Has option for signing with ED25519
-    if test "$ENABLED_ED25519" = "no"
+    if test "$ENABLED_ED25519" = "no" && (test "$ENABLED_FIPS" = "no" || test $HAVE_FIPS_VERSION -ge 6)
     then
         ENABLED_ED25519=yes
         ENABLED_FEMATH=yes
@@ -12302,7 +12313,12 @@ then
     # Uses alt name
     ENABLED_ALTNAMES="yes"
 
-    AM_CFLAGS="$AM_CFLAGS -DHAVE_OID_ENCODING -DWOLFSSL_NO_ASN_STRICT"
+    AM_CFLAGS="$AM_CFLAGS -DHAVE_OID_ENCODING"
+
+    if test "$ENABLED_FIPS" = "no"
+    then
+        AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_NO_ASN_STRICT"
+    fi
 
     # wolfCLU allows MD5 with wc_Signature*; lower the hash strength floor
     # when MD5 is compiled in.
@@ -13355,6 +13371,7 @@ AM_CONDITIONAL([BUILD_SP_ARM32],[test "x$ENABLED_SP_ARM32_ASM" = "xyes" || test 
 AM_CONDITIONAL([BUILD_SP_ARM_THUMB],[test "x$ENABLED_SP_ARM_THUMB_ASM" = "xyes" || test "x$ENABLED_USERSETTINGS" = "xyes"])
 AM_CONDITIONAL([BUILD_SP_ARM_CORTEX],[test "x$ENABLED_SP_ARM_CORTEX_ASM" = "xyes" || test "x$ENABLED_USERSETTINGS" = "xyes"])
 AM_CONDITIONAL([BUILD_SP_X86_64],[test "x$ENABLED_SP_X86_64_ASM" = "xyes" || test "x$ENABLED_USERSETTINGS" = "xyes"])
+AM_CONDITIONAL([BUILD_SP_RISCV64],[test "x$ENABLED_SP_RISCV64_ASM" = "xyes" || test "x$ENABLED_USERSETTINGS" = "xyes"])
 AM_CONDITIONAL([BUILD_SP_INT],[test "x$ENABLED_SP_MATH" = "xyes" || test "x$ENABLED_SP_MATH_ALL" = "xyes" || test "x$ENABLED_USERSETTINGS" = "xyes"])
 AM_COND_IF([BUILD_SP], [INCLUDE_SP_INT="yes"])
 AM_COND_IF([BUILD_SP_INT], [INCLUDE_SP_INT="yes"])
