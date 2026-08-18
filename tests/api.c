@@ -222,6 +222,7 @@
 #include <tests/api/test_kdf.h>
 #include <tests/api/test_she.h>
 #include <tests/api/test_des3.h>
+#include <tests/api/test_async.h>
 #include <tests/api/test_chacha.h>
 #include <tests/api/test_poly1305.h>
 #include <tests/api/test_chacha20_poly1305.h>
@@ -4323,6 +4324,145 @@ static int test_wolfSSL_add0_add1_chain_cert_increments_count(void)
 
     SSL_free(ssl);
     SSL_CTX_free(ctx);
+#endif
+    return EXPECT_RESULT();
+}
+
+/* Test SSL_clear_chain_certs: must drop chain certs added via add0/add1,
+ * leave leaf certificate intact, and tolerate repeated calls / NULL input. */
+static int test_wolfSSL_clear_chain_certs(void)
+{
+    EXPECT_DECLS;
+#if !defined(NO_FILESYSTEM) && !defined(NO_CERTS) && defined(OPENSSL_EXTRA) && \
+    defined(KEEP_OUR_CERT) && !defined(NO_RSA) && !defined(NO_TLS) && \
+    !defined(NO_WOLFSSL_CLIENT) && !defined(OPENSSL_COEXIST) && \
+    (defined(OPENSSL_ALL) || defined(WOLFSSL_ASIO) || \
+     defined(WOLFSSL_HAPROXY) || defined(WOLFSSL_NGINX))
+    WOLFSSL_CTX* ctx = NULL;
+    WOLFSSL*     ssl = NULL;
+    WOLFSSL_X509* x509 = NULL;
+    WOLF_STACK_OF(X509)* chain = NULL;
+    const char* chainCerts[] = {
+        "./certs/intermediate/ca-int2-cert.pem",
+        "./certs/intermediate/ca-int-cert.pem",
+        NULL
+    };
+    const char** cert;
+
+    /* NULL arg. */
+    ExpectIntEQ(SSL_clear_chain_certs(NULL), 0);
+
+    ExpectNotNull(ctx = wolfSSL_CTX_new(wolfSSLv23_client_method()));
+    ExpectNotNull(ssl = wolfSSL_new(ctx));
+
+    /* Clear on an SSL with no chain is a no-op success. */
+    ExpectIntEQ(SSL_clear_chain_certs(ssl), 1);
+
+    /* Set leaf so subsequent adds go to the chain. */
+    ExpectNotNull(x509 = wolfSSL_X509_load_certificate_file(
+        "./certs/intermediate/client-int-cert.pem", WOLFSSL_FILETYPE_PEM));
+    ExpectIntEQ(SSL_add1_chain_cert(ssl, x509), 1);
+    wolfSSL_X509_free(x509);
+    x509 = NULL;
+
+    for (cert = chainCerts; EXPECT_SUCCESS() && *cert != NULL; cert++) {
+        ExpectNotNull(x509 = wolfSSL_X509_load_certificate_file(*cert,
+            WOLFSSL_FILETYPE_PEM));
+        ExpectIntEQ(SSL_add1_chain_cert(ssl, x509), 1);
+        wolfSSL_X509_free(x509);
+        x509 = NULL;
+    }
+
+    /* Chain populated with the 2 intermediates. */
+    ExpectIntEQ(SSL_get0_chain_certs(ssl, &chain), 1);
+    ExpectIntEQ(sk_X509_num(chain), 2);
+    if (ssl != NULL) {
+        ExpectIntEQ(ssl->buffers.certChainCnt, 2);
+        ExpectNotNull(ssl->buffers.certChain);
+        ExpectNotNull(ssl->ourCertChain);
+    }
+
+    /* Clear. */
+    ExpectIntEQ(SSL_clear_chain_certs(ssl), 1);
+    if (ssl != NULL) {
+        ExpectNull(ssl->buffers.certChain);
+        ExpectNull(ssl->ourCertChain);
+        ExpectIntEQ(ssl->buffers.weOwnCertChain, 0);
+        /* Leaf untouched. */
+        ExpectNotNull(ssl->ourCert);
+    }
+    chain = NULL;
+    ExpectIntEQ(SSL_get0_chain_certs(ssl, &chain), 1);
+    /* Like OpenSSL, the chain is emptied (NULL) after a clear. */
+    ExpectNull(chain);
+
+    /* Idempotent: clearing again still succeeds. */
+    ExpectIntEQ(SSL_clear_chain_certs(ssl), 1);
+
+    /* Re-adding after clear works. */
+    ExpectNotNull(x509 = wolfSSL_X509_load_certificate_file(
+        "./certs/intermediate/ca-int2-cert.pem", WOLFSSL_FILETYPE_PEM));
+    ExpectIntEQ(SSL_add1_chain_cert(ssl, x509), 1);
+    wolfSSL_X509_free(x509);
+    chain = NULL;
+    ExpectIntEQ(SSL_get0_chain_certs(ssl, &chain), 1);
+    ExpectIntEQ(sk_X509_num(chain), 1);
+
+    SSL_free(ssl);
+    SSL_CTX_free(ctx);
+#endif
+    return EXPECT_RESULT();
+}
+
+#if !defined(NO_FILESYSTEM) && !defined(NO_CERTS) && defined(OPENSSL_EXTRA) && \
+    defined(KEEP_OUR_CERT) && !defined(NO_RSA) && !defined(NO_TLS) && \
+    !defined(NO_WOLFSSL_SERVER) && !defined(OPENSSL_COEXIST) && \
+    (defined(OPENSSL_ALL) || defined(WOLFSSL_ASIO) || \
+     defined(WOLFSSL_HAPROXY) || defined(WOLFSSL_NGINX))
+/* Server-side ssl_ready hook: add chain certs then clear them, so the
+ * handshake runs against a freshly-cleared chain state. */
+static int test_wolfSSL_clear_chain_certs_handshake_ssl_ready(WOLFSSL* ssl)
+{
+    EXPECT_DECLS;
+    WOLFSSL_X509* x509 = NULL;
+
+    ExpectNotNull(x509 = wolfSSL_X509_load_certificate_file(
+        "./certs/intermediate/ca-int2-cert.pem", WOLFSSL_FILETYPE_PEM));
+    ExpectIntEQ(SSL_add1_chain_cert(ssl, x509), 1);
+    wolfSSL_X509_free(x509);
+
+    /* Drop the chain again; connection must still complete afterwards. */
+    ExpectIntEQ(SSL_clear_chain_certs(ssl), 1);
+
+    return EXPECT_RESULT();
+}
+#endif
+
+/* Test that a connection still completes after SSL_clear_chain_certs. */
+static int test_wolfSSL_clear_chain_certs_handshake(void)
+{
+    EXPECT_DECLS;
+#if !defined(NO_FILESYSTEM) && !defined(NO_CERTS) && defined(OPENSSL_EXTRA) && \
+    defined(KEEP_OUR_CERT) && !defined(NO_RSA) && !defined(NO_TLS) && \
+    !defined(NO_WOLFSSL_SERVER) && !defined(NO_WOLFSSL_CLIENT) && \
+    !defined(OPENSSL_COEXIST) && \
+    (defined(OPENSSL_ALL) || defined(WOLFSSL_ASIO) || \
+     defined(WOLFSSL_HAPROXY) || defined(WOLFSSL_NGINX))
+    test_ssl_cbf client_cbs;
+    test_ssl_cbf server_cbs;
+
+    XMEMSET(&client_cbs, 0, sizeof(client_cbs));
+    XMEMSET(&server_cbs, 0, sizeof(server_cbs));
+
+    client_cbs.method = wolfTLS_client_method;
+    server_cbs.method = wolfTLS_server_method;
+
+    server_cbs.ssl_ready = test_wolfSSL_clear_chain_certs_handshake_ssl_ready;
+
+    /* nofail_memio runs the full handshake and a read/write exchange, so a
+     * successful return proves the connection completed after the clear. */
+    ExpectIntEQ(test_wolfSSL_client_server_nofail_memio(&client_cbs,
+        &server_cbs, NULL), TEST_SUCCESS);
 #endif
     return EXPECT_RESULT();
 }
@@ -18082,6 +18222,73 @@ static int test_wolfSSL_sk_SSL_CIPHER(void)
 
     /* error case because connection has not been established yet */
     ExpectIntEQ(sk_SSL_CIPHER_find(sk, SSL_get_current_cipher(ssl)), -1);
+
+    /* Exercise sk_SSL_CIPHER_delete on the duplicated stack so we don't
+     * disturb the SSL object's internal cipher list. */
+    {
+        int dupNum = sk_SSL_CIPHER_num(dupSk);
+        if (dupNum > 0) {
+            SSL_CIPHER* removed = NULL;
+
+            /* Out-of-range and negative idx should return NULL. */
+            ExpectNull(sk_SSL_CIPHER_delete(dupSk, -1));
+            ExpectNull(sk_SSL_CIPHER_delete(dupSk, dupNum));
+            ExpectNull(sk_SSL_CIPHER_delete(NULL, 0));
+
+            /* Delete the head element and verify count decreased. */
+            ExpectNotNull(removed = sk_SSL_CIPHER_delete(dupSk, 0));
+            ExpectIntEQ(sk_SSL_CIPHER_num(dupSk), dupNum - 1);
+            XFREE(removed, NULL, DYNAMIC_TYPE_OPENSSL);
+            removed = NULL;
+        }
+        /* Deleting a non-head index walks a different path in
+         * wolfSSL_sk_pop_node, so exercise a middle and the tail too. */
+        if (EXPECT_SUCCESS() && (sk_SSL_CIPHER_num(dupSk) > 2)) {
+            int num = sk_SSL_CIPHER_num(dupSk);
+            int mid = num / 2;
+            SSL_CIPHER* removed = NULL;
+            SSL_CIPHER* atMid = sk_SSL_CIPHER_value(dupSk, mid);
+            SSL_CIPHER* afterMid = sk_SSL_CIPHER_value(dupSk, mid + 1);
+            byte midSuite0 = 0;
+            byte midSuite = 0;
+            byte afterSuite0 = 0;
+            byte afterSuite = 0;
+
+            ExpectNotNull(atMid);
+            ExpectNotNull(afterMid);
+            if ((atMid != NULL) && (afterMid != NULL)) {
+                midSuite0 = atMid->cipherSuite0;
+                midSuite = atMid->cipherSuite;
+                afterSuite0 = afterMid->cipherSuite0;
+                afterSuite = afterMid->cipherSuite;
+            }
+
+            /* Removed entry is the one that was at the index. */
+            ExpectNotNull(removed = sk_SSL_CIPHER_delete(dupSk, mid));
+            if (removed != NULL) {
+                ExpectIntEQ(removed->cipherSuite0, midSuite0);
+                ExpectIntEQ(removed->cipherSuite, midSuite);
+            }
+            XFREE(removed, NULL, DYNAMIC_TYPE_OPENSSL);
+            removed = NULL;
+            ExpectIntEQ(sk_SSL_CIPHER_num(dupSk), num - 1);
+
+            /* The following entry shifted down into the freed index. */
+            atMid = sk_SSL_CIPHER_value(dupSk, mid);
+            ExpectNotNull(atMid);
+            if (atMid != NULL) {
+                ExpectIntEQ(atMid->cipherSuite0, afterSuite0);
+                ExpectIntEQ(atMid->cipherSuite, afterSuite);
+            }
+
+            /* Tail index. */
+            num = sk_SSL_CIPHER_num(dupSk);
+            ExpectNotNull(removed = sk_SSL_CIPHER_delete(dupSk, num - 1));
+            XFREE(removed, NULL, DYNAMIC_TYPE_OPENSSL);
+            ExpectIntEQ(sk_SSL_CIPHER_num(dupSk), num - 1);
+        }
+    }
+
     sk_SSL_CIPHER_free(dupSk);
 
     /* sk is pointer to internal struct that should be free'd in SSL_free */
@@ -18090,6 +18297,147 @@ static int test_wolfSSL_sk_SSL_CIPHER(void)
 #endif /* !NO_WOLFSSL_CLIENT || !NO_WOLFSSL_SERVER */
 #endif /* defined(OPENSSL_EXTRA) && !defined(NO_CERTS) && \
          !defined(NO_FILESYSTEM) && !defined(NO_RSA) */
+    return EXPECT_RESULT();
+}
+
+static int test_wolfSSL_SSL_CIPHER_find(void)
+{
+    EXPECT_DECLS;
+/* SSL_get_ciphers, sk_SSL_CIPHER_num and sk_SSL_CIPHER_value are only defined
+ * for OPENSSL_ALL/WOLFSSL_HAPROXY, so the wolfSSL_ names are used for those.
+ * SSL_CIPHER_find is defined for every OPENSSL_EXTRA build. */
+#if defined(OPENSSL_EXTRA) && !defined(OPENSSL_COEXIST) && \
+    !defined(NO_CERTS) && !defined(NO_TLS) && !defined(NO_FILESYSTEM) && \
+    !defined(NO_RSA) && \
+    (!defined(NO_WOLFSSL_CLIENT) || !defined(NO_WOLFSSL_SERVER))
+    WOLFSSL*     ssl = NULL;
+    WOLFSSL_CTX* ctx = NULL;
+    WOLF_STACK_OF(WOLFSSL_CIPHER)* sk = NULL;
+    const WOLFSSL_CIPHER* found = NULL;
+    unsigned char id[2] = { 0, 0 };
+    const unsigned char bogus[2] = { 0xFF, 0xFF };
+
+#ifndef NO_WOLFSSL_SERVER
+    ExpectNotNull(ctx = wolfSSL_CTX_new(wolfSSLv23_server_method()));
+#else
+    ExpectNotNull(ctx = wolfSSL_CTX_new(wolfSSLv23_client_method()));
+#endif
+    ExpectIntEQ(wolfSSL_CTX_use_certificate_file(ctx, svrCertFile,
+        WOLFSSL_FILETYPE_PEM), WOLFSSL_SUCCESS);
+    ExpectIntEQ(wolfSSL_CTX_use_PrivateKey_file(ctx, svrKeyFile,
+        WOLFSSL_FILETYPE_PEM), WOLFSSL_SUCCESS);
+    ExpectNotNull(ssl = wolfSSL_new(ctx));
+    ExpectNotNull(sk = wolfSSL_get_ciphers_compat(ssl));
+    ExpectIntGT(wolfSSL_sk_SSL_CIPHER_num(sk), 0);
+
+    /* A suite in the SSL's own list is found. */
+    if (EXPECT_SUCCESS() && (sk != NULL)) {
+        const WOLFSSL_CIPHER* first = wolfSSL_sk_SSL_CIPHER_value(sk, 0);
+
+        ExpectNotNull(first);
+        if (first != NULL) {
+            id[0] = first->cipherSuite0;
+            id[1] = first->cipherSuite;
+
+            ExpectNotNull(found = SSL_CIPHER_find(ssl, id));
+            if (found != NULL) {
+                ExpectIntEQ(found->cipherSuite0, id[0]);
+                ExpectIntEQ(found->cipherSuite,  id[1]);
+            }
+        }
+    }
+
+    /* A suite known to the library but not enabled on the SSL must still be
+     * found - OpenSSL's SSL_CIPHER_find searches all library-known ciphers.
+     * A fresh SSL is restricted before its cipher stack is built, because
+     * wolfSSL_get_ciphers_compat caches the stack on first call. */
+    if (EXPECT_SUCCESS() && (wolfSSL_sk_SSL_CIPHER_num(sk) > 1)) {
+        WOLFSSL* sslLtd = NULL;
+        WOLF_STACK_OF(WOLFSSL_CIPHER)* skLtd = NULL;
+        const WOLFSSL_CIPHER* keep = wolfSSL_sk_SSL_CIPHER_value(sk, 0);
+        const WOLFSSL_CIPHER* absent = NULL;
+        unsigned char absentId[2] = { 0, 0 };
+        int i;
+
+        ExpectNotNull(keep);
+        ExpectNotNull(sslLtd = wolfSSL_new(ctx));
+        if (keep != NULL) {
+            ExpectIntEQ(wolfSSL_set_cipher_list(sslLtd,
+                wolfSSL_CIPHER_get_name(keep)), WOLFSSL_SUCCESS);
+        }
+        ExpectNotNull(skLtd = wolfSSL_get_ciphers_compat(sslLtd));
+        /* Restricting must really drop suites or the check below would be
+         * satisfied by the SSL's own list instead of the fallback. */
+        ExpectIntLT(wolfSSL_sk_SSL_CIPHER_num(skLtd),
+                    wolfSSL_sk_SSL_CIPHER_num(sk));
+
+        /* Find a suite the restricted SSL dropped. */
+        for (i = 0; EXPECT_SUCCESS() &&
+                (i < wolfSSL_sk_SSL_CIPHER_num(sk)); i++) {
+            const WOLFSSL_CIPHER* full = wolfSSL_sk_SSL_CIPHER_value(sk, i);
+            int inLtd = 0;
+            int j;
+
+            if (full == NULL)
+                continue;
+            for (j = 0; j < wolfSSL_sk_SSL_CIPHER_num(skLtd); j++) {
+                const WOLFSSL_CIPHER* ltd =
+                    wolfSSL_sk_SSL_CIPHER_value(skLtd, j);
+
+                if ((ltd != NULL) &&
+                        (ltd->cipherSuite0 == full->cipherSuite0) &&
+                        (ltd->cipherSuite == full->cipherSuite)) {
+                    inLtd = 1;
+                    break;
+                }
+            }
+            if (!inLtd) {
+                absentId[0] = full->cipherSuite0;
+                absentId[1] = full->cipherSuite;
+                absent = full;
+                break;
+            }
+        }
+        ExpectNotNull(absent);
+
+        ExpectNotNull(found = SSL_CIPHER_find(sslLtd, absentId));
+        if (found != NULL) {
+            ExpectIntEQ(found->cipherSuite0, absentId[0]);
+            ExpectIntEQ(found->cipherSuite,  absentId[1]);
+        }
+
+#ifdef OPENSSL_ALL
+        /* SSL_CIPHER_description(SSL_CIPHER_find(...)) must describe the suite
+         * that was looked up. Nothing has been negotiated, so a description
+         * taken from the session state would be empty. */
+        if ((found != NULL) && (absent != NULL)) {
+            char descFind[MAX_DESCRIPTION_SZ];
+            char descStack[MAX_DESCRIPTION_SZ];
+
+            XMEMSET(descFind, 0, sizeof(descFind));
+            XMEMSET(descStack, 0, sizeof(descStack));
+            ExpectNotNull(SSL_CIPHER_description(absent, descStack,
+                (int)sizeof(descStack)));
+            ExpectNotNull(SSL_CIPHER_description(found, descFind,
+                (int)sizeof(descFind)));
+            ExpectStrEQ(descFind, descStack);
+            ExpectNull(XSTRSTR(descFind, "unknown"));
+        }
+#endif
+
+        wolfSSL_free(sslLtd);
+    }
+
+    /* NULL arg handling. */
+    ExpectNull(SSL_CIPHER_find(NULL, id));
+    ExpectNull(SSL_CIPHER_find(ssl, NULL));
+
+    /* Suite unknown to the library returns NULL. */
+    ExpectNull(SSL_CIPHER_find(ssl, bogus));
+
+    wolfSSL_free(ssl);
+    wolfSSL_CTX_free(ctx);
+#endif
     return EXPECT_RESULT();
 }
 
@@ -34423,12 +34771,112 @@ static int test_tls13_trunc_ext_sh_alert(void)
     return test_tls13_sh_expect_alert(test_tls13_trunc_ext_sh,
         (int)sizeof(test_tls13_trunc_ext_sh), decode_error);
 }
+
+/* A well-formed ServerHello that DOES carry a supported_versions extension,
+ * but selects TLS 1.2 in it - a version prior to TLS 1.3. Unlike the absent
+ * extension case above (RFC 8446 6.2, protocol_version), sending the extension
+ * at all means the server has spoken TLS 1.3, so a bad value in it is a
+ * malformed parameter and RFC 8446 4.2.1 requires illegal_parameter (47).
+ *
+ * Layout: legacy_version = 0x0303, 32-byte random, 32-byte session id,
+ * cipher_suite = TLS_AES_128_GCM_SHA256 (0x1301), null compression, and a
+ * 6-byte extensions block holding only supported_versions (type 0x002b). */
+static const byte test_tls13_sv_old_sh[] = {
+    /* record: handshake, TLS 1.2, len 82 */
+    0x16, 0x03, 0x03, 0x00, 0x52,
+    /* server_hello, body len 78 */
+    0x02, 0x00, 0x00, 0x4e,
+    /* legacy_version = TLS 1.2 */
+    0x03, 0x03,
+    /* 32-byte random (not the HelloRetryRequest magic) */
+    0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42,
+    0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42,
+    0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42,
+    0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42,
+    /* legacy_session_id length = 32 */
+    0x20,
+    /* 32-byte session id */
+    0xa5, 0xa5, 0xa5, 0xa5, 0xa5, 0xa5, 0xa5, 0xa5,
+    0xa5, 0xa5, 0xa5, 0xa5, 0xa5, 0xa5, 0xa5, 0xa5,
+    0xa5, 0xa5, 0xa5, 0xa5, 0xa5, 0xa5, 0xa5, 0xa5,
+    0xa5, 0xa5, 0xa5, 0xa5, 0xa5, 0xa5, 0xa5, 0xa5,
+    /* cipher_suite =TLS_AES_128_GCM_SHA256 */
+    0x13, 0x01,
+    /* compression = null */
+    0x00,
+    /* extensions length = 6 */
+    0x00, 0x06,
+    /* supported_versions, length 2 */
+    0x00, 0x2b, 0x00, 0x02,
+    /* selected_version = TLS 1.2 */
+    0x03, 0x03
+};
+
+/* RFC 8446 4.2.1: a supported_versions in the ServerHello holding a version
+ * prior to TLS 1.3 must be rejected with illegal_parameter (47), not
+ * protocol_version (70). */
+static int test_tls13_sv_old_sh_alert(void)
+{
+    return test_tls13_sh_expect_alert(test_tls13_sv_old_sh,
+        (int)sizeof(test_tls13_sv_old_sh), illegal_parameter);
+}
+
+/* Identical to test_tls13_sv_old_sh but selecting 0x0305, an undefined version
+ * above TLS 1.3 that the client never offered, which reaches the "No upgrade
+ * allowed" check rather than the pre-TLS-1.3 one. */
+static const byte test_tls13_sv_unoffered_sh[] = {
+    /* record: handshake, TLS 1.2, len 82 */
+    0x16, 0x03, 0x03, 0x00, 0x52,
+    /* server_hello, body len 78 */
+    0x02, 0x00, 0x00, 0x4e,
+    /* legacy_version = TLS 1.2 */
+    0x03, 0x03,
+    /* 32-byte random (not the HelloRetryRequest magic) */
+    0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42,
+    0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42,
+    0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42,
+    0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42,
+    /* legacy_session_id length = 32 */
+    0x20,
+    /* 32-byte session id */
+    0xa5, 0xa5, 0xa5, 0xa5, 0xa5, 0xa5, 0xa5, 0xa5,
+    0xa5, 0xa5, 0xa5, 0xa5, 0xa5, 0xa5, 0xa5, 0xa5,
+    0xa5, 0xa5, 0xa5, 0xa5, 0xa5, 0xa5, 0xa5, 0xa5,
+    0xa5, 0xa5, 0xa5, 0xa5, 0xa5, 0xa5, 0xa5, 0xa5,
+    /* cipher_suite =TLS_AES_128_GCM_SHA256 */
+    0x13, 0x01,
+    /* compression = null */
+    0x00,
+    /* extensions length = 6 */
+    0x00, 0x06,
+    /* supported_versions, length 2 */
+    0x00, 0x2b, 0x00, 0x02,
+    /* selected_version = 0x0305, not offered by the client */
+    0x03, 0x05
+};
+
+/* RFC 8446 4.2.1: a supported_versions in the ServerHello holding a version
+ * the client did not offer must be rejected with illegal_parameter (47), not
+ * protocol_version (70). */
+static int test_tls13_sv_unoffered_sh_alert(void)
+{
+    return test_tls13_sh_expect_alert(test_tls13_sv_unoffered_sh,
+        (int)sizeof(test_tls13_sv_unoffered_sh), illegal_parameter);
+}
 #else
 static int test_tls13_no_ext_sh_alert(void)
 {
     return TEST_SKIPPED;
 }
 static int test_tls13_trunc_ext_sh_alert(void)
+{
+    return TEST_SKIPPED;
+}
+static int test_tls13_sv_old_sh_alert(void)
+{
+    return TEST_SKIPPED;
+}
+static int test_tls13_sv_unoffered_sh_alert(void)
 {
     return TEST_SKIPPED;
 }
@@ -39189,6 +39637,8 @@ TEST_CASE testCases[] = {
 #endif
 
     /* Cipher */
+    /* Crypto callback async poll completion */
+    TEST_ASYNC_DECLS,
     /* Triple-DES */
     TEST_DES3_DECLS,
     /* Chacha20 */
@@ -39434,6 +39884,7 @@ TEST_CASE testCases[] = {
 #endif
     TEST_DECL(test_wolfSSL_configure_args),
     TEST_DECL(test_wolfSSL_sk_SSL_CIPHER),
+    TEST_DECL(test_wolfSSL_SSL_CIPHER_find),
     TEST_DECL(test_wolfSSL_set1_curves_list),
     TEST_DECL(test_wolfSSL_curves_mismatch),
     TEST_DECL(test_wolfSSL_set1_sigalgs_list),
@@ -39738,6 +40189,8 @@ TEST_CASE testCases[] = {
     TEST_DECL(test_wolfSSL_CTX_load_verify_buffer_pem_crl),
     TEST_DECL(test_wolfSSL_CTX_add1_chain_cert),
     TEST_DECL(test_wolfSSL_add0_add1_chain_cert_increments_count),
+    TEST_DECL(test_wolfSSL_clear_chain_certs),
+    TEST_DECL(test_wolfSSL_clear_chain_certs_handshake),
     TEST_DECL(test_wolfSSL_add_to_chain_overflow),
     TEST_DECL(test_wolfSSL_CTX_use_certificate_chain_buffer_format),
     TEST_DECL(test_wolfSSL_CTX_use_certificate_chain_buffer_max_depth),
@@ -39989,6 +40442,8 @@ TEST_CASE testCases[] = {
     TEST_DECL(test_wrong_cs_downgrade),
     TEST_DECL(test_tls13_no_ext_sh_alert),
     TEST_DECL(test_tls13_trunc_ext_sh_alert),
+    TEST_DECL(test_tls13_sv_old_sh_alert),
+    TEST_DECL(test_tls13_sv_unoffered_sh_alert),
     TEST_DECL(test_extra_alerts_wrong_cs),
     TEST_DECL(test_extra_alerts_skip_hs),
     TEST_DECL(test_extra_alerts_bad_psk),
