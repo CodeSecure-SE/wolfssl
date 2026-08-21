@@ -2680,7 +2680,7 @@ fi
 
 # Hello Retry Request Cookie
 AC_ARG_ENABLE([hrrcookie],
-    [AS_HELP_STRING([--enable-hrrcookie],[Enable the server to send Cookie Extension in HRR with state (default: disabled)])],
+    [AS_HELP_STRING([--enable-hrrcookie],[Enable the server to send Cookie Extension in HRR with state. A client always echoes back a cookie it is sent (default: disabled)])],
     [ ENABLED_SEND_HRR_COOKIE=$enableval ],
     [ ENABLED_SEND_HRR_COOKIE=undefined ]
     )
@@ -13310,7 +13310,6 @@ AM_CONDITIONAL([BUILD_RSA],[test "x$ENABLED_RSA" = "xyes" || test "x$ENABLED_USE
 AM_CONDITIONAL([BUILD_DH],[test "x$ENABLED_DH" != "xno" || test "x$ENABLED_USERSETTINGS" = "xyes"])
 AM_CONDITIONAL([BUILD_ASN],[test "x$ENABLED_ASN" != "xno" || test "x$ENABLED_RSA" = "xyes" || test "x$ENABLED_USERSETTINGS" = "xyes"])
 AM_CONDITIONAL([BUILD_AES],[test "x$ENABLED_AES" = "xyes" || test "x$ENABLED_USERSETTINGS" = "xyes"])
-AM_CONDITIONAL([BUILD_CODING],[test "x$ENABLED_CODING" = "xyes" || test "x$ENABLED_USERSETTINGS" = "xyes"])
 AM_CONDITIONAL([BUILD_RC4],[test "x$ENABLED_ARC4" = "xyes" || test "x$ENABLED_USERSETTINGS" = "xyes"])
 AM_CONDITIONAL([BUILD_MD5],[test "x$ENABLED_MD5" = "xyes" || test "x$ENABLED_USERSETTINGS" = "xyes"])
 AM_CONDITIONAL([BUILD_SHA],[test "x$ENABLED_SHA" = "xyes" || test "x$ENABLED_USERSETTINGS" = "xyes"])
