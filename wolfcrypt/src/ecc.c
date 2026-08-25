@@ -15071,6 +15071,41 @@ int wc_ecc_ctx_get_info(ecEncCtx* ctx, const byte** info, word32* sz)
 
     return 0;
 }
+
+int wc_ecc_ctx_get_mac_salt(ecEncCtx* ctx, const byte** salt, word32* sz)
+{
+    if (ctx == NULL || salt == NULL || sz == NULL)
+        return BAD_FUNC_ARG;
+
+    *salt = ctx->macSalt;
+    *sz   = ctx->macSaltSz;
+
+    return 0;
+}
+
+/* Read the client or server role, which picks which half of the derived key
+ * this message uses. */
+int wc_ecc_ctx_get_protocol(ecEncCtx* ctx, int* protocol)
+{
+    if (ctx == NULL || protocol == NULL)
+        return BAD_FUNC_ARG;
+
+    *protocol = ctx->protocol;
+
+    return 0;
+}
+
+/* Read the RNG a caller set on the context, for backends that need one
+ * instead of standing up a DRBG of their own. */
+int wc_ecc_ctx_get_rng(ecEncCtx* ctx, WC_RNG** rng)
+{
+    if (ctx == NULL || rng == NULL)
+        return BAD_FUNC_ARG;
+
+    *rng = ctx->rng;
+
+    return 0;
+}
 #endif /* WOLF_CRYPTO_CB */
 
 
