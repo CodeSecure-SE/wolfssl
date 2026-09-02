@@ -138,7 +138,7 @@ static const byte const_byte_array[] = "A+Gd\0\0\0";
                 esp_start_heap = esp_this_heap;                              \
             }                                                                \
             ESP_LOGI(ESPIDF_TAG, "%s #%d; Heap free: %d",                    \
-                                ((b) ? (b) : ""),  /* breadcumb string */    \
+                                ((b) ? (b) : ""),  /* breadcrumb string */    \
                                 ((i) ? (i) : 0),   /* index */               \
                                  esp_this_heap);
 
@@ -13828,11 +13828,9 @@ static wc_test_ret_t aes_ofb_256_test(Aes* enc, Aes* dec, byte* cipher,
             plain1 + WC_AES_BLOCK_SIZE, WC_AES_BLOCK_SIZE);
     if (ret != 0)
         return WC_TEST_RET_ENC_EC(ret);
-#ifndef WOLFSSL_NXP_HASHCRYPT_AES
     if (XMEMCMP(cipher + WC_AES_BLOCK_SIZE, cipher1 + WC_AES_BLOCK_SIZE,
                 WC_AES_BLOCK_SIZE))
         return WC_TEST_RET_ENC_NC;
-#endif /* !WOLFSSL_NXP_HASHCRYPT_AES */
 
 #ifdef HAVE_AES_DECRYPT
     ret = wc_AesOfbDecrypt(dec, plain, cipher1, WC_AES_BLOCK_SIZE);
@@ -13845,11 +13843,9 @@ static wc_test_ret_t aes_ofb_256_test(Aes* enc, Aes* dec, byte* cipher,
             cipher1 + WC_AES_BLOCK_SIZE, WC_AES_BLOCK_SIZE);
     if (ret != 0)
         return WC_TEST_RET_ENC_EC(ret);
-#ifndef WOLFSSL_NXP_HASHCRYPT_AES
     if (XMEMCMP(plain + WC_AES_BLOCK_SIZE, plain1 + WC_AES_BLOCK_SIZE,
                 WC_AES_BLOCK_SIZE))
         return WC_TEST_RET_ENC_NC;
-#endif /* !WOLFSSL_NXP_HASHCRYPT_AES */
 #endif /* HAVE_AES_DECRYPT */
 
     /* Multiple blocks at once */
@@ -13922,10 +13918,8 @@ static wc_test_ret_t aes_ofb_256_test(Aes* enc, Aes* dec, byte* cipher,
     ret = wc_AesOfbEncrypt(enc, cipher + 3, plain1 + 3, WC_AES_BLOCK_SIZE);
     if (ret != 0)
         return WC_TEST_RET_ENC_EC(ret);
-#ifndef WOLFSSL_NXP_HASHCRYPT_AES
     if (XMEMCMP(cipher + 3, cipher1 + 3, WC_AES_BLOCK_SIZE))
         return WC_TEST_RET_ENC_NC;
-#endif /* !WOLFSSL_NXP_HASHCRYPT_AES */
 
 #ifdef HAVE_AES_DECRYPT
     ret = wc_AesOfbDecrypt(dec, plain, cipher1, 6);
@@ -13937,10 +13931,8 @@ static wc_test_ret_t aes_ofb_256_test(Aes* enc, Aes* dec, byte* cipher,
     ret = wc_AesOfbDecrypt(dec, plain + 6, cipher1 + 6, WC_AES_BLOCK_SIZE);
     if (ret != 0)
         return WC_TEST_RET_ENC_EC(ret);
-#ifndef WOLFSSL_NXP_HASHCRYPT_AES
     if (XMEMCMP(plain + 6, plain1 + 6, WC_AES_BLOCK_SIZE))
         return WC_TEST_RET_ENC_NC;
-#endif /* !WOLFSSL_NXP_HASHCRYPT_AES */
 #endif /* HAVE_AES_DECRYPT */
 
     return 0;
@@ -14302,7 +14294,6 @@ out:
             ERROR_OUT(WC_TEST_RET_ENC_NC, out);
 
         /* test restarting encryption process */
-    #ifndef WOLFSSL_NXP_HASHCRYPT_AES
         ret = wc_AesCfbEncrypt(enc, cipher + (WC_AES_BLOCK_SIZE * 2),
                 msg1 + (WC_AES_BLOCK_SIZE * 2), WC_AES_BLOCK_SIZE);
         if (ret != 0)
@@ -14320,7 +14311,6 @@ out:
         if (XMEMCMP(plain, msg1, WC_AES_BLOCK_SIZE * 3))
             ERROR_OUT(WC_TEST_RET_ENC_NC, out);
     #endif /* HAVE_AES_DECRYPT */
-    #endif /* !WOLFSSL_NXP_HASHCRYPT_AES */
 #endif /* WOLFSSL_AES_128 */
 
 #ifdef WOLFSSL_AES_192
@@ -14386,7 +14376,6 @@ out:
             ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
     #endif
 
-    #ifndef WOLFSSL_NXP_HASHCRYPT_AES
         /* test with data left overs, magic lengths are checking near edges */
         XMEMSET(cipher, 0, sizeof(cipher));
         ret = wc_AesCfbEncrypt(enc, cipher, msg3, 4);
@@ -14438,7 +14427,6 @@ out:
         if (XMEMCMP(plain, msg3, WC_AES_BLOCK_SIZE * 4))
             ERROR_OUT(WC_TEST_RET_ENC_NC, out);
     #endif /* HAVE_AES_DECRYPT */
-    #endif /* !WOLFSSL_NXP_HASHCRYPT_AES */
 #endif /* WOLFSSL_AES_256 */
 
   out:
@@ -19663,8 +19651,142 @@ static wc_test_ret_t aesgcm_default_test_helper(byte* key, int keySz, byte* iv, 
 /* tests that only use 12 byte IV and 16 or less byte AAD
  * test vectors are from NIST SP 800-38D
  * https://csrc.nist.gov/Projects/Cryptographic-Algorithm-Validation-Program/CAVP-TESTING-BLOCK-CIPHER-MODES*/
+/* Encrypt, decrypt and then encrypt again using one Aes structure, without
+ * setting the key again in between. Ports that hold on to state tied to the
+ * operation direction (AF_ALG keeps an open socket with the operation stored
+ * in a control message) have to update that state on every call. */
+static wc_test_ret_t aesgcm_reuse_ctx_test(void)
+{
+    wc_test_ret_t ret = 0;
+#if defined(WOLFSSL_AES_256) && defined(HAVE_AES_DECRYPT) && \
+    !defined(HAVE_RENESAS_SYNC) && !defined(WOLFSSL_XILINX_CRYPT) && \
+    !defined(WOLFSSL_AFALG_XILINX_AES)
+#if defined(WOLFSSL_SMALL_STACK) && !defined(WOLFSSL_NO_MALLOC)
+    Aes *enc = NULL;
+#else
+    Aes enc[1];
+#endif
+    WOLFSSL_SMALL_STACK_STATIC const byte k1[] =
+    {
+        0xfe, 0xff, 0xe9, 0x92, 0x86, 0x65, 0x73, 0x1c,
+        0x6d, 0x6a, 0x8f, 0x94, 0x67, 0x30, 0x83, 0x08,
+        0xfe, 0xff, 0xe9, 0x92, 0x86, 0x65, 0x73, 0x1c,
+        0x6d, 0x6a, 0x8f, 0x94, 0x67, 0x30, 0x83, 0x08
+    };
+    WOLFSSL_SMALL_STACK_STATIC const byte p[] =
+    {
+        0xd9, 0x31, 0x32, 0x25, 0xf8, 0x84, 0x06, 0xe5,
+        0xa5, 0x59, 0x09, 0xc5, 0xaf, 0xf5, 0x26, 0x9a,
+        0x86, 0xa7, 0xa9, 0x53, 0x15, 0x34, 0xf7, 0xda,
+        0x2e, 0x4c, 0x30, 0x3d, 0x8a, 0x31, 0x8a, 0x72,
+        0x1c, 0x3c, 0x0c, 0x95, 0x95, 0x68, 0x09, 0x53,
+        0x2f, 0xcf, 0x0e, 0x24, 0x49, 0xa6, 0xb5, 0x25,
+        0xb1, 0x6a, 0xed, 0xf5, 0xaa, 0x0d, 0xe6, 0x57,
+        0xba, 0x63, 0x7b, 0x39
+    };
+    WOLFSSL_SMALL_STACK_STATIC const byte a[] =
+    {
+        0xfe, 0xed, 0xfa, 0xce, 0xde, 0xad, 0xbe, 0xef,
+        0xfe, 0xed, 0xfa, 0xce, 0xde, 0xad, 0xbe, 0xef,
+        0xab, 0xad, 0xda, 0xd2
+    };
+    WOLFSSL_SMALL_STACK_STATIC const byte iv1[] =
+    {
+        0xca, 0xfe, 0xba, 0xbe, 0xfa, 0xce, 0xdb, 0xad,
+        0xde, 0xca, 0xf8, 0x88
+    };
+    WOLFSSL_SMALL_STACK_STATIC const byte c1[] =
+    {
+        0x52, 0x2d, 0xc1, 0xf0, 0x99, 0x56, 0x7d, 0x07,
+        0xf4, 0x7f, 0x37, 0xa3, 0x2a, 0x84, 0x42, 0x7d,
+        0x64, 0x3a, 0x8c, 0xdc, 0xbf, 0xe5, 0xc0, 0xc9,
+        0x75, 0x98, 0xa2, 0xbd, 0x25, 0x55, 0xd1, 0xaa,
+        0x8c, 0xb0, 0x8e, 0x48, 0x59, 0x0d, 0xbb, 0x3d,
+        0xa7, 0xb0, 0x8b, 0x10, 0x56, 0x82, 0x88, 0x38,
+        0xc5, 0xf6, 0x1e, 0x63, 0x93, 0xba, 0x7a, 0x0a,
+        0xbc, 0xc9, 0xf6, 0x62
+    };
+    WOLFSSL_SMALL_STACK_STATIC const byte t1[] =
+    {
+        0x76, 0xfc, 0x6e, 0xce, 0x0f, 0x4e, 0x17, 0x68,
+        0xcd, 0xdf, 0x88, 0x53, 0xbb, 0x2d, 0x55, 0x1b
+    };
+    byte resultT[sizeof(t1)];
+    byte resultC[sizeof(p) + WC_AES_BLOCK_SIZE];
+    byte resultP[sizeof(p) + WC_AES_BLOCK_SIZE];
+
+    XMEMSET(resultT, 0, sizeof(resultT));
+    XMEMSET(resultC, 0, sizeof(resultC));
+    XMEMSET(resultP, 0, sizeof(resultP));
+
+#if defined(WOLFSSL_SMALL_STACK) && !defined(WOLFSSL_NO_MALLOC)
+    enc = test_AesGcmNew(HEAP_HINT, devId, &ret);
+    if (enc == NULL)
+        return WC_TEST_RET_ENC_EC(ret);
+#else
+    XMEMSET(enc, 0, sizeof(Aes));
+    ret = test_AesGcmInit(enc, HEAP_HINT, devId);
+    if (ret != 0)
+        return WC_TEST_RET_ENC_EC(ret);
+#endif
+
+    ret = wc_AesGcmSetKey(enc, k1, (word32)sizeof(k1));
+    if (ret != 0)
+        ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
+
+    ret = wc_AesGcmEncrypt(enc, resultC, p, sizeof(p), iv1, sizeof(iv1),
+            resultT, sizeof(resultT), a, sizeof(a));
+#if defined(WOLFSSL_ASYNC_CRYPT)
+    ret = wc_AsyncWait(ret, &enc->asyncDev, WC_ASYNC_FLAG_NONE);
+#endif
+    if (ret != 0)
+        ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
+    if (XMEMCMP(c1, resultC, sizeof(c1)))
+        ERROR_OUT(WC_TEST_RET_ENC_NC, out);
+    if (XMEMCMP(t1, resultT, sizeof(t1)))
+        ERROR_OUT(WC_TEST_RET_ENC_NC, out);
+
+    /* decrypt with the same structure that was just used to encrypt */
+    ret = wc_AesGcmDecrypt(enc, resultP, resultC, sizeof(p), iv1, sizeof(iv1),
+            resultT, sizeof(resultT), a, sizeof(a));
+#if defined(WOLFSSL_ASYNC_CRYPT)
+    ret = wc_AsyncWait(ret, &enc->asyncDev, WC_ASYNC_FLAG_NONE);
+#endif
+    if (ret != 0)
+        ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
+    if (XMEMCMP(p, resultP, sizeof(p)))
+        ERROR_OUT(WC_TEST_RET_ENC_NC, out);
+
+    /* and back to encrypt with the same structure again */
+    XMEMSET(resultT, 0, sizeof(resultT));
+    XMEMSET(resultC, 0, sizeof(resultC));
+    ret = wc_AesGcmEncrypt(enc, resultC, p, sizeof(p), iv1, sizeof(iv1),
+            resultT, sizeof(resultT), a, sizeof(a));
+#if defined(WOLFSSL_ASYNC_CRYPT)
+    ret = wc_AsyncWait(ret, &enc->asyncDev, WC_ASYNC_FLAG_NONE);
+#endif
+    if (ret != 0)
+        ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
+    if (XMEMCMP(c1, resultC, sizeof(c1)))
+        ERROR_OUT(WC_TEST_RET_ENC_NC, out);
+    if (XMEMCMP(t1, resultT, sizeof(t1)))
+        ERROR_OUT(WC_TEST_RET_ENC_NC, out);
+
+    ret = 0;
+  out:
+#if defined(WOLFSSL_SMALL_STACK) && !defined(WOLFSSL_NO_MALLOC)
+    wc_AesDelete(enc, &enc);
+#else
+    wc_AesFree(enc);
+#endif
+#endif
+    return ret;
+}
+
 WOLFSSL_TEST_SUBROUTINE wc_test_ret_t aesgcm_default_test(void)
 {
+    wc_test_ret_t ret;
+
 #ifdef WOLFSSL_AES_128
     byte key1[] = {
         0x29, 0x8e, 0xfa, 0x1c, 0xcf, 0x29, 0xcf, 0x62,
@@ -19740,7 +19862,6 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t aesgcm_default_test(void)
         0x11, 0x64, 0xb2, 0xff
     };
 
-    wc_test_ret_t ret;
     WOLFSSL_ENTER("aesgcm_default_test");
 
     ret = aesgcm_default_test_helper(key1, sizeof(key1), iv1, sizeof(iv1),
@@ -19762,6 +19883,13 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t aesgcm_default_test(void)
         return ret;
     }
 #endif
+
+    /* checked here rather than in aesgcm_test() so that it also runs for the
+     * ports that aesgcm_test() is skipped for, AF_ALG among them */
+    ret = aesgcm_reuse_ctx_test();
+    if (ret != 0) {
+        return ret;
+    }
 
     return 0;
 }
@@ -23557,6 +23685,68 @@ typedef struct keywrapVector {
     word32 verifyLen;
 } keywrapVector;
 
+#if !defined(HAVE_FIPS) && !defined(HAVE_SELFTEST)
+/* struct Aes cannot be a local here: with --enable-aesgcm=table its GCM tables
+ * alone are 4096 bytes, past the frame limit CI enforces. It also asks for 16
+ * byte alignment through its ALIGN16 members, which XMALLOC does not guarantee
+ * on 32-bit targets, where malloc only promises 8 -- and wc_AesSetIV() lowers
+ * to an alignment-qualified NEON store when building for armv8-a+crypto, which
+ * faults on an under-aligned object. Neither a plain local nor a plain XMALLOC
+ * (wc_AesNew() included) satisfies both, so allocate with headroom, align by
+ * hand, and keep the base pointer for XFREE. */
+#define AESKEYWRAP_AES_ALIGN 16
+static wc_test_ret_t aeskeywrap_caller_aes_test(const keywrapVector* v,
+                                                byte* output, word32 outputSz,
+                                                byte* plain, word32 plainBufSz)
+{
+    void* raw;
+    Aes* aes;
+    wc_test_ret_t ret = 0;
+    int wrapSz = 0, plainSz;
+
+    raw = XMALLOC(sizeof(Aes) + AESKEYWRAP_AES_ALIGN - 1, HEAP_HINT,
+                  DYNAMIC_TYPE_TMP_BUFFER);
+    if (raw == NULL)
+        return WC_TEST_RET_ENC_NC;
+    aes = (Aes*)(void*)(((wc_ptr_t)raw + (AESKEYWRAP_AES_ALIGN - 1)) &
+                        ~(wc_ptr_t)(AESKEYWRAP_AES_ALIGN - 1));
+
+    XMEMSET(output, 0, outputSz);
+    XMEMSET(plain,  0, plainBufSz);
+
+    if (wc_AesInit(aes, HEAP_HINT, devId) != 0) {
+        XFREE(raw, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+        return WC_TEST_RET_ENC_NC;
+    }
+
+    if (wc_AesSetKey(aes, v->kek, v->kekLen, NULL, AES_ENCRYPTION) != 0)
+        ret = WC_TEST_RET_ENC_NC;
+    if (ret == 0) {
+        wrapSz = wc_AesKeyWrap_ex(aes, v->data, v->dataLen, output, outputSz,
+                                  NULL);
+        if ((wrapSz < 0) || (wrapSz != (int)v->verifyLen) ||
+            XMEMCMP(output, v->verify, v->verifyLen) != 0) {
+            ret = WC_TEST_RET_ENC_NC;
+        }
+    }
+    if (ret == 0) {
+        if (wc_AesSetKey(aes, v->kek, v->kekLen, NULL, AES_DECRYPTION) != 0)
+            ret = WC_TEST_RET_ENC_NC;
+    }
+    if (ret == 0) {
+        plainSz = wc_AesKeyUnWrap_ex(aes, output, (word32)wrapSz, plain,
+                                     plainBufSz, NULL);
+        if ((plainSz < 0) || (plainSz != (int)v->dataLen) ||
+            XMEMCMP(plain, v->data, v->dataLen) != 0) {
+            ret = WC_TEST_RET_ENC_NC;
+        }
+    }
+    wc_AesFree(aes);
+    XFREE(raw, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+    return ret;
+}
+#endif
+
 WOLFSSL_TEST_SUBROUTINE wc_test_ret_t aeskeywrap_test(void)
 {
     int wrapSz, plainSz, testSz, i;
@@ -23767,49 +23957,11 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t aeskeywrap_test(void)
     /* Drive wc_AesKeyWrap_ex/wc_AesKeyUnWrap_ex directly with a caller Aes; the
      * KAT loop above already covers every vector via the key-based wrappers. */
     {
-        Aes* aes = (Aes*)XMALLOC(sizeof(Aes), HEAP_HINT, DYNAMIC_TYPE_AES);
-        if (aes == NULL)
-            return WC_TEST_RET_ENC_NC;
-
-        XMEMSET(output, 0, sizeof(output));
-        XMEMSET(plain,  0, sizeof(plain));
-
-        if (wc_AesInit(aes, HEAP_HINT, devId) != 0) {
-            XFREE(aes, HEAP_HINT, DYNAMIC_TYPE_AES);
-            return WC_TEST_RET_ENC_NC;
-        }
-        if (wc_AesSetKey(aes, test_wrap[0].kek, test_wrap[0].kekLen, NULL,
-                         AES_ENCRYPTION) != 0) {
-            wc_AesFree(aes);
-            XFREE(aes, HEAP_HINT, DYNAMIC_TYPE_AES);
-            return WC_TEST_RET_ENC_NC;
-        }
-        wrapSz = wc_AesKeyWrap_ex(aes, test_wrap[0].data, test_wrap[0].dataLen,
-                                  output, sizeof(output), NULL);
-        wc_AesFree(aes);
-        if ( (wrapSz < 0) || (wrapSz != (int)test_wrap[0].verifyLen) ||
-             XMEMCMP(output, test_wrap[0].verify, test_wrap[0].verifyLen) != 0) {
-            XFREE(aes, HEAP_HINT, DYNAMIC_TYPE_AES);
-            return WC_TEST_RET_ENC_NC;
-        }
-
-        if (wc_AesInit(aes, HEAP_HINT, devId) != 0) {
-            XFREE(aes, HEAP_HINT, DYNAMIC_TYPE_AES);
-            return WC_TEST_RET_ENC_NC;
-        }
-        if (wc_AesSetKey(aes, test_wrap[0].kek, test_wrap[0].kekLen, NULL,
-                         AES_DECRYPTION) != 0) {
-            wc_AesFree(aes);
-            XFREE(aes, HEAP_HINT, DYNAMIC_TYPE_AES);
-            return WC_TEST_RET_ENC_NC;
-        }
-        plainSz = wc_AesKeyUnWrap_ex(aes, output, (word32)wrapSz,
-                                     plain, sizeof(plain), NULL);
-        wc_AesFree(aes);
-        XFREE(aes, HEAP_HINT, DYNAMIC_TYPE_AES);
-        if ( (plainSz < 0) || (plainSz != (int)test_wrap[0].dataLen) ||
-             XMEMCMP(plain, test_wrap[0].data, test_wrap[0].dataLen) != 0)
-            return WC_TEST_RET_ENC_NC;
+        wc_test_ret_t exRet = aeskeywrap_caller_aes_test(&test_wrap[0],
+                                  output, (word32)sizeof(output),
+                                  plain,  (word32)sizeof(plain));
+        if (exRet != 0)
+            return exRet;
     }
 
     /* In-place round-trip (in == out): wrap then unwrap a single buffer.
@@ -61811,6 +61963,40 @@ static enum wc_XmssRc xmss_read_key_mem(byte * priv, word32 privSz,
     return WC_XMSS_RC_READ_TO_MEMORY;
 }
 
+/* Reload the persisted key held in skBuf and sign one message with it.
+ *
+ * Returns the first failing call's error, or 0 when a signature was made.
+ */
+static int xmss_reload_and_sign(const char* param, byte* skBuf, byte* sig,
+    word32* sigSz, const char* msg, word32 msgSz, int keyDevId)
+{
+    XmssKey key;
+    int ret;
+
+    ret = wc_XmssKey_Init(&key, NULL, keyDevId);
+    if (ret == 0) {
+        ret = wc_XmssKey_SetParamStr(&key, param);
+    }
+    if (ret == 0) {
+        ret = wc_XmssKey_SetWriteCb(&key, xmss_write_key_mem);
+    }
+    if (ret == 0) {
+        ret = wc_XmssKey_SetReadCb(&key, xmss_read_key_mem);
+    }
+    if (ret == 0) {
+        ret = wc_XmssKey_SetContext(&key, (void *) skBuf);
+    }
+    if (ret == 0) {
+        ret = wc_XmssKey_Reload(&key);
+    }
+    if (ret == 0) {
+        ret = wc_XmssKey_Sign(&key, sig, sigSz, (byte *) msg, msgSz);
+    }
+    wc_XmssKey_Free(&key);
+
+    return ret;
+}
+
 WOLFSSL_TEST_SUBROUTINE wc_test_ret_t xmss_test(void)
 {
     int             i = 0;
@@ -61847,6 +62033,9 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t xmss_test(void)
 #endif
     int             ret2 = -1;
     int             ret = WC_TEST_RET_ENC_NC;
+#ifndef WOLFSSL_NO_MALLOC
+    byte *          sk_snapshot = NULL;
+#endif
     WOLFSSL_ENTER("xmss_test");
 
 #ifndef HAVE_FIPS
@@ -61955,6 +62144,17 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t xmss_test(void)
         ret = wc_XmssKey_Verify(&verifyKey, sig, sigSz, (byte *) msg, msgSz);
         if (ret != 0) { ERROR_OUT(WC_TEST_RET_ENC_I(i), out); }
 
+#ifndef WOLFSSL_NO_MALLOC
+        /* Keep an early state - it still has a tree hash in progress, which
+         * is what the traversal counters below drive. */
+        if ((i == 2) && (sk_snapshot == NULL)) {
+            sk_snapshot = (byte *)XMALLOC(skSz, HEAP_HINT,
+                DYNAMIC_TYPE_TMP_BUFFER);
+            if (sk_snapshot == NULL) { ERROR_OUT(WC_TEST_RET_ENC_ERRNO, out); }
+            XMEMCPY(sk_snapshot, sk, skSz);
+        }
+#endif
+
         /* Flip bits in a few places throughout the signature, stepping in multiple
          * of hash size. These should all fail with -1. */
         for (j = 0; j < (int) sigSz; j+= 4 * 32) {
@@ -61972,10 +62172,72 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t xmss_test(void)
         }
     }
 
+#ifndef WOLFSSL_NO_MALLOC
+    /* The BDS traversal counters, stored node heights and tree hash entries are
+     * all re-parsed from the persisted private key on every sign. Corrupt them
+     * and the library must stay inside the key's own buffers, and must reject
+     * a counter that is plainly out of range. */
+    if (sk_snapshot != NULL) {
+        /* Enough samples to reach every field of the state without making the
+         * test signing-bound. */
+        const int samples = 48;
+        int bad = 0;
+    /* The small implementation keeps no traversal state in the key, so
+     * there is nothing there to put out of range. */
+    #if !defined(WOLFSSL_WC_XMSS_SMALL) && (WOLFSSL_XMSS_MIN_HEIGHT <= 10)
+        /* Single tree, so the BDS block ends the key: its last four bytes are
+         * next (3, big-endian) then offset. Setting offset, or either of the
+         * top two bytes of next, puts them past the subtree and load must say
+         * so. The low byte of next is skipped as 0xff is still in range. */
+        word32 badPos[3];
+
+        badPos[bad++] = skSz - XMSS_OID_LEN - 1U;
+        badPos[bad++] = skSz - XMSS_OID_LEN - 4U;
+        badPos[bad++] = skSz - XMSS_OID_LEN - 3U;
+    #endif
+
+        for (j = 0; j < bad + samples + 1; j++) {
+            XMEMCPY(sk, sk_snapshot, skSz);
+    #if !defined(WOLFSSL_WC_XMSS_SMALL) && (WOLFSSL_XMSS_MIN_HEIGHT <= 10)
+            if (j < bad) {
+                sk[badPos[j]] = 0xff;
+            }
+            else
+    #endif
+            if (j < bad + samples) {
+                /* Spread over the whole key so heights and tree hashes are
+                 * covered too, not just the counters at the end. */
+                sk[(word32)(j - bad) * skSz / (word32)samples] = 0xff;
+            }
+            /* Last pass leaves the state alone. */
+
+            sigSz = bufSz;
+            ret = xmss_reload_and_sign(param, sk, sig, &sigSz, msg, msgSz,
+                                       devId);
+
+            if (j < bad) {
+                /* Out of range.  Must not have produced a signature. */
+                if (ret == 0) { ERROR_OUT(WC_TEST_RET_ENC_I(j), out); }
+            }
+            else if (j == bad + samples) {
+                /* Untouched state.  Must still sign. */
+                if (ret != 0) { ERROR_OUT(WC_TEST_RET_ENC_I(j), out); }
+                ret = wc_XmssKey_Verify(&verifyKey, sig, sigSz, (byte *) msg,
+                                        msgSz);
+                if (ret != 0) { ERROR_OUT(WC_TEST_RET_ENC_I(j), out); }
+            }
+        }
+        ret = 0;
+    }
+#endif /* !WOLFSSL_NO_MALLOC */
+
 out:
 
     /* Cleanup everything. */
 #ifndef WOLFSSL_NO_MALLOC
+    XFREE(sk_snapshot, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+    sk_snapshot = NULL;
+
     XFREE(sig, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
     sig = NULL;
 

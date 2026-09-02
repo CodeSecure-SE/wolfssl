@@ -10934,8 +10934,13 @@ int wc_EncryptPKCS8Key_ex(byte* key, word32 keySz, byte* out, word32* outSz,
         ret = SetShortInt(out, &idx, (word32)itt, *outSz);
         if (ret > 0)
             ret = 0;
-        if (version == PKCS5v2) {
-            if (hmacOid > 0) {
+        if (ret == 0 && version == PKCS5v2 && hmacOid > 0) {
+            /* Already guarded where it is set, but repeat it here: the
+             * invariant spans several blocks and -Wnonnull cannot see it. */
+            if (hmacOidBuf == NULL) {
+                ret = ALGO_ID_E;
+            }
+            else {
                 idx += SetSequence(2+hmacOidBufSz, out + idx);
                 idx += (word32)SetObjectId((int)hmacOidBufSz, out + idx);
                 XMEMCPY(out + idx, hmacOidBuf, hmacOidBufSz);
@@ -22061,6 +22066,7 @@ exit:
 static int DecodeCertPolicy(const byte* input, word32 sz, DecodedCert* cert)
 {
     word32 idx = 0;
+    word32 seqEnd = 0;
     int ret = 0;
     int total_length = 0;
 #if defined(WOLFSSL_CERT_EXT) && !defined(WOLFSSL_DUP_CERTPOL)
@@ -22084,10 +22090,17 @@ static int DecodeCertPolicy(const byte* input, word32 sz, DecodedCert* cert)
         {
             ret = ASN_PARSE_E;
         }
+        /* RFC 5280 4.2.1.4: certificatePolicies is SEQUENCE SIZE (1..MAX). */
+        else if (total_length == 0) {
+            ret = ASN_PARSE_E;
+        }
+        else {
+            seqEnd = idx + (word32)total_length;
+        }
     }
 
-    /* Unwrap certificatePolicies */
-    while ((ret == 0) && ((int)idx < total_length)
+    /* Unwrap certificatePolicies, stopping at the end of the SEQUENCE. */
+    while ((ret == 0) && (idx < seqEnd)
     #if defined(WOLFSSL_CERT_EXT)
         && (cert->extCertPoliciesNb < MAX_CERTPOL_NB)
     #endif

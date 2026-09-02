@@ -525,6 +525,112 @@ int test_tls13_apis(void)
         WC_NO_ERR_TRACE(BAD_FUNC_ARG));
 #endif
 
+    /* The accepting vector for the whole guard:
+     *     required == NULL || ssl == NULL || !IsAtLeastTLSv1_3(ssl->version)
+     * Every case above leaves at least one operand true, so none of the three
+     * operands had a partner vector with the decision false. A live TLS 1.3
+     * object with a non-NULL out-parameter supplies it. */
+#ifndef NO_WOLFSSL_CLIENT
+    ExpectIntEQ(wolfSSL_key_update_response(clientSsl, &required), 0);
+#endif
+
+    /* The remaining TLS 1.3-only entry points guarded by
+     *     ssl == NULL || !IsAtLeastTLSv1_3(ssl->version)
+     * (or the CTX equivalent). Each needs all three vectors -- NULL, a
+     * TLS 1.2 object, and a TLS 1.3 object -- for both operands to have an
+     * independence partner. Return values other than BAD_FUNC_ARG are
+     * intentional: these calls are made on objects that never handshook, so a
+     * side/state error is the correct success indication that the argument
+     * guard was passed. */
+#ifdef WOLFSSL_SEND_HRR_COOKIE
+    ExpectIntEQ(wolfSSL_disable_hrr_cookie(NULL),
+        WC_NO_ERR_TRACE(BAD_FUNC_ARG));
+#ifndef NO_WOLFSSL_CLIENT
+#ifndef WOLFSSL_NO_TLS12
+    ExpectIntEQ(wolfSSL_disable_hrr_cookie(clientTls12Ssl),
+        WC_NO_ERR_TRACE(BAD_FUNC_ARG));
+#endif
+    ExpectIntEQ(wolfSSL_disable_hrr_cookie(clientSsl),
+        WC_NO_ERR_TRACE(SIDE_ERROR));
+#endif
+#ifndef NO_WOLFSSL_SERVER
+    ExpectIntEQ(wolfSSL_disable_hrr_cookie(serverSsl), WOLFSSL_SUCCESS);
+#endif
+#endif /* WOLFSSL_SEND_HRR_COOKIE */
+
+#ifdef HAVE_SUPPORTED_CURVES
+    ExpectIntEQ(wolfSSL_CTX_only_dhe_psk(NULL),
+        WC_NO_ERR_TRACE(BAD_FUNC_ARG));
+#ifndef NO_WOLFSSL_CLIENT
+#ifndef WOLFSSL_NO_TLS12
+    ExpectIntEQ(wolfSSL_CTX_only_dhe_psk(clientTls12Ctx),
+        WC_NO_ERR_TRACE(BAD_FUNC_ARG));
+#endif
+    ExpectIntEQ(wolfSSL_CTX_only_dhe_psk(clientCtx), 0);
+#endif
+
+    ExpectIntEQ(wolfSSL_only_dhe_psk(NULL), WC_NO_ERR_TRACE(BAD_FUNC_ARG));
+#ifndef NO_WOLFSSL_CLIENT
+#ifndef WOLFSSL_NO_TLS12
+    ExpectIntEQ(wolfSSL_only_dhe_psk(clientTls12Ssl),
+        WC_NO_ERR_TRACE(BAD_FUNC_ARG));
+#endif
+    ExpectIntEQ(wolfSSL_only_dhe_psk(clientSsl), 0);
+#endif
+#endif /* HAVE_SUPPORTED_CURVES */
+
+    /* wolfSSL_require_psk() already has its NULL and TLS 1.3 vectors in
+     * test_tls13_require_psk_apis(); only the TLS 1.2 middle vector -- the one
+     * that makes the version operand true on its own -- was missing. */
+#ifndef NO_WOLFSSL_CLIENT
+#ifndef WOLFSSL_NO_TLS12
+    ExpectIntEQ(wolfSSL_require_psk(clientTls12Ssl),
+        WC_NO_ERR_TRACE(BAD_FUNC_ARG));
+#endif
+    ExpectIntEQ(wolfSSL_require_psk(clientSsl), 0);
+#endif
+
+#if !defined(NO_WOLFSSL_SERVER) && defined(HAVE_SESSION_TICKET)
+    ExpectIntEQ(wolfSSL_send_SessionTicket(NULL),
+        WC_NO_ERR_TRACE(BAD_FUNC_ARG));
+#ifndef WOLFSSL_NO_TLS12
+    ExpectIntEQ(wolfSSL_send_SessionTicket(serverTls12Ssl),
+        WC_NO_ERR_TRACE(BAD_FUNC_ARG));
+#endif
+    /* Never handshook, so the argument guard is passed and the handshake-state
+     * check rejects it. */
+    ExpectIntEQ(wolfSSL_send_SessionTicket(serverSsl),
+        WC_NO_ERR_TRACE(NOT_READY_ERROR));
+#endif
+
+#ifdef WOLFSSL_EARLY_DATA
+    ExpectIntEQ(wolfSSL_get_early_data_status(NULL),
+        WC_NO_ERR_TRACE(BAD_FUNC_ARG));
+#ifndef NO_WOLFSSL_CLIENT
+#ifndef WOLFSSL_NO_TLS12
+    ExpectIntEQ(wolfSSL_get_early_data_status(clientTls12Ssl),
+        WC_NO_ERR_TRACE(BAD_FUNC_ARG));
+#endif
+    ExpectIntEQ(wolfSSL_get_early_data_status(clientSsl),
+        WOLFSSL_EARLY_DATA_NOT_SENT);
+#endif
+#endif /* WOLFSSL_EARLY_DATA */
+
+    /* wolfSSL_get_cipher_name_by_hash():
+     *     hash == NULL || ssl == NULL || (ssl->suites == NULL && ssl->ctx == NULL)
+     * Only the first two operands are reachable: ssl->ctx is invariant non-NULL
+     * for a live WOLFSSL, so the parenthesised sub-expression is dead and both
+     * of its operands are recorded in the exclusion record. */
+#ifndef NO_PSK
+#ifndef NO_WOLFSSL_CLIENT
+    ExpectNull(wolfSSL_get_cipher_name_by_hash(clientSsl, NULL));
+    ExpectNull(wolfSSL_get_cipher_name_by_hash(NULL, "SHA256"));
+#if !defined(NO_SHA256) && (defined(HAVE_AESGCM) || defined(HAVE_CHACHA))
+    ExpectNotNull(wolfSSL_get_cipher_name_by_hash(clientSsl, "SHA256"));
+#endif
+#endif
+#endif /* !NO_PSK */
+
 #if !defined(NO_CERTS) && defined(WOLFSSL_POST_HANDSHAKE_AUTH)
     ExpectIntEQ(wolfSSL_CTX_allow_post_handshake_auth(NULL),
         WC_NO_ERR_TRACE(BAD_FUNC_ARG));
@@ -7212,6 +7318,11 @@ int test_tls13_sha1_cert_chain(void)
     byte*       chainBuf = NULL;
     size_t      leafSz = 0;
     size_t      sha1Sz = 0;
+#ifdef WC_RSA_PSS
+    const char* pssCaFile = "./certs/rsapss/ca-rsapss.pem";
+    byte*       pssBuf = NULL;
+    size_t      pssSz = 0;
+#endif
 
     /* A TLS 1.3 client does not offer SHA-1, so the SHA-1 signed leaf must
      * not be sent. */
@@ -7311,6 +7422,39 @@ int test_tls13_sha1_cert_chain(void)
     wolfSSL_free(ssl_s);    ssl_s = NULL;
     wolfSSL_CTX_free(ctx_c); ctx_c = NULL;
     wolfSSL_CTX_free(ctx_s); ctx_s = NULL;
+
+#ifdef WC_RSA_PSS
+    /* An RSASSA-PSS signed certificate carries one signature OID for every
+     * digest and names the digest in the algorithm parameters instead, so the
+     * chain check has to read the parameters to tell it apart from SHA-1.
+     * This CA is SHA-256 signed, so the chain may be sent. Verification is off
+     * because the chain is a leaf and an unrelated CA, which is all this case
+     * needs the server to send. */
+    XMEMSET(&test_ctx, 0, sizeof(test_ctx));
+    ExpectIntEQ(test_memio_setup(&test_ctx, &ctx_c, &ctx_s, &ssl_c, &ssl_s,
+        wolfTLSv1_3_client_method, wolfTLSv1_3_server_method), 0);
+    if (EXPECT_SUCCESS())
+        wolfSSL_set_verify(ssl_c, WOLFSSL_VERIFY_NONE, NULL);
+    ExpectIntEQ(load_file(svrCertFile, &leafBuf, &leafSz), 0);
+    ExpectIntEQ(load_file(pssCaFile, &pssBuf, &pssSz), 0);
+    ExpectNotNull(chainBuf = (byte*)XMALLOC(leafSz + pssSz, NULL,
+        DYNAMIC_TYPE_TMP_BUFFER));
+    if (EXPECT_SUCCESS()) {
+        XMEMCPY(chainBuf, leafBuf, leafSz);
+        XMEMCPY(chainBuf + leafSz, pssBuf, pssSz);
+    }
+    ExpectIntEQ(wolfSSL_use_certificate_chain_buffer_format(ssl_s, chainBuf,
+        (long)(leafSz + pssSz), WOLFSSL_FILETYPE_PEM), WOLFSSL_SUCCESS);
+    ExpectIntEQ(test_memio_do_handshake(ssl_c, ssl_s, 10, NULL), 0);
+
+    XFREE(chainBuf, NULL, DYNAMIC_TYPE_TMP_BUFFER); chainBuf = NULL;
+    XFREE(leafBuf, NULL, DYNAMIC_TYPE_TMP_BUFFER);  leafBuf = NULL;
+    XFREE(pssBuf, NULL, DYNAMIC_TYPE_TMP_BUFFER);   pssBuf = NULL;
+    wolfSSL_free(ssl_c);    ssl_c = NULL;
+    wolfSSL_free(ssl_s);    ssl_s = NULL;
+    wolfSSL_CTX_free(ctx_c); ctx_c = NULL;
+    wolfSSL_CTX_free(ctx_s); ctx_s = NULL;
+#endif /* WC_RSA_PSS */
 
     /* signature_algorithms_cert covers the chain on its own: this client
      * offers no SHA-1 for handshake signatures but does allow a SHA-1 signed
@@ -10017,6 +10161,120 @@ int test_tls13_pha_status_request(void)
      * empty OCSP staple instead of failing with -406. */
     ExpectNotNull(peer = wolfSSL_get_peer_certificate(ssl_s));
     wolfSSL_X509_free(peer);
+
+    wolfSSL_free(ssl_c);
+    wolfSSL_free(ssl_s);
+    wolfSSL_CTX_free(ctx_c);
+    wolfSSL_CTX_free(ctx_s);
+#endif
+    return EXPECT_RESULT();
+}
+
+/* RFC 7748 Section 5: a receiver of a 32-byte X25519 u-coordinate MUST mask
+ * (clear) the reserved high bit of the final byte rather than reject it.
+ * Craft a ClientHello whose key_share entry has that bit set and confirm
+ * the server masks it and proceeds, instead of aborting the handshake with
+ * ECC_PEERKEY_ERROR the way wc_curve25519_check_public() alone would.
+ */
+int test_tls13_x25519_keyshare_masks_reserved_bit(void)
+{
+    EXPECT_DECLS;
+#if defined(WOLFSSL_TLS13) && defined(HAVE_CURVE25519) && \
+    defined(HAVE_SUPPORTED_CURVES) && \
+    defined(HAVE_MANUAL_MEMIO_TESTS_DEPENDENCIES) && \
+    !defined(NO_WOLFSSL_CLIENT) && !defined(NO_WOLFSSL_SERVER) && \
+    !defined(NO_CERTS) && !defined(NO_FILESYSTEM) && \
+    (defined(HAVE_ECC) || !defined(NO_RSA))
+    WOLFSSL_CTX *ctx_c = NULL;
+    WOLFSSL_CTX *ctx_s = NULL;
+    WOLFSSL *ssl_c = NULL;
+    WOLFSSL *ssl_s = NULL;
+    struct test_memio_ctx test_ctx;
+    byte ch_buf[4096];
+    const char* ch_bytes = NULL;
+    int ch_sz = 0;
+    int i;
+    int keShareOff = -1;
+    int ret;
+
+    XMEMSET(&test_ctx, 0, sizeof(test_ctx));
+    ExpectIntEQ(test_memio_setup(&test_ctx, &ctx_c, &ctx_s, &ssl_c, &ssl_s,
+        wolfTLSv1_3_client_method, wolfTLSv1_3_server_method), 0);
+
+#if defined(HAVE_ECC)
+    ExpectTrue(wolfSSL_use_certificate_file(ssl_s, eccCertFile,
+        CERT_FILETYPE) == WOLFSSL_SUCCESS);
+    ExpectTrue(wolfSSL_use_PrivateKey_file(ssl_s, eccKeyFile,
+        CERT_FILETYPE) == WOLFSSL_SUCCESS);
+#else
+    ExpectTrue(wolfSSL_use_certificate_file(ssl_s, svrCertFile,
+        CERT_FILETYPE) == WOLFSSL_SUCCESS);
+    ExpectTrue(wolfSSL_use_PrivateKey_file(ssl_s, svrKeyFile,
+        CERT_FILETYPE) == WOLFSSL_SUCCESS);
+#endif
+    wolfSSL_set_verify(ssl_c, WOLFSSL_VERIFY_NONE, NULL);
+    wolfSSL_set_verify(ssl_s, WOLFSSL_VERIFY_NONE, NULL);
+
+    /* Force an X25519 key share so the ClientHello carries a key_share
+     * entry we can find by its fixed group id (0x001D) and length
+     * (0x0020) markers, without parsing the full extension list. */
+    do {
+        ret = wolfSSL_UseKeyShare(ssl_c, WOLFSSL_ECC_X25519);
+#ifdef WOLFSSL_ASYNC_CRYPT
+        if (ret == WC_NO_ERR_TRACE(WC_PENDING_E))
+            wolfSSL_AsyncPoll(ssl_c, WOLF_POLL_FLAG_CHECK_HW);
+#endif
+    } while (ret == WC_NO_ERR_TRACE(WC_PENDING_E));
+    ExpectIntEQ(ret, WOLFSSL_SUCCESS);
+
+    ExpectIntNE(wolfSSL_connect(ssl_c), WOLFSSL_SUCCESS);
+    ExpectIntEQ(wolfSSL_get_error(ssl_c, WC_NO_ERR_TRACE(WOLFSSL_FATAL_ERROR)),
+        WOLFSSL_ERROR_WANT_READ);
+
+    /* Pull the ClientHello out of the buffer the server will read from
+     * (client=0), tamper with the X25519 public value in place, then feed
+     * the modified message back in. */
+    ExpectIntEQ(test_memio_get_message(&test_ctx, 0, &ch_bytes, &ch_sz, 0),
+        0);
+    ExpectTrue(ch_sz > 0 && ch_sz <= (int)sizeof(ch_buf));
+    if (ch_sz > 0 && ch_sz <= (int)sizeof(ch_buf)) {
+        XMEMCPY(ch_buf, ch_bytes, (size_t)ch_sz);
+
+        for (i = 0; i + 4 + CURVE25519_KEYSIZE <= ch_sz; i++) {
+            if (ch_buf[i] == 0x00 && ch_buf[i + 1] == 0x1D &&
+                    ch_buf[i + 2] == 0x00 &&
+                    ch_buf[i + 3] == CURVE25519_KEYSIZE) {
+                keShareOff = i;
+                break;
+            }
+        }
+        ExpectIntGE(keShareOff, 0);
+        if (keShareOff >= 0) {
+            /* Set the reserved high bit of the final wire byte of the
+             * public value -- the bit RFC 7748 requires masking. */
+            ch_buf[keShareOff + 4 + CURVE25519_KEYSIZE - 1] |= 0x80;
+        }
+    }
+
+    test_memio_clear_buffer(&test_ctx, 0);
+    if (keShareOff >= 0) {
+        ExpectIntEQ(test_memio_inject_message(&test_ctx, 0,
+            (const char*)ch_buf, ch_sz), 0);
+    }
+
+    ExpectIntNE(wolfSSL_accept(ssl_s), WOLFSSL_SUCCESS);
+#ifdef WOLFSSL_X25519_NO_MASK_PEER
+    /* Masking is compiled out: wc_curve25519_check_public() still sees
+     * the reserved bit and rejects the key, so the server must abort the
+     * handshake with ECC_PEERKEY_ERROR instead of masking it. */
+    ExpectIntEQ(wolfSSL_get_error(ssl_s, WC_NO_ERR_TRACE(WOLFSSL_FATAL_ERROR)),
+        WC_NO_ERR_TRACE(ECC_PEERKEY_ERROR));
+#else
+    /* The bit is masked before the check, so the server accepts the
+     * share and moves on to building its response flight. */
+    ExpectIntEQ(wolfSSL_get_error(ssl_s, WC_NO_ERR_TRACE(WOLFSSL_FATAL_ERROR)),
+        WOLFSSL_ERROR_WANT_READ);
+#endif
 
     wolfSSL_free(ssl_c);
     wolfSSL_free(ssl_s);
