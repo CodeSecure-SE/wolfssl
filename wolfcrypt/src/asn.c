@@ -81,6 +81,9 @@ ASN Options:
  * WOLFSSL_NO_OCSP_DATE_CHECK: Disable date checks for OCSP responses. This
     may be required when the system's real-time clock is not very accurate.
     It is recommended to enforce the nonce check instead if possible.
+    If you are enabling WOLFSSL_NO_OCSP_DATE_CHECK because of an
+    inaccurate clock you can also consider WOLFSSL_AFTER_DATE_CLOCK_SKEW/
+    WOLFSSL_BEFORE_DATE_CLOCK_SKEW.
  * WOLFSSL_NO_CRL_DATE_CHECK: Disable date checks for CRL's.
  * WOLFSSL_NO_CRL_NEXT_DATE: Do not fail if CRL next date is missing
  * WOLFSSL_FORCE_OCSP_NONCE_CHECK: Require nonces to be available in OCSP
@@ -5700,6 +5703,8 @@ static const byte extExtKeyUsageOcspSignOid[]     = {43, 6, 1, 5, 5, 7, 3, 9};
             {43, 6, 1, 4, 1, 130, 55, 20, 2, 2};
     static const byte extExtKeyUsageSshKpClientAuthOid[] =
             {43, 6, 1, 5, 2, 3, 4};
+    static const byte extExtKeyUsageSshServerAuthOid[] =
+            EXT_KEY_USAGE_OID_BASE(22);
 #endif /* WOLFSSL_WOLFSSH */
 
 #ifdef WOLFSSL_SUBJ_DIR_ATTR
@@ -7139,6 +7144,10 @@ const byte* OidFromId(word32 id, word32 type, word32* oidSz)
                 case EKU_SSH_KP_CLIENT_AUTH_OID:
                     oid = extExtKeyUsageSshKpClientAuthOid;
                     *oidSz = sizeof(extExtKeyUsageSshKpClientAuthOid);
+                    break;
+                case EKU_SSH_SERVER_AUTH_OID:
+                    oid = extExtKeyUsageSshServerAuthOid;
+                    *oidSz = sizeof(extExtKeyUsageSshServerAuthOid);
                     break;
                 #endif /* WOLFSSL_WOLFSSH */
                 default:
@@ -21575,8 +21584,30 @@ int DecodeExtKeyUsage(const byte* input, word32 sz,
             ret = 0;
         }
         else if (ret == 0) {
+            word32 oidSum;
+            const byte* oidData = NULL;
+            word32 oidSz        = 0;
+            const byte* checkOid = NULL;
+            word32 checkOidSz    = 0;
+
+            oidSum = dataASN[KEYPURPOSEIDASN_IDX_OID].data.oid.sum;
+
+            /* The OID sum is a checksum and can collide. Only treat the OID as
+             * a known KeyPurposeId when the encoded bytes match exactly, as
+             * GetObjectId() does with oidCertKeyUseType. Unknown OIDs must
+             * still be consumed and counted, so verify here rather than in
+             * GetASN_Items(). */
+            GetASN_OIDData(&dataASN[KEYPURPOSEIDASN_IDX_OID], &oidData,
+                           &oidSz);
+            checkOid = OidFromId(oidSum, oidCertKeyUseType, &checkOidSz);
+            if ((checkOid == NULL) || (checkOidSz != oidSz) ||
+                    (XMEMCMP(oidData, checkOid, checkOidSz) != 0)) {
+                WOLFSSL_MSG("\tunrecognized KeyPurposeId");
+                oidSum = 0;
+            }
+
             /* Store the bit for the OID. */
-            switch (dataASN[KEYPURPOSEIDASN_IDX_OID].data.oid.sum) {
+            switch (oidSum) {
                 case EKU_ANY_OID:
                     *extExtKeyUsage |= EXTKEYUSE_ANY;
                     break;
@@ -21597,6 +21628,22 @@ int DecodeExtKeyUsage(const byte* input, word32 sz,
                     break;
                 case EKU_OCSP_SIGN_OID:
                     *extExtKeyUsage |= EXTKEYUSE_OCSP_SIGN;
+                    break;
+            #ifdef WOLFSSL_WOLFSSH
+                case EKU_SSH_CLIENT_AUTH_OID:
+                    *extExtKeyUsageSsh |= EXTKEYUSE_SSH_CLIENT_AUTH;
+                    break;
+                case EKU_SSH_MSCL_OID:
+                    *extExtKeyUsageSsh |= EXTKEYUSE_SSH_MSCL;
+                    break;
+                case EKU_SSH_KP_CLIENT_AUTH_OID:
+                    *extExtKeyUsageSsh |= EXTKEYUSE_SSH_KP_CLIENT_AUTH;
+                    break;
+                case EKU_SSH_SERVER_AUTH_OID:
+                    *extExtKeyUsageSsh |= EXTKEYUSE_SSH_SERVER_AUTH;
+                    break;
+            #endif /* WOLFSSL_WOLFSSH */
+                default:
                     break;
             }
 
@@ -36014,6 +36061,8 @@ static int DecodeSingleResponse(const byte* source, word32* ioIndex,
         /* Store the thisDate format - only one possible. */
         cs->thisDateFormat = ASN_GENERALIZED_TIME;
     #if !defined(NO_ASN_TIME_CHECK) && !defined(WOLFSSL_NO_OCSP_DATE_CHECK)
+        /* If you are enabling WOLFSSL_NO_OCSP_DATE_CHECK because of an
+         * inaccurate clock consider WOLFSSL_BEFORE_DATE_CLOCK_SKEW. */
         /* Check date is a valid string and ASN_BEFORE now. */
         if ((! AsnSkipDateCheck) &&
             !XVALIDATE_DATE(cs->thisDate, ASN_GENERALIZED_TIME, ASN_BEFORE,
@@ -36040,6 +36089,8 @@ static int DecodeSingleResponse(const byte* source, word32* ioIndex,
         /* Store the nextDate format - only one possible. */
         cs->nextDateFormat = ASN_GENERALIZED_TIME;
     #if !defined(NO_ASN_TIME_CHECK) && !defined(WOLFSSL_NO_OCSP_DATE_CHECK)
+        /* If you are enabling WOLFSSL_NO_OCSP_DATE_CHECK because of an
+         * inaccurate clock consider WOLFSSL_AFTER_DATE_CLOCK_SKEW. */
         /* Check date is a valid string and ASN_AFTER now. */
         if ((! AsnSkipDateCheck) &&
             !XVALIDATE_DATE(cs->nextDate, ASN_GENERALIZED_TIME, ASN_AFTER,
