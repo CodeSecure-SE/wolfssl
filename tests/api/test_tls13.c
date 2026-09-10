@@ -11151,3 +11151,464 @@ int test_tls13_x25519_keyshare_masks_reserved_bit(void)
 #endif
     return EXPECT_RESULT();
 }
+
+#if defined(WOLFSSL_TLS13) && defined(HAVE_MANUAL_MEMIO_TESTS_DEPENDENCIES) && \
+    !defined(NO_WOLFSSL_CLIENT) && !defined(NO_WOLFSSL_SERVER)
+/* A send callback that refuses only the client's Finished flush. */
+static int test_tls13_block_finished_send_cb(WOLFSSL* ssl, char* data, int sz,
+    void* ctx)
+{
+    if (ssl->options.connectState == FIRST_REPLY_FOURTH)
+        return WOLFSSL_CBIO_ERR_WANT_WRITE;
+    return test_memio_write_cb(ssl, data, sz, ctx);
+}
+#endif
+
+/* Test that the handshake is not reported complete while the client's
+ * Finished is still unsent.
+ *
+ * @return  TEST_SUCCESS on success.
+ */
+int test_tls13_is_init_finished_want_write(void)
+{
+    EXPECT_DECLS;
+#if defined(WOLFSSL_TLS13) && defined(HAVE_MANUAL_MEMIO_TESTS_DEPENDENCIES) && \
+    !defined(NO_WOLFSSL_CLIENT) && !defined(NO_WOLFSSL_SERVER)
+    WOLFSSL_CTX* ctx_c = NULL;
+    WOLFSSL_CTX* ctx_s = NULL;
+    WOLFSSL* ssl_c = NULL;
+    WOLFSSL* ssl_s = NULL;
+    struct test_memio_ctx test_ctx;
+    int sMsgCount = 0;
+
+    XMEMSET(&test_ctx, 0, sizeof(test_ctx));
+    ExpectIntEQ(test_memio_setup(&test_ctx, &ctx_c, &ctx_s, &ssl_c, &ssl_s,
+        wolfTLSv1_3_client_method, wolfTLSv1_3_server_method), 0);
+
+    if (ssl_c != NULL) {
+        wolfSSL_SSLSetIOSend(ssl_c, test_tls13_block_finished_send_cb);
+    }
+
+    /* The ClientHello goes out and the server replies with its flight. The
+     * client has sent nothing of its own final flight yet. */
+    ExpectIntEQ(wolfSSL_connect(ssl_c), WC_NO_ERR_TRACE(WOLFSSL_FATAL_ERROR));
+    ExpectIntEQ(wolfSSL_get_error(ssl_c, 0), WOLFSSL_ERROR_WANT_READ);
+    ExpectIntEQ(wolfSSL_accept(ssl_s), WC_NO_ERR_TRACE(WOLFSSL_FATAL_ERROR));
+    ExpectIntEQ(wolfSSL_get_error(ssl_s, 0), WOLFSSL_ERROR_WANT_READ);
+    ExpectIntEQ(wolfSSL_is_init_finished(ssl_c), 0);
+
+    /* The client reads the server flight and builds its Finished, but the
+     * transport refuses the flush. */
+    ExpectIntEQ(wolfSSL_connect(ssl_c), WC_NO_ERR_TRACE(WOLFSSL_FATAL_ERROR));
+    ExpectIntEQ(wolfSSL_get_error(ssl_c, 0), WOLFSSL_ERROR_WANT_WRITE);
+    if (ssl_c != NULL) {
+        /* The Finished is still ours, it sits in the output buffer and the
+         * connect state is still the one before the send. */
+        ExpectIntGT(ssl_c->buffers.outputBuffer.length, 0);
+        ExpectIntEQ(ssl_c->options.connectState, FIRST_REPLY_FOURTH);
+    }
+    /* The server has not received it either, so it is still waiting to read.
+     * Neither side of the transport has the client's Finished. */
+    ExpectIntEQ(wolfSSL_accept(ssl_s), WC_NO_ERR_TRACE(WOLFSSL_FATAL_ERROR));
+    ExpectIntEQ(wolfSSL_get_error(ssl_s, 0), WOLFSSL_ERROR_WANT_READ);
+    /* The handshake is therefore not complete and must not be reported as
+     * complete. */
+    ExpectIntEQ(wolfSSL_is_init_finished(ssl_c), 0);
+    if (EXPECT_SUCCESS()) {
+        sMsgCount = test_ctx.s_msg_count;
+    }
+
+    /* With the transport working again the flush gets the Finished out and
+     * the handshake really does complete. */
+    if (ssl_c != NULL) {
+        wolfSSL_SSLSetIOSend(ssl_c, test_memio_write_cb);
+    }
+    ExpectIntEQ(wolfSSL_connect(ssl_c), WOLFSSL_SUCCESS);
+    ExpectIntEQ(wolfSSL_is_init_finished(ssl_c), 1);
+    if (ssl_c != NULL) {
+        ExpectIntEQ(ssl_c->buffers.outputBuffer.length, 0);
+        ExpectIntEQ(ssl_c->options.connectState, FINISHED_DONE);
+    }
+    /* Exactly one more record reached the server, which is
+     * the Finished that had been buffered, not a rebuilt duplicate of it. */
+    ExpectIntEQ(test_ctx.s_msg_count, sMsgCount + 1);
+    ExpectIntEQ(wolfSSL_accept(ssl_s), WOLFSSL_SUCCESS);
+
+    wolfSSL_free(ssl_c);
+    wolfSSL_free(ssl_s);
+    wolfSSL_CTX_free(ctx_c);
+    wolfSSL_CTX_free(ctx_s);
+#endif
+    return EXPECT_RESULT();
+}
+
+#if defined(WOLFSSL_TLS13) && defined(WOLF_CRYPTO_CB) && \
+    defined(WOLFSSL_ASYNC_CRYPT) && defined(WOLFSSL_ASYNC_REINVOKE) && \
+    defined(HAVE_ECC) && defined(HAVE_SUPPORTED_CURVES) && \
+    defined(HAVE_MANUAL_MEMIO_TESTS_DEPENDENCIES) && \
+    !defined(NO_WOLFSSL_CLIENT) && !defined(NO_WOLFSSL_SERVER)
+
+#define TEST_TLS13_CB_PEND_DEVID_C 1
+#define TEST_TLS13_CB_PEND_DEVID_S 2
+#define TEST_TLS13_CB_PEND_JOBS    64
+
+/* Which class of operation the callback pends. */
+enum TestTls13PendTarget {
+    TEST_TLS13_PEND_AESGCM,
+    TEST_TLS13_PEND_ECC_KEYGEN,
+    TEST_TLS13_PEND_ECDSA_SIGN,
+    TEST_TLS13_PEND_ECDSA_VERIFY,
+    TEST_TLS13_PEND_KDF,
+    TEST_TLS13_PEND_HMAC
+};
+
+typedef struct TestTls13PendCtx {
+    /* Job table keyed by request: first sight queues and pends, the
+     * identical re-invocation completes (falls through to software). */
+    unsigned long jobs[TEST_TLS13_CB_PEND_JOBS];
+    int jobCount;
+    int target;   /* enum TestTls13PendTarget */
+    int pended;   /* WC_PENDING_E results issued; asserted non-zero */
+    int seen;     /* matching requests observed; asserted non-zero */
+} TestTls13PendCtx;
+
+static int TestTls13PendMatches(int target, wc_CryptoInfo* info)
+{
+    int match = 0;
+
+    switch (target) {
+#ifndef WOLF_CRYPTO_CB_ASYNC_POLL
+        /* With WOLF_CRYPTO_CB_ASYNC_POLL the record ciphers follow the
+         * poll-completion contract instead of re-invocation; that model is
+         * covered by tests/api/test_async.c. */
+        case TEST_TLS13_PEND_AESGCM:
+            match = (info->algo_type == WC_ALGO_TYPE_CIPHER) &&
+                    (info->cipher.type == WC_CIPHER_AES_GCM);
+            break;
+#endif
+        case TEST_TLS13_PEND_ECC_KEYGEN:
+            match = (info->algo_type == WC_ALGO_TYPE_PK) &&
+                    (info->pk.type == WC_PK_TYPE_EC_KEYGEN);
+            break;
+        case TEST_TLS13_PEND_ECDSA_SIGN:
+            match = (info->algo_type == WC_ALGO_TYPE_PK) &&
+                    (info->pk.type == WC_PK_TYPE_ECDSA_SIGN);
+            break;
+        case TEST_TLS13_PEND_ECDSA_VERIFY:
+            match = (info->algo_type == WC_ALGO_TYPE_PK) &&
+                    (info->pk.type == WC_PK_TYPE_ECDSA_VERIFY);
+            break;
+        case TEST_TLS13_PEND_KDF:
+            match = (info->algo_type == WC_ALGO_TYPE_KDF);
+            break;
+        case TEST_TLS13_PEND_HMAC:
+            match = (info->algo_type == WC_ALGO_TYPE_HMAC);
+            break;
+        default:
+            break;
+    }
+
+    return match;
+}
+
+/* Request fingerprint over the whole info struct: op class, sizes, pointers
+ * and inline content distinguish interleaved requests. */
+static unsigned long TestTls13PendHash(wc_CryptoInfo* info)
+{
+    unsigned long h = 5381;
+    const unsigned char* b = (const unsigned char*)info;
+    size_t i;
+
+    for (i = 0; i < sizeof(*info); i++)
+        h = h * 33 + b[i];
+    return h;
+}
+
+static int TestTls13PendCb(int devIdArg, wc_CryptoInfo* info, void* ctx)
+{
+    TestTls13PendCtx* c = (TestTls13PendCtx*)ctx;
+    unsigned long h;
+    int i;
+
+    (void)devIdArg;
+
+    if (info == NULL || c == NULL)
+        return WC_NO_ERR_TRACE(CRYPTOCB_UNAVAILABLE);
+#if defined(HAVE_HKDF) && !defined(NO_HMAC) && !defined(HAVE_SELFTEST) && \
+    (!defined(HAVE_FIPS) || FIPS_VERSION_GE(7,0))
+    if (c->target == TEST_TLS13_PEND_HMAC &&
+            info->algo_type == WC_ALGO_TYPE_KDF) {
+        /* Serve the key schedule synchronously in software; falling back
+         * with the devId set would route its internal HMACs back here and
+         * those cannot resume (see wolfcrypt/src/hmac.c). Only the
+         * TLS-layer transcript HMACs are left to pend. */
+        if (info->kdf.type == WC_KDF_TYPE_HKDF_EXTRACT) {
+            return wc_HKDF_Extract_ex(info->kdf.hkdf_extract.hashType,
+                info->kdf.hkdf_extract.salt, info->kdf.hkdf_extract.saltSz,
+                info->kdf.hkdf_extract.inKey, info->kdf.hkdf_extract.inKeySz,
+                info->kdf.hkdf_extract.out, NULL, INVALID_DEVID);
+        }
+        if (info->kdf.type == WC_KDF_TYPE_HKDF_EXPAND) {
+            return wc_HKDF_Expand_ex(info->kdf.hkdf_expand.hashType,
+                info->kdf.hkdf_expand.inKey, info->kdf.hkdf_expand.inKeySz,
+                info->kdf.hkdf_expand.info, info->kdf.hkdf_expand.infoSz,
+                info->kdf.hkdf_expand.out, info->kdf.hkdf_expand.outSz,
+                NULL, INVALID_DEVID);
+        }
+        if (info->kdf.type == WC_KDF_TYPE_HKDF) {
+            return wc_HKDF_ex(info->kdf.hkdf.hashType,
+                info->kdf.hkdf.inKey, info->kdf.hkdf.inKeySz,
+                info->kdf.hkdf.salt, info->kdf.hkdf.saltSz,
+                info->kdf.hkdf.info, info->kdf.hkdf.infoSz,
+                info->kdf.hkdf.out, info->kdf.hkdf.outSz,
+                NULL, INVALID_DEVID);
+        }
+    }
+#endif
+
+    if (!TestTls13PendMatches(c->target, info))
+        return WC_NO_ERR_TRACE(CRYPTOCB_UNAVAILABLE);
+
+    c->seen++;
+    h = TestTls13PendHash(info);
+    for (i = 0; i < c->jobCount; i++) {
+        if (c->jobs[i] == h) {
+            /* Re-invocation of a pended request: complete it. */
+            c->jobs[i] = c->jobs[--c->jobCount];
+            return WC_NO_ERR_TRACE(CRYPTOCB_UNAVAILABLE);
+        }
+    }
+    if (c->jobCount < TEST_TLS13_CB_PEND_JOBS) {
+        c->jobs[c->jobCount++] = h;
+        c->pended++;
+        return WC_PENDING_E;
+    }
+
+    return WC_NO_ERR_TRACE(CRYPTOCB_UNAVAILABLE);
+}
+
+/* wolfSSL_write()/wolfSSL_read() can return WC_PENDING_E just as the
+ * handshake does; drive them with the poll-and-retry loop the application is
+ * expected to use. Returns the byte count, or the error. */
+static int TestTls13PendWrite(WOLFSSL* ssl, const char* buf, int sz)
+{
+    int ret;
+    int err;
+    int rounds = 0;
+
+    do {
+        ret = wolfSSL_write(ssl, buf, sz);
+        if (ret > 0)
+            break;
+        err = wolfSSL_get_error(ssl, ret);
+        if (err == WC_NO_ERR_TRACE(WC_PENDING_E)) {
+            if (wolfSSL_AsyncPoll(ssl, WOLF_POLL_FLAG_CHECK_HW) < 0)
+                return -1;
+        }
+        else if (err != WOLFSSL_ERROR_WANT_READ &&
+                 err != WOLFSSL_ERROR_WANT_WRITE) {
+            return ret;
+        }
+    } while (++rounds < 100);
+
+    return ret;
+}
+
+static int TestTls13PendRead(WOLFSSL* ssl, char* buf, int sz)
+{
+    int ret;
+    int err;
+    int rounds = 0;
+
+    do {
+        ret = wolfSSL_read(ssl, buf, sz);
+        if (ret > 0)
+            break;
+        err = wolfSSL_get_error(ssl, ret);
+        if (err == WC_NO_ERR_TRACE(WC_PENDING_E)) {
+            if (wolfSSL_AsyncPoll(ssl, WOLF_POLL_FLAG_CHECK_HW) < 0)
+                return -1;
+        }
+        else if (err != WOLFSSL_ERROR_WANT_READ &&
+                 err != WOLFSSL_ERROR_WANT_WRITE) {
+            return ret;
+        }
+    } while (++rounds < 100);
+
+    return ret;
+}
+
+/* One TLS 1.3 handshake with the given operation class pending on both sides,
+ * then application data both ways so records queued after the handshake are
+ * parsed by the peer as well. */
+static int test_tls13_cryptocb_pend_one(int target, int mutual)
+{
+    EXPECT_DECLS;
+    WOLFSSL_CTX* ctx_c = NULL;
+    WOLFSSL_CTX* ctx_s = NULL;
+    WOLFSSL*     ssl_c = NULL;
+    WOLFSSL*     ssl_s = NULL;
+    TestTls13PendCtx cliCtx;
+    TestTls13PendCtx srvCtx;
+    struct test_memio_ctx memio;
+    const char msg[] = "hello over TLS 1.3";
+    char buf[64];
+
+    XMEMSET(&cliCtx, 0, sizeof(cliCtx));
+    XMEMSET(&srvCtx, 0, sizeof(srvCtx));
+    XMEMSET(&memio, 0, sizeof(memio));
+    cliCtx.target = target;
+    srvCtx.target = target;
+
+    ExpectIntEQ(wc_CryptoCb_RegisterDevice(TEST_TLS13_CB_PEND_DEVID_C,
+        TestTls13PendCb, &cliCtx), 0);
+    ExpectIntEQ(wc_CryptoCb_RegisterDevice(TEST_TLS13_CB_PEND_DEVID_S,
+        TestTls13PendCb, &srvCtx), 0);
+
+    /* devId set on the CTX before credentials and SSL objects so all of
+     * it inherits the devId. ECC credentials: an RSA key under a devId
+     * would be treated as device-held. */
+    ExpectNotNull(ctx_c = wolfSSL_CTX_new(wolfTLSv1_3_client_method()));
+    ExpectNotNull(ctx_s = wolfSSL_CTX_new(wolfTLSv1_3_server_method()));
+    ExpectIntEQ(wolfSSL_CTX_SetDevId(ctx_c, TEST_TLS13_CB_PEND_DEVID_C),
+        WOLFSSL_SUCCESS);
+    ExpectIntEQ(wolfSSL_CTX_SetDevId(ctx_s, TEST_TLS13_CB_PEND_DEVID_S),
+        WOLFSSL_SUCCESS);
+#ifdef HAVE_AESGCM
+    if (target == TEST_TLS13_PEND_AESGCM) {
+        /* Pin the AEAD so the pend assertion cannot depend on suite
+         * preference ordering. */
+        ExpectIntEQ(wolfSSL_CTX_set_cipher_list(ctx_c,
+            "TLS13-AES128-GCM-SHA256"), WOLFSSL_SUCCESS);
+        ExpectIntEQ(wolfSSL_CTX_set_cipher_list(ctx_s,
+            "TLS13-AES128-GCM-SHA256"), WOLFSSL_SUCCESS);
+    }
+#endif
+    ExpectIntEQ(wolfSSL_CTX_load_verify_locations(ctx_c,
+        "./certs/ca-ecc-cert.pem", 0), WOLFSSL_SUCCESS);
+    ExpectIntEQ(wolfSSL_CTX_use_certificate_chain_file(ctx_s,
+        "./certs/server-ecc.pem"), WOLFSSL_SUCCESS);
+    ExpectIntEQ(wolfSSL_CTX_use_PrivateKey_file(ctx_s, "./certs/ecc-key.pem",
+        WOLFSSL_FILETYPE_PEM), WOLFSSL_SUCCESS);
+    if (mutual) {
+        /* Mutual auth: pending verifies of the client's chain and CV
+         * cover the received-marker restores. */
+        ExpectIntEQ(wolfSSL_CTX_use_certificate_chain_file(ctx_c,
+            "./certs/client-ecc-cert.pem"), WOLFSSL_SUCCESS);
+        ExpectIntEQ(wolfSSL_CTX_use_PrivateKey_file(ctx_c,
+            "./certs/ecc-client-key.pem", WOLFSSL_FILETYPE_PEM),
+            WOLFSSL_SUCCESS);
+        ExpectIntEQ(wolfSSL_CTX_load_verify_locations(ctx_s,
+            "./certs/client-ecc-cert.pem", 0), WOLFSSL_SUCCESS);
+        wolfSSL_CTX_set_verify(ctx_s, WOLFSSL_VERIFY_PEER |
+            WOLFSSL_VERIFY_FAIL_IF_NO_PEER_CERT, NULL);
+    }
+
+    ExpectNotNull(ssl_c = wolfSSL_new(ctx_c));
+    ExpectNotNull(ssl_s = wolfSSL_new(ctx_s));
+
+    /* Pin the group so every run negotiates the same way; the default offer
+     * can trigger HelloRetryRequest or a PQC key share, which are separate
+     * scenarios from the pend-resume paths this test covers. */
+    if (EXPECT_SUCCESS()) {
+        int groups[1];
+        groups[0] = WOLFSSL_ECC_SECP256R1;
+        ExpectIntEQ(wolfSSL_set_groups(ssl_c, groups, 1), WOLFSSL_SUCCESS);
+        ExpectIntEQ(wolfSSL_set_groups(ssl_s, groups, 1), WOLFSSL_SUCCESS);
+    }
+
+    /* The shared memio transport; its TLS path serves a byte stream, so
+     * the re-read patterns of pending crypto operations cannot desync it. */
+    if (EXPECT_SUCCESS()) {
+        wolfSSL_SSLSetIORecv(ssl_c, test_memio_read_cb);
+        wolfSSL_SSLSetIOSend(ssl_c, test_memio_write_cb);
+        wolfSSL_SSLSetIORecv(ssl_s, test_memio_read_cb);
+        wolfSSL_SSLSetIOSend(ssl_s, test_memio_write_cb);
+        wolfSSL_SetIOReadCtx(ssl_c, &memio);
+        wolfSSL_SetIOWriteCtx(ssl_c, &memio);
+        wolfSSL_SetIOReadCtx(ssl_s, &memio);
+        wolfSSL_SetIOWriteCtx(ssl_s, &memio);
+    }
+
+    /* Generous rounds: pending every KDF request costs one poll-and-retry
+     * round trip per operation, and a TLS 1.3 handshake with session tickets
+     * runs a couple of hundred of them. */
+    ExpectIntEQ(test_memio_do_handshake(ssl_c, ssl_s, 600, NULL), 0);
+
+    /* Assert per-side pends so the test cannot pass without exercising a
+     * resume path; the client signs nothing unless mutual. */
+    ExpectIntGT(srvCtx.seen, 0);
+    ExpectIntGT(srvCtx.pended, 0);
+    if (mutual || target != TEST_TLS13_PEND_ECDSA_SIGN) {
+        ExpectIntGT(cliCtx.seen, 0);
+        ExpectIntGT(cliCtx.pended, 0);
+    }
+
+    ExpectIntEQ(TestTls13PendWrite(ssl_c, msg, (int)sizeof(msg)),
+        (int)sizeof(msg));
+    XMEMSET(buf, 0, sizeof(buf));
+    ExpectIntEQ(TestTls13PendRead(ssl_s, buf, (int)sizeof(buf)),
+        (int)sizeof(msg));
+    ExpectIntEQ(XMEMCMP(buf, msg, sizeof(msg)), 0);
+
+    ExpectIntEQ(TestTls13PendWrite(ssl_s, msg, (int)sizeof(msg)),
+        (int)sizeof(msg));
+    XMEMSET(buf, 0, sizeof(buf));
+    ExpectIntEQ(TestTls13PendRead(ssl_c, buf, (int)sizeof(buf)),
+        (int)sizeof(msg));
+    ExpectIntEQ(XMEMCMP(buf, msg, sizeof(msg)), 0);
+
+    wolfSSL_free(ssl_c);
+    wolfSSL_free(ssl_s);
+    wolfSSL_CTX_free(ctx_c);
+    wolfSSL_CTX_free(ctx_s);
+    wc_CryptoCb_UnRegisterDevice(TEST_TLS13_CB_PEND_DEVID_C);
+    wc_CryptoCb_UnRegisterDevice(TEST_TLS13_CB_PEND_DEVID_S);
+
+    return EXPECT_RESULT();
+}
+
+#endif /* guards */
+
+/* Drive TLS 1.3 handshakes and application data with the poll-and-retry
+ * loop while a crypto callback pends each matching request. */
+int test_tls13_cryptocb_async(void)
+{
+    EXPECT_DECLS;
+#if defined(WOLFSSL_TLS13) && defined(WOLF_CRYPTO_CB) && \
+    defined(WOLFSSL_ASYNC_CRYPT) && defined(WOLFSSL_ASYNC_REINVOKE) && \
+    defined(HAVE_ECC) && defined(HAVE_SUPPORTED_CURVES) && \
+    defined(HAVE_MANUAL_MEMIO_TESTS_DEPENDENCIES) && \
+    !defined(NO_WOLFSSL_CLIENT) && !defined(NO_WOLFSSL_SERVER)
+#if defined(HAVE_AESGCM) && !defined(WOLF_CRYPTO_CB_ASYNC_POLL)
+    ExpectIntEQ(test_tls13_cryptocb_pend_one(TEST_TLS13_PEND_AESGCM, 0),
+        TEST_SUCCESS);
+#endif
+#ifdef HAVE_ECC
+    ExpectIntEQ(test_tls13_cryptocb_pend_one(TEST_TLS13_PEND_ECC_KEYGEN, 0),
+        TEST_SUCCESS);
+    ExpectIntEQ(test_tls13_cryptocb_pend_one(TEST_TLS13_PEND_ECDSA_SIGN, 0),
+        TEST_SUCCESS);
+    /* Mutual auth with pending verifies: regression for the msgsReceived
+     * marker restores (a pended Certificate/CertificateVerify replay used
+     * to leave its marker clear and fail Finished with OUT_OF_ORDER_E). */
+    ExpectIntEQ(test_tls13_cryptocb_pend_one(TEST_TLS13_PEND_ECDSA_VERIFY, 1),
+        TEST_SUCCESS);
+#endif
+#if defined(HAVE_HKDF) && !defined(NO_HMAC)
+    ExpectIntEQ(test_tls13_cryptocb_pend_one(TEST_TLS13_PEND_KDF, 0),
+        TEST_SUCCESS);
+    ExpectIntEQ(test_tls13_cryptocb_pend_one(TEST_TLS13_PEND_KDF, 1),
+        TEST_SUCCESS);
+#if !defined(HAVE_SELFTEST) && \
+    (!defined(HAVE_FIPS) || FIPS_VERSION_GE(7,0))
+    /* Transcript HMACs (Finished verify_data) pending on both sides. */
+    ExpectIntEQ(test_tls13_cryptocb_pend_one(TEST_TLS13_PEND_HMAC, 0),
+        TEST_SUCCESS);
+    ExpectIntEQ(test_tls13_cryptocb_pend_one(TEST_TLS13_PEND_HMAC, 1),
+        TEST_SUCCESS);
+#endif
+#endif
+#endif
+    return EXPECT_RESULT();
+}

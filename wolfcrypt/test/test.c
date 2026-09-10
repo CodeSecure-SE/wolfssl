@@ -786,6 +786,7 @@ typedef struct testVector {
 
 WOLFSSL_TEST_SUBROUTINE wc_test_ret_t  macro_test(void);
 WOLFSSL_TEST_SUBROUTINE wc_test_ret_t  error_test(void);
+WOLFSSL_TEST_SUBROUTINE wc_test_ret_t  octets_test(void);
 WOLFSSL_TEST_SUBROUTINE wc_test_ret_t  base64_test(void);
 WOLFSSL_TEST_SUBROUTINE wc_test_ret_t  base16_test(void);
 WOLFSSL_TEST_SUBROUTINE wc_test_ret_t  asn_test(void);
@@ -936,6 +937,9 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t  srp_test(void);
 WOLFSSL_TEST_SUBROUTINE wc_test_ret_t  random_test(void);
 #ifdef WC_RNG_BANK_SUPPORT
 WOLFSSL_TEST_SUBROUTINE wc_test_ret_t  random_bank_test(void);
+#endif
+#ifdef WOLFSSL_NOISE_SRC
+WOLFSSL_TEST_SUBROUTINE wc_test_ret_t  noisesrc_test(void);
 #endif
 #endif /* WC_NO_RNG */
 WOLFSSL_TEST_SUBROUTINE wc_test_ret_t  pwdbased_test(void);
@@ -2461,6 +2465,11 @@ options: [-s max_relative_stack_bytes] [-m max_relative_heap_memory_bytes]\n\
     else
         TEST_PASS("MEMORY   test passed!\n");
 
+    if ( (ret = octets_test()) != 0)
+        TEST_FAIL("octets   test failed!\n", ret);
+    else
+        TEST_PASS("octets   test passed!\n");
+
 #ifndef NO_CODING
     if ( (ret = base64_test()) != 0)
         TEST_FAIL("base64   test failed!\n", ret);
@@ -2575,6 +2584,12 @@ options: [-s max_relative_stack_bytes] [-m max_relative_heap_memory_bytes]\n\
         TEST_FAIL("RNGBANK  test failed!\n", ret);
     else
         TEST_PASS("RNGBANK  test passed!\n");
+#endif
+#ifdef WOLFSSL_NOISE_SRC
+    if ((ret = noisesrc_test()) != 0)
+        TEST_FAIL("NOISESRC test failed!\n", ret);
+    else
+        TEST_PASS("NOISESRC test passed!\n");
 #endif
 #endif /* WC_NO_RNG */
 
@@ -4309,6 +4324,101 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t error_test(void)
     if (XSTRCMP(out, unknownStr) != 0)
         return WC_TEST_RET_ENC_NC;
 #endif
+
+    return 0;
+}
+
+/* Octet-layout helpers.  WC_PACKED_CELLS() is checked everywhere; the
+ * pack/unpack calls exist only where a byte cell is wider than an octet, and
+ * are gated to match. */
+WOLFSSL_TEST_SUBROUTINE wc_test_ret_t octets_test(void)
+{
+#ifdef WOLFSSL_WIDE_BYTE
+    byte src[65];
+    byte packed[65];
+    byte back[65];
+    word32 i;
+    word32 expect;
+    wc_test_ret_t ret;
+#endif
+
+    WOLFSSL_ENTER("octets_test");
+
+    /* Rounds up without wrapping near WORD32_MAX. */
+    if (WC_PACKED_CELLS(0) != 0)
+        return WC_TEST_RET_ENC_NC;
+    if (WC_PACKED_CELLS(1) != 1)
+        return WC_TEST_RET_ENC_NC;
+    if (WC_PACKED_CELLS(0xFFFFFFFFU) < (0xFFFFFFFFU / WC_OCTETS_PER_BYTE))
+        return WC_TEST_RET_ENC_NC;
+
+#ifdef WOLFSSL_WIDE_BYTE
+    for (i = 0; i < (word32)sizeof(src); i++) {
+        src[i] = (byte)((i * 7 + 1) & 0xFF);
+    }
+
+    /* Odd octet count so a partial trailing cell is covered. */
+    ret = wc_PackOctets(packed, (word32)sizeof(packed), src,
+        (word32)sizeof(src), (word32)sizeof(src));
+    if (ret != 0)
+        return WC_TEST_RET_ENC_EC(ret);
+    ret = wc_UnpackOctets(back, (word32)sizeof(back), packed,
+        (word32)sizeof(packed), (word32)sizeof(src));
+    if (ret != 0)
+        return WC_TEST_RET_ENC_EC(ret);
+    if (XMEMCMP(src, back, sizeof(src)) != 0)
+        return WC_TEST_RET_ENC_NC;
+
+    /* Cell 0 carries the first WC_OCTETS_PER_BYTE octets, low octet first. */
+    expect = 0;
+    for (i = 0; i < WC_OCTETS_PER_BYTE; i++) {
+        expect |= (word32)src[i] << (8 * i);
+    }
+    if ((word32)packed[0] != expect)
+        return WC_TEST_RET_ENC_NC;
+
+    /* Zero length is a no-op, not an error. */
+    if (wc_PackOctets(packed, (word32)sizeof(packed), src,
+            (word32)sizeof(src), 0) != 0)
+        return WC_TEST_RET_ENC_NC;
+    if (wc_UnpackOctets(back, (word32)sizeof(back), packed,
+            (word32)sizeof(packed), 0) != 0)
+        return WC_TEST_RET_ENC_NC;
+
+    if (wc_PackOctets(NULL, (word32)sizeof(packed), src,
+            (word32)sizeof(src), (word32)sizeof(src)) != WC_NO_ERR_TRACE(BAD_FUNC_ARG))
+        return WC_TEST_RET_ENC_NC;
+    if (wc_UnpackOctets(back, (word32)sizeof(back), NULL,
+            (word32)sizeof(packed), (word32)sizeof(src)) != WC_NO_ERR_TRACE(BAD_FUNC_ARG))
+        return WC_TEST_RET_ENC_NC;
+
+    /* Source too short is now rejected, not read past. */
+    if (wc_UnpackOctets(back, (word32)sizeof(back), packed,
+            WC_PACKED_CELLS(sizeof(src)) - 1,
+            (word32)sizeof(src)) != WC_NO_ERR_TRACE(BUFFER_E))
+        return WC_TEST_RET_ENC_NC;
+    if (wc_PackOctets(packed, (word32)sizeof(packed), src,
+            (word32)sizeof(src) - 1, (word32)sizeof(src)) != WC_NO_ERR_TRACE(BUFFER_E))
+        return WC_TEST_RET_ENC_NC;
+
+    /* Exactly-sized destinations must succeed. */
+    if (wc_PackOctets(packed, WC_PACKED_CELLS(sizeof(src)), src,
+            (word32)sizeof(src), (word32)sizeof(src)) != 0)
+        return WC_TEST_RET_ENC_NC;
+    if (wc_UnpackOctets(back, (word32)sizeof(src), packed,
+            WC_PACKED_CELLS(sizeof(src)), (word32)sizeof(src)) != 0)
+        return WC_TEST_RET_ENC_NC;
+    if (XMEMCMP(src, back, sizeof(src)) != 0)
+        return WC_TEST_RET_ENC_NC;
+
+    /* Destination too small, each side of the size relation. */
+    if (wc_UnpackOctets(back, (word32)sizeof(src) - 1, packed,
+            (word32)sizeof(packed), (word32)sizeof(src)) != WC_NO_ERR_TRACE(BUFFER_E))
+        return WC_TEST_RET_ENC_NC;
+    if (wc_PackOctets(packed, WC_PACKED_CELLS(sizeof(src)) - 1, src,
+            (word32)sizeof(src), (word32)sizeof(src)) != WC_NO_ERR_TRACE(BUFFER_E))
+        return WC_TEST_RET_ENC_NC;
+#endif /* WOLFSSL_WIDE_BYTE */
 
     return 0;
 }
@@ -27303,6 +27413,430 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t random_test(void)
 }
 
 #endif /* !HAVE_HASHDRBG || CUSTOM_RAND_GENERATE_BLOCK || HAVE_INTEL_RDRAND */
+
+#if defined(WOLFSSL_NOISE_SRC) && !defined(WC_NO_RNG)
+
+/* Synthetic noise sources for the generic wc_NoiseSrc_* layer.  A physical
+ * source only trips SP800-90B on genuinely broken hardware, so these drive the
+ * failure paths - RCT, APT, sampler error, the latch and the self-test - on
+ * the host instead. */
+#define NOISE_TEST_GOOD     0
+#define NOISE_TEST_STUCK    1
+#define NOISE_TEST_BIASED   2
+#define NOISE_TEST_HWFAIL   3
+#define NOISE_TEST_PERIODIC 4
+#define NOISE_TEST_SRC1_DEAD 5
+#define NOISE_TEST_SRC1_HWFAIL 6
+/* Healthy through the startup tests, then stuck.  The failure therefore lands
+ * inside wc_NoiseSrc_GenerateSeed() rather than wc_NoiseSrc_Init(), which is
+ * the only way to reach the continuous-test branch, the seed wipe and the
+ * mid-flight drop of an uncredited source. */
+#define NOISE_TEST_LATE_STUCK  7
+#define NOISE_TEST_SRC1_LATE_STUCK 8
+
+/* Health-test settings the synthetic sources are built against. */
+#define NOISE_TEST_HMIN     50
+#define NOISE_TEST_MARGIN   2
+#define NOISE_TEST_RCT      9
+#define NOISE_TEST_APT_W    512
+#define NOISE_TEST_APT_C    71
+#define NOISE_TEST_STARTUP  512
+#define NOISE_TEST_PERIOD   64
+
+typedef struct NoiseTestCtx {
+    word32 pos;
+    word32 drawn;   /* samples served, so a source can turn bad after startup */
+    int    mode;
+} NoiseTestCtx;
+
+static int noise_test_sample(void* ctx, int srcIdx, byte* octet)
+{
+    NoiseTestCtx* c = (NoiseTestCtx*)ctx;
+    word32 p;
+
+    c->drawn++;
+
+    switch (c->mode) {
+        case NOISE_TEST_STUCK:
+            *octet = 0xA5;
+            break;
+
+        /* Runs of seven keep the RCT clear (cutoff 9) while one value takes
+         * 448 of every 512 slots, well past the APT cutoff. */
+        case NOISE_TEST_BIASED:
+            p = c->pos++;
+            *octet = ((p % 8U) == 7U) ? (byte)(p & 0xFFU) : (byte)0xAA;
+            break;
+
+        case NOISE_TEST_HWFAIL:
+            return WC_HW_E;
+
+        /* Repeats every NOISE_TEST_PERIOD octets: passes both health tests,
+         * but successive equal-length gathers come out identical. */
+        case NOISE_TEST_PERIODIC:
+            p = c->pos++;
+            *octet = (byte)(p % (word32)NOISE_TEST_PERIOD);
+            break;
+
+        /* Credited source healthy, uncredited source's sampler erroring: the
+         * error must propagate rather than silently dropping the source. */
+        case NOISE_TEST_SRC1_HWFAIL:
+            if (srcIdx != 0) {
+                return WC_HW_E;
+            }
+            c->pos = (c->pos * 1103515245U) + 12345U;
+            *octet = (byte)((c->pos >> 16) & 0xFFU);
+            break;
+
+        /* Credited source healthy, uncredited source stuck: the uncredited
+         * one must be dropped rather than denying service. */
+        case NOISE_TEST_SRC1_DEAD:
+            if (srcIdx != 0) {
+                *octet = 0x5A;
+                break;
+            }
+            c->pos = (c->pos * 1103515245U) + 12345U;
+            *octet = (byte)((c->pos >> 16) & 0xFFU);
+            break;
+
+        /* One source, so startup draws exactly startupOctets; anything after
+         * that is inside GenerateSeed. */
+        case NOISE_TEST_LATE_STUCK:
+            if (c->drawn > (word32)NOISE_TEST_STARTUP) {
+                *octet = 0x5A;
+                break;
+            }
+            c->pos = (c->pos * 1103515245U) + 12345U;
+            *octet = (byte)((c->pos >> 16) & 0xFFU);
+            break;
+
+        /* Two sources, so startup draws startupOctets twice.  Only the
+         * uncredited source goes stuck: seeding must continue. */
+        case NOISE_TEST_SRC1_LATE_STUCK:
+            if ((srcIdx != 0) &&
+                    (c->drawn > (word32)(2 * NOISE_TEST_STARTUP))) {
+                *octet = 0x5A;
+                break;
+            }
+            c->pos = (c->pos * 1103515245U) + 12345U;
+            *octet = (byte)(((c->pos >> 16) & 0xFFU) ^
+                            (byte)((unsigned int)srcIdx * 0x5AU));
+            break;
+
+        case NOISE_TEST_GOOD:
+        default:
+            /* Cheap LCG - only has to be well distributed, not secure.  The
+             * srcIdx term keeps two sources from producing the same stream. */
+            c->pos = (c->pos * 1103515245U) + 12345U;
+            *octet = (byte)(((c->pos >> 16) & 0xFFU) ^
+                            (byte)((unsigned int)srcIdx * 0x5AU));
+            break;
+    }
+
+    return 0;
+}
+
+static void noise_test_cfg(wc_NoiseSrc* src, NoiseTestCtx* ctx, byte* work,
+                           word32 workSz, int mode)
+{
+    XMEMSET(src, 0, sizeof(*src));
+    XMEMSET(ctx, 0, sizeof(*ctx));
+    ctx->mode = mode;
+
+    src->sampleCb      = noise_test_sample;
+    src->ctx           = ctx;
+    src->tag           = "wolfssl-noisesrc-test";
+    src->work          = work;
+    src->workSz        = workSz;
+    src->startupOctets = (word32)NOISE_TEST_STARTUP;
+    src->numSrc        = 1;
+    src->hmin          = (byte)NOISE_TEST_HMIN;
+    src->margin        = (byte)NOISE_TEST_MARGIN;
+    src->rctCutoff     = (word16)NOISE_TEST_RCT;
+    src->aptWindow     = (word16)NOISE_TEST_APT_W;
+    src->aptCutoff     = (word16)NOISE_TEST_APT_C;
+}
+
+/* Conditioned-output KATs for the deterministic NOISE_TEST_GOOD sampler.
+ *
+ * The chunk counter is hashed into every chunk, so "seed1 != seed2" and the
+ * chunk-inequality check below hold even if no noise were gathered at all -
+ * wc_NoiseSrc_SelfTest() says as much.  Those checks therefore prove nothing
+ * about the conditioner.  Pinning the actual output covers what they cannot:
+ * that noise really reaches the hash, that the contributed-mask selects the
+ * right sources, and that the per-source buffers are hashed in the right
+ * order.  Values are octet streams, so a CHAR_BIT != 8 target must reproduce
+ * them exactly. */
+static const byte noise_kat_1src[WC_NOISE_CHUNK_SZ] = {
+    0xc4, 0xea, 0x79, 0x58, 0x9b, 0xe4, 0x09, 0x34,
+    0xa2, 0x1a, 0x90, 0xb0, 0xd0, 0xac, 0x04, 0x83,
+    0xc0, 0xaf, 0x12, 0x08, 0x68, 0xcc, 0xf9, 0x2a,
+    0x8b, 0xef, 0x77, 0xce, 0xc6, 0xd5, 0xba, 0xaa,
+};
+#if WC_NOISE_SRC_MAX >= 2
+static const byte noise_kat_2src[WC_NOISE_CHUNK_SZ * 3] = {
+    0xbf, 0x52, 0x8d, 0xfa, 0x85, 0x08, 0x11, 0xb7,
+    0x5b, 0xb6, 0xdd, 0x55, 0x88, 0x75, 0xb3, 0x70,
+    0xd4, 0x41, 0x5d, 0x36, 0xac, 0x33, 0x1b, 0xa2,
+    0x1c, 0x6a, 0x43, 0x37, 0x72, 0xa5, 0x6b, 0x0d,
+    0x0b, 0xd8, 0x7c, 0x1b, 0x6d, 0x99, 0xe4, 0x10,
+    0xc2, 0x2e, 0x1b, 0xf2, 0x37, 0x44, 0xca, 0x5e,
+    0x6b, 0xc0, 0x72, 0xdb, 0x4e, 0x75, 0xc9, 0x1f,
+    0x6a, 0x67, 0xf0, 0x4d, 0xd0, 0x64, 0x50, 0xcc,
+    0x6f, 0x43, 0xbf, 0xe9, 0xea, 0x38, 0x97, 0xee,
+    0xab, 0xa3, 0xe2, 0xfe, 0xe9, 0x8d, 0x11, 0xbe,
+    0x7d, 0x06, 0xba, 0xf9, 0xea, 0xce, 0xda, 0xb5,
+    0xc4, 0xd1, 0xcf, 0x57, 0x5c, 0x54, 0x44, 0xa4,
+};
+#endif
+
+WOLFSSL_TEST_SUBROUTINE wc_test_ret_t noisesrc_test(void)
+{
+    wc_NoiseSrc src;
+    NoiseTestCtx ctx;
+    byte work[2 * WC_NOISE_RAW_PER_SRC(NOISE_TEST_HMIN, NOISE_TEST_MARGIN)];
+    byte seed1[WC_NOISE_CHUNK_SZ];
+    byte seed2[WC_NOISE_CHUNK_SZ];
+    /* Spans several conditioner chunks.  Declared unconditionally: the
+     * post-startup fail-closed case below needs only one source. */
+    byte seedLong[WC_NOISE_CHUNK_SZ * 3];
+    wc_test_ret_t ret;
+    int i;
+
+    WOLFSSL_ENTER("noisesrc_test");
+
+    /* Well-distributed source: startup passes, seeds differ, self-test OK. */
+    noise_test_cfg(&src, &ctx, work, (word32)sizeof(work), NOISE_TEST_GOOD);
+    ret = wc_NoiseSrc_Init(&src);
+    if (ret != 0)
+        return WC_TEST_RET_ENC_EC(ret);
+    if (src.rawPerSrc !=
+            WC_NOISE_RAW_PER_SRC(NOISE_TEST_HMIN, NOISE_TEST_MARGIN))
+        return WC_TEST_RET_ENC_NC;
+    ret = wc_NoiseSrc_GenerateSeed(&src, seed1, (word32)sizeof(seed1));
+    if (ret != 0)
+        return WC_TEST_RET_ENC_EC(ret);
+    ret = wc_NoiseSrc_GenerateSeed(&src, seed2, (word32)sizeof(seed2));
+    if (ret != 0)
+        return WC_TEST_RET_ENC_EC(ret);
+    if (XMEMCMP(seed1, seed2, sizeof(seed1)) == 0)
+        return WC_TEST_RET_ENC_NC;
+    if (XMEMCMP(seed1, noise_kat_1src, sizeof(noise_kat_1src)) != 0)
+        return WC_TEST_RET_ENC_NC;
+    ret = wc_NoiseSrc_SelfTest(&src);
+    if (ret != 0)
+        return WC_TEST_RET_ENC_EC(ret);
+    wc_NoiseSrc_Free(&src);
+
+    /* Two sources: exercises the per-source work-buffer slicing, per-source
+     * health state and the uncredited hash-in - the shipping C2000 config.
+     * The seed spans several conditioner chunks. */
+    /* A source that only goes bad AFTER the startup tests: the failure must be
+     * caught by the continuous tests inside wc_NoiseSrc_GenerateSeed(), which
+     * is the module's fail-closed guarantee.  Assert the error is returned AND
+     * that the caller's buffer is wiped rather than left holding partial
+     * output.  Needs one source only, so it must sit outside the two-source
+     * region below. */
+    noise_test_cfg(&src, &ctx, work, (word32)sizeof(work),
+                   NOISE_TEST_LATE_STUCK);
+    ret = wc_NoiseSrc_Init(&src);
+    if (ret != 0)
+        return WC_TEST_RET_ENC_EC(ret);
+    XMEMSET(seedLong, 0xA5, sizeof(seedLong));
+    ret = wc_NoiseSrc_GenerateSeed(&src, seedLong, (word32)sizeof(seedLong));
+    if (ret != WC_NO_ERR_TRACE(ENTROPY_RT_E))
+        return WC_TEST_RET_ENC_NC;
+    for (i = 0; i < (int)sizeof(seedLong); i++) {
+        if (seedLong[i] != 0)
+            return WC_TEST_RET_ENC_NC;
+    }
+    /* and the instance must stay failed */
+    if (wc_NoiseSrc_GenerateSeed(&src, seed1, (word32)sizeof(seed1)) !=
+            WC_NO_ERR_TRACE(ENTROPY_RT_E))
+        return WC_TEST_RET_ENC_NC;
+    wc_NoiseSrc_Free(&src);
+
+#if WC_NOISE_SRC_MAX >= 2
+    noise_test_cfg(&src, &ctx, work, (word32)sizeof(work), NOISE_TEST_GOOD);
+    src.numSrc = 2;
+    ret = wc_NoiseSrc_Init(&src);
+    if (ret != 0)
+        return WC_TEST_RET_ENC_EC(ret);
+    ret = wc_NoiseSrc_GenerateSeed(&src, seedLong, (word32)sizeof(seedLong));
+    if (ret != 0)
+        return WC_TEST_RET_ENC_EC(ret);
+    /* Chunk boundaries must not repeat: the counter is hashed in. */
+    if (XMEMCMP(seedLong, seedLong + WC_NOISE_CHUNK_SZ,
+                WC_NOISE_CHUNK_SZ) == 0)
+        return WC_TEST_RET_ENC_NC;
+    if (XMEMCMP(seedLong, noise_kat_2src, sizeof(noise_kat_2src)) != 0)
+        return WC_TEST_RET_ENC_NC;
+
+    /* Raw access per source, and a rejected index. */
+    ret = wc_NoiseSrc_GetRaw(&src, seed1, (word32)sizeof(seed1), 0);
+    if (ret != 0)
+        return WC_TEST_RET_ENC_EC(ret);
+    ret = wc_NoiseSrc_GetRaw(&src, seed2, (word32)sizeof(seed2), 1);
+    if (ret != 0)
+        return WC_TEST_RET_ENC_EC(ret);
+    if (XMEMCMP(seed1, seed2, sizeof(seed1)) == 0)
+        return WC_TEST_RET_ENC_NC;
+    if (wc_NoiseSrc_GetRaw(&src, seed1, (word32)sizeof(seed1), 2) !=
+            WC_NO_ERR_TRACE(BAD_FUNC_ARG))
+        return WC_TEST_RET_ENC_NC;
+    if (wc_NoiseSrc_GetRaw(&src, seed1, (word32)sizeof(seed1), -1) !=
+            WC_NO_ERR_TRACE(BAD_FUNC_ARG))
+        return WC_TEST_RET_ENC_NC;
+
+    ret = wc_NoiseSrc_SelfTest(&src);
+    if (ret != 0)
+        return WC_TEST_RET_ENC_EC(ret);
+    wc_NoiseSrc_Free(&src);
+
+    /* An uncredited source that trips must not deny service: source 0 carries
+     * the whole entropy budget, so a dead source 1 is dropped and seeding
+     * continues.  The reverse (source 0 dead) must still fail closed. */
+    noise_test_cfg(&src, &ctx, work, (word32)sizeof(work),
+                   NOISE_TEST_SRC1_DEAD);
+    src.numSrc = 2;
+    ret = wc_NoiseSrc_Init(&src);
+    if (ret != 0)
+        return WC_TEST_RET_ENC_EC(ret);
+    if (src.failed != 0)
+        return WC_TEST_RET_ENC_NC;
+    if ((src.degraded & 0x2) == 0)      /* source 1 dropped */
+        return WC_TEST_RET_ENC_NC;
+    if ((src.degraded & 0x1) != 0)      /* source 0 untouched */
+        return WC_TEST_RET_ENC_NC;
+    ret = wc_NoiseSrc_GenerateSeed(&src, seed1, (word32)sizeof(seed1));
+    if (ret != 0)
+        return WC_TEST_RET_ENC_EC(ret);
+    ret = wc_NoiseSrc_GenerateSeed(&src, seed2, (word32)sizeof(seed2));
+    if (ret != 0)
+        return WC_TEST_RET_ENC_EC(ret);
+    if (XMEMCMP(seed1, seed2, sizeof(seed1)) == 0)
+        return WC_TEST_RET_ENC_NC;
+    wc_NoiseSrc_Free(&src);
+
+    /* Same stuck pattern on the credited source still fails closed. */
+    noise_test_cfg(&src, &ctx, work, (word32)sizeof(work), NOISE_TEST_STUCK);
+    src.numSrc = 2;
+    if (wc_NoiseSrc_Init(&src) != WC_NO_ERR_TRACE(ENTROPY_RT_E))
+        return WC_TEST_RET_ENC_NC;
+    wc_NoiseSrc_Free(&src);
+
+    /* A sampler error is not a test verdict: it must propagate unlatched and
+     * stay retryable, never silently drop an uncredited source. */
+    noise_test_cfg(&src, &ctx, work, (word32)sizeof(work),
+                   NOISE_TEST_SRC1_HWFAIL);
+    src.numSrc = 2;
+    if (wc_NoiseSrc_Init(&src) != WC_NO_ERR_TRACE(WC_HW_E))
+        return WC_TEST_RET_ENC_NC;
+    if (src.degraded != 0)              /* not a verdict - nothing dropped */
+        return WC_TEST_RET_ENC_NC;
+    if (src.failed != 0)                /* retryable - nothing latched */
+        return WC_TEST_RET_ENC_NC;
+    wc_NoiseSrc_Free(&src);
+
+    /* Only the uncredited source goes bad after startup: it must be dropped
+     * mid-flight and seeding must continue, not fail. */
+    noise_test_cfg(&src, &ctx, work, (word32)sizeof(work),
+                   NOISE_TEST_SRC1_LATE_STUCK);
+    src.numSrc = 2;
+    ret = wc_NoiseSrc_Init(&src);
+    if (ret != 0)
+        return WC_TEST_RET_ENC_EC(ret);
+    ret = wc_NoiseSrc_GenerateSeed(&src, seedLong, (word32)sizeof(seedLong));
+    if (ret != 0)
+        return WC_TEST_RET_ENC_EC(ret);
+    if ((src.degraded & 0x2) == 0)   /* source 1 dropped */
+        return WC_TEST_RET_ENC_NC;
+    if (src.failed != 0)             /* but the instance is still usable */
+        return WC_TEST_RET_ENC_NC;
+    wc_NoiseSrc_Free(&src);
+
+#endif
+
+    /* Stuck source: RCT trips inside the startup test, and the failure is
+     * latched for every later call until _Free() clears it. */
+    noise_test_cfg(&src, &ctx, work, (word32)sizeof(work), NOISE_TEST_STUCK);
+    if (wc_NoiseSrc_Init(&src) != WC_NO_ERR_TRACE(ENTROPY_RT_E))
+        return WC_TEST_RET_ENC_NC;
+    if (wc_NoiseSrc_Init(&src) != WC_NO_ERR_TRACE(ENTROPY_RT_E))
+        return WC_TEST_RET_ENC_NC;
+    if (wc_NoiseSrc_GenerateSeed(&src, seed1, (word32)sizeof(seed1)) !=
+            ENTROPY_RT_E)
+        return WC_TEST_RET_ENC_NC;
+    if (wc_NoiseSrc_SelfTest(&src) != WC_NO_ERR_TRACE(ENTROPY_RT_E))
+        return WC_TEST_RET_ENC_NC;
+    wc_NoiseSrc_Free(&src);
+    if (src.failed != 0)
+        return WC_TEST_RET_ENC_NC;
+
+    /* Biased source: RCT stays clear, APT catches it. */
+    noise_test_cfg(&src, &ctx, work, (word32)sizeof(work), NOISE_TEST_BIASED);
+    if (wc_NoiseSrc_Init(&src) != WC_NO_ERR_TRACE(ENTROPY_APT_E))
+        return WC_TEST_RET_ENC_NC;
+    wc_NoiseSrc_Free(&src);
+
+    /* A sampler failure propagates instead of becoming a deterministic bit. */
+    noise_test_cfg(&src, &ctx, work, (word32)sizeof(work), NOISE_TEST_HWFAIL);
+    if (wc_NoiseSrc_Init(&src) != WC_NO_ERR_TRACE(WC_HW_E))
+        return WC_TEST_RET_ENC_NC;
+    wc_NoiseSrc_Free(&src);
+
+    /* Periodic source: passes both health tests, so only the self-test's
+     * identical-gather check catches it.  Its constant-octet arm is not
+     * reachable from here - a constant source trips the RCT first - and stays
+     * defence in depth. */
+    noise_test_cfg(&src, &ctx, work, (word32)sizeof(work),
+                   NOISE_TEST_PERIODIC);
+    ret = wc_NoiseSrc_Init(&src);
+    if (ret != 0)
+        return WC_TEST_RET_ENC_EC(ret);
+    if (wc_NoiseSrc_SelfTest(&src) != WC_NO_ERR_TRACE(ENTROPY_RT_E))
+        return WC_TEST_RET_ENC_NC;
+    wc_NoiseSrc_Free(&src);
+
+    /* Configuration validation. */
+    if (wc_NoiseSrc_Init(NULL) != WC_NO_ERR_TRACE(BAD_FUNC_ARG))
+        return WC_TEST_RET_ENC_NC;
+
+    noise_test_cfg(&src, &ctx, work, (word32)sizeof(work), NOISE_TEST_GOOD);
+    src.sampleCb = NULL;
+    if (wc_NoiseSrc_Init(&src) != WC_NO_ERR_TRACE(BAD_FUNC_ARG))
+        return WC_TEST_RET_ENC_NC;
+
+    noise_test_cfg(&src, &ctx, work, (word32)sizeof(work), NOISE_TEST_GOOD);
+    src.tag = NULL;
+    if (wc_NoiseSrc_Init(&src) != WC_NO_ERR_TRACE(BAD_FUNC_ARG))
+        return WC_TEST_RET_ENC_NC;
+
+    noise_test_cfg(&src, &ctx, work, (word32)sizeof(work), NOISE_TEST_GOOD);
+    src.hmin = 0;
+    if (wc_NoiseSrc_Init(&src) != WC_NO_ERR_TRACE(BAD_FUNC_ARG))
+        return WC_TEST_RET_ENC_NC;
+
+    noise_test_cfg(&src, &ctx, work, (word32)sizeof(work), NOISE_TEST_GOOD);
+    src.numSrc = 0;
+    if (wc_NoiseSrc_Init(&src) != WC_NO_ERR_TRACE(BAD_FUNC_ARG))
+        return WC_TEST_RET_ENC_NC;
+
+    /* A startup pass shorter than one APT window never exercises the APT. */
+    noise_test_cfg(&src, &ctx, work, (word32)sizeof(work), NOISE_TEST_GOOD);
+    src.startupOctets = 8;
+    if (wc_NoiseSrc_Init(&src) != WC_NO_ERR_TRACE(BAD_FUNC_ARG))
+        return WC_TEST_RET_ENC_NC;
+
+    /* Work buffer too small for the entropy budget. */
+    noise_test_cfg(&src, &ctx, work, 16, NOISE_TEST_GOOD);
+    if (wc_NoiseSrc_Init(&src) != WC_NO_ERR_TRACE(BUFFER_E))
+        return WC_TEST_RET_ENC_NC;
+
+    return 0;
+}
+
+#endif /* WOLFSSL_NOISE_SRC && !WC_NO_RNG */
 
 #ifdef WC_RNG_BANK_SUPPORT
 
@@ -80881,6 +81415,10 @@ typedef struct {
 #if defined(WC_RSA_PSS) && defined(WOLF_CRYPTO_CB_RSA_PAD)
     int rsaPssVerifyCount; /* RSA-PSS verify callback invocations */
 #endif
+#if defined(HAVE_HKDF) && !defined(NO_HMAC)
+    int hkdfPendArm;   /* pend the next this-many HKDF callback calls */
+    int hkdfPendCount; /* pends issued; test asserts non-zero */
+#endif
 } myCryptoDevCtx;
 
 #ifdef WOLF_CRYPTO_CB_ONLY_RSA
@@ -82788,13 +83326,28 @@ static int myCryptoDevCb(int devIdArg, wc_CryptoInfo* info, void* ctx)
     #endif /* WOLFSSL_HAVE_LMS || WOLFSSL_HAVE_XMSS */
     #if defined(WOLFSSL_HAVE_SLHDSA)
     #ifndef WOLFSSL_SLHDSA_VERIFY_ONLY
-        if (info->pk.type == WC_PK_TYPE_PQC_SIG_KEYGEN) {
+        if ((info->pk.type == WC_PK_TYPE_PQC_SIG_KEYGEN) ||
+                (info->pk.type == WC_PK_TYPE_PQC_SIG_KEYGEN_SEED)) {
             int pqcType = info->pk.pqc_sig_kg.type;
             (void)pqcType;
             if (pqcType == WC_PQC_SIG_TYPE_SLHDSA) {
                 SlhDsaKey* sk = (SlhDsaKey*)info->pk.pqc_sig_kg.key;
+                const byte* seed = info->pk.pqc_sig_kg.seed;
                 sk->devId = INVALID_DEVID;
-                ret = wc_SlhDsaKey_MakeKey(sk, info->pk.pqc_sig_kg.rng);
+                /* The seed must travel with the type that announces it. */
+                if ((seed != NULL) !=
+                        (info->pk.type == WC_PK_TYPE_PQC_SIG_KEYGEN_SEED)) {
+                    ret = WC_NO_ERR_TRACE(BAD_STATE_E);
+                }
+                else if (seed != NULL) {
+                    /* SK.seed || SK.prf || PK.seed, each of n bytes. */
+                    word32 n = info->pk.pqc_sig_kg.seedSz / 3;
+                    ret = wc_SlhDsaKey_MakeKeyWithRandom(sk, seed, n,
+                        seed + n, n, seed + 2 * n, n);
+                }
+                else {
+                    ret = wc_SlhDsaKey_MakeKey(sk, info->pk.pqc_sig_kg.rng);
+                }
                 sk->devId = devIdArg;
                 myCtx->exampleVar++;
             }
@@ -82806,28 +83359,81 @@ static int myCryptoDevCb(int devIdArg, wc_CryptoInfo* info, void* ctx)
                 SlhDsaKey* sk = (SlhDsaKey*)info->pk.pqc_sign.key;
                 enum wc_HashType phType =
                     (enum wc_HashType)info->pk.pqc_sign.preHashType;
+                const byte* addRnd = info->pk.pqc_sign.addRnd;
                 sk->devId = INVALID_DEVID;
                 if (phType == WC_HASH_TYPE_NONE) {
-                    ret = wc_SlhDsaKey_Sign(sk,
-                        info->pk.pqc_sign.context,
-                        info->pk.pqc_sign.contextLen,
-                        info->pk.pqc_sign.in,
-                        info->pk.pqc_sign.inlen,
-                        info->pk.pqc_sign.out,
-                        info->pk.pqc_sign.outlen,
-                        info->pk.pqc_sign.rng);
+                    if (addRnd != NULL) {
+                        ret = wc_SlhDsaKey_SignWithRandom(sk,
+                            info->pk.pqc_sign.context,
+                            info->pk.pqc_sign.contextLen,
+                            info->pk.pqc_sign.in,
+                            info->pk.pqc_sign.inlen,
+                            info->pk.pqc_sign.out,
+                            info->pk.pqc_sign.outlen,
+                            addRnd);
+                    }
+                    else {
+                        ret = wc_SlhDsaKey_Sign(sk,
+                            info->pk.pqc_sign.context,
+                            info->pk.pqc_sign.contextLen,
+                            info->pk.pqc_sign.in,
+                            info->pk.pqc_sign.inlen,
+                            info->pk.pqc_sign.out,
+                            info->pk.pqc_sign.outlen,
+                            info->pk.pqc_sign.rng);
+                    }
                 }
                 else {
-                    ret = wc_SlhDsaKey_SignHash(sk,
-                        info->pk.pqc_sign.context,
-                        info->pk.pqc_sign.contextLen,
-                        info->pk.pqc_sign.in,
-                        info->pk.pqc_sign.inlen,
-                        phType,
-                        info->pk.pqc_sign.out,
-                        info->pk.pqc_sign.outlen,
-                        info->pk.pqc_sign.rng);
+                    if (addRnd != NULL) {
+                        ret = wc_SlhDsaKey_SignHashWithRandom(sk,
+                            info->pk.pqc_sign.context,
+                            info->pk.pqc_sign.contextLen,
+                            info->pk.pqc_sign.in,
+                            info->pk.pqc_sign.inlen,
+                            phType,
+                            info->pk.pqc_sign.out,
+                            info->pk.pqc_sign.outlen,
+                            addRnd);
+                    }
+                    else {
+                        ret = wc_SlhDsaKey_SignHash(sk,
+                            info->pk.pqc_sign.context,
+                            info->pk.pqc_sign.contextLen,
+                            info->pk.pqc_sign.in,
+                            info->pk.pqc_sign.inlen,
+                            phType,
+                            info->pk.pqc_sign.out,
+                            info->pk.pqc_sign.outlen,
+                            info->pk.pqc_sign.rng);
+                    }
                 }
+                sk->devId = devIdArg;
+                myCtx->exampleVar++;
+            }
+        }
+        else if (info->pk.type == WC_PK_TYPE_PQC_SIG_SIGN_MSG) {
+            int pqcType = info->pk.pqc_sign.type;
+            (void)pqcType;
+            if (pqcType == WC_PQC_SIG_TYPE_SLHDSA) {
+                SlhDsaKey* sk = (SlhDsaKey*)info->pk.pqc_sign.key;
+                sk->devId = INVALID_DEVID;
+                ret = wc_SlhDsaKey_SignMsgWithRandom(sk,
+                    info->pk.pqc_sign.in,
+                    info->pk.pqc_sign.inlen,
+                    info->pk.pqc_sign.out,
+                    info->pk.pqc_sign.outlen,
+                    info->pk.pqc_sign.addRnd);
+                sk->devId = devIdArg;
+                myCtx->exampleVar++;
+            }
+        }
+        else if (info->pk.type == WC_PK_TYPE_PQC_SIG_CHECK_PRIV_KEY) {
+            int pqcType = info->pk.pqc_sig_check.type;
+            (void)pqcType;
+            if (pqcType == WC_PQC_SIG_TYPE_SLHDSA) {
+                SlhDsaKey* sk = (SlhDsaKey*)info->pk.pqc_sig_check.key;
+                sk->devId = INVALID_DEVID;
+                ret = wc_SlhDsaKey_CheckKey(sk);
                 sk->devId = devIdArg;
                 myCtx->exampleVar++;
             }
@@ -82868,6 +83474,29 @@ static int myCryptoDevCb(int devIdArg, wc_CryptoInfo* info, void* ctx)
                 }
                 /* SIG_VERIFY_E is a validity signal, not a crypto error, so
                  * translate it back to success for the dispatcher. */
+                if (verifyRet == WC_NO_ERR_TRACE(SIG_VERIFY_E))
+                    verifyRet = 0;
+                ret = verifyRet;
+                myCtx->exampleVar++;
+            }
+        }
+        else if (info->pk.type == WC_PK_TYPE_PQC_SIG_VERIFY_MSG) {
+            int pqcType = info->pk.pqc_verify.type;
+            (void)pqcType;
+            if (pqcType == WC_PQC_SIG_TYPE_SLHDSA) {
+                SlhDsaKey* sk = (SlhDsaKey*)info->pk.pqc_verify.key;
+                int verifyRet;
+                sk->devId = INVALID_DEVID;
+                verifyRet = wc_SlhDsaKey_VerifyMsg(sk,
+                    info->pk.pqc_verify.msg,
+                    info->pk.pqc_verify.msglen,
+                    info->pk.pqc_verify.sig,
+                    info->pk.pqc_verify.siglen);
+                sk->devId = devIdArg;
+                if (info->pk.pqc_verify.res != NULL) {
+                    *info->pk.pqc_verify.res = (verifyRet == 0) ? 1 : 0;
+                }
+                /* SIG_VERIFY_E is a validity signal, not a crypto error. */
                 if (verifyRet == WC_NO_ERR_TRACE(SIG_VERIFY_E))
                     verifyRet = 0;
                 ret = verifyRet;
@@ -84494,6 +85123,17 @@ static int myCryptoDevCb(int devIdArg, wc_CryptoInfo* info, void* ctx)
 #endif /* WOLFSSL_CMAC && !(NO_AES) && WOLFSSL_AES_DIRECT */
     else if (info->algo_type == WC_ALGO_TYPE_KDF) {
     #if defined(HAVE_HKDF) && !defined(NO_HMAC)
+        /* Simulate a device that queues the request and completes it on a
+         * later call, so the caller has to poll. */
+        if (myCtx->hkdfPendArm > 0 &&
+                (info->kdf.type == WC_KDF_TYPE_HKDF ||
+                 info->kdf.type == WC_KDF_TYPE_HKDF_EXTRACT ||
+                 info->kdf.type == WC_KDF_TYPE_HKDF_EXPAND)) {
+            myCtx->hkdfPendArm--;
+            myCtx->hkdfPendCount++;
+            return WC_PENDING_E;
+        }
+
         if (info->kdf.type == WC_KDF_TYPE_HKDF) {
             /* Redirect to software implementation for testing */
         #if !defined(HAVE_SELFTEST) && \
@@ -84807,6 +85447,122 @@ static wc_test_ret_t shake_cb_copy_free_test(myCryptoDevCtx* myCtx,
 }
 #endif /* WOLFSSL_SHA3 && SHAKE && (CB_COPY || CB_FREE) */
 
+#if defined(HAVE_HKDF) && !defined(NO_HMAC) && \
+    !defined(NO_SHA256) && !defined(HAVE_SELFTEST) && \
+    (!defined(HAVE_FIPS) || FIPS_VERSION_GE(7,0)) && \
+    !defined(WC_TEST_NO_CRYPTOCB_SW_TEST)
+
+/* Bound retries so a broken contract fails instead of spinning. */
+#define HKDF_CB_MAX_POLL 16
+
+/* Drive the HKDF crypto callbacks against a device that pends first: the
+ * caller re-invokes with identical arguments until WC_PENDING_E clears.
+ * Vectors are RFC 5869 appendix A.1 (test case 1, SHA-256). */
+static wc_test_ret_t hkdf_cryptocb_async_test(myCryptoDevCtx* ctx)
+{
+    wc_test_ret_t ret = 0;
+    int  rc;
+    int  polls;
+    byte prk[WC_SHA256_DIGEST_SIZE];
+    byte okm[42];
+    WOLFSSL_SMALL_STACK_STATIC const byte ikm[22] = {
+        0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b,
+        0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b,
+        0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b };
+    WOLFSSL_SMALL_STACK_STATIC const byte salt[13] = {
+        0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+        0x08, 0x09, 0x0a, 0x0b, 0x0c };
+    WOLFSSL_SMALL_STACK_STATIC const byte info[10] = {
+        0xf0, 0xf1, 0xf2, 0xf3, 0xf4, 0xf5, 0xf6, 0xf7,
+        0xf8, 0xf9 };
+    WOLFSSL_SMALL_STACK_STATIC const byte expectedPrk[WC_SHA256_DIGEST_SIZE]
+        = {
+        0x07, 0x77, 0x09, 0x36, 0x2c, 0x2e, 0x32, 0xdf,
+        0x0d, 0xdc, 0x3f, 0x0d, 0xc4, 0x7b, 0xba, 0x63,
+        0x90, 0xb6, 0xc7, 0x3b, 0xb5, 0x0f, 0x9c, 0x31,
+        0x22, 0xec, 0x84, 0x4a, 0xd7, 0xc2, 0xb3, 0xe5 };
+    WOLFSSL_SMALL_STACK_STATIC const byte expected[42] = {
+        0x3c, 0xb2, 0x5f, 0x25, 0xfa, 0xac, 0xd5, 0x7a,
+        0x90, 0x43, 0x4f, 0x64, 0xd0, 0x36, 0x2f, 0x2a,
+        0x2d, 0x2d, 0x0a, 0x90, 0xcf, 0x1a, 0x5a, 0x4c,
+        0x5d, 0xb0, 0x2d, 0x56, 0xec, 0xc4, 0xc5, 0xbf,
+        0x34, 0x00, 0x72, 0x08, 0xd5, 0xb8, 0x87, 0x18,
+        0x58, 0x65 };
+
+    /* Three pends, so four passes: proves the caller loops, not retries
+     * exactly once. */
+    ctx->hkdfPendArm = 3;
+    ctx->hkdfPendCount = 0;
+    polls = 0;
+    do {
+        rc = wc_HKDF_Extract_ex(WC_SHA256, salt, (word32)sizeof(salt),
+                                ikm, (word32)sizeof(ikm), prk,
+                                HEAP_HINT, devId);
+        polls++;
+    } while (rc == WC_NO_ERR_TRACE(WC_PENDING_E) && polls < HKDF_CB_MAX_POLL);
+    if (rc != 0)
+        ret = WC_TEST_RET_ENC_EC(rc);
+    else if (polls != 4)
+        ret = WC_TEST_RET_ENC_NC;
+    else if (XMEMCMP(prk, expectedPrk, sizeof(prk)) != 0)
+        ret = WC_TEST_RET_ENC_NC;
+    if (ret != 0)
+        goto exit_hkdf_async;
+
+    /* Expand the PRK, pending three times as well. */
+    ctx->hkdfPendArm = 3;
+    ctx->hkdfPendCount = 0;
+    polls = 0;
+    do {
+        rc = wc_HKDF_Expand_ex(WC_SHA256, prk, (word32)sizeof(prk),
+                               info, (word32)sizeof(info), okm,
+                               (word32)sizeof(okm), HEAP_HINT, devId);
+        polls++;
+    } while (rc == WC_NO_ERR_TRACE(WC_PENDING_E) && polls < HKDF_CB_MAX_POLL);
+    if (rc != 0)
+        ret = WC_TEST_RET_ENC_EC(rc);
+    else if (polls != 4)
+        ret = WC_TEST_RET_ENC_NC;
+    else if (XMEMCMP(okm, expected, sizeof(okm)) != 0)
+        ret = WC_TEST_RET_ENC_NC;
+    if (ret != 0)
+        goto exit_hkdf_async;
+
+    /* Same vector through the one-shot wc_HKDF_ex(). */
+    XMEMSET(okm, 0, sizeof(okm));
+    ctx->hkdfPendArm = 1;
+    ctx->hkdfPendCount = 0;
+    polls = 0;
+    do {
+        rc = wc_HKDF_ex(WC_SHA256, ikm, (word32)sizeof(ikm),
+                        salt, (word32)sizeof(salt),
+                        info, (word32)sizeof(info),
+                        okm, (word32)sizeof(okm), HEAP_HINT, devId);
+        polls++;
+    } while (rc == WC_NO_ERR_TRACE(WC_PENDING_E) && polls < HKDF_CB_MAX_POLL);
+    if (rc != 0)
+        ret = WC_TEST_RET_ENC_EC(rc);
+    else if (polls != 2)
+        ret = WC_TEST_RET_ENC_NC;
+    else if (XMEMCMP(okm, expected, sizeof(okm)) != 0)
+        ret = WC_TEST_RET_ENC_NC;
+    /* Counter is reset per leg, so an earlier leg cannot satisfy this. */
+    else if (ctx->hkdfPendCount == 0)
+        ret = WC_TEST_RET_ENC_NC;
+
+exit_hkdf_async:
+    /* Disarm on every path, or a failing leg would leave the simulated
+     * device injecting WC_PENDING_E into later HKDF requests. */
+    ctx->hkdfPendArm = 0;
+
+    return ret;
+}
+
+#undef HKDF_CB_MAX_POLL
+
+#endif /* HAVE_HKDF && !NO_HMAC && !NO_SHA256 && !HAVE_SELFTEST && ... */
+
+
 #if !defined(WC_TEST_NO_CRYPTOCB_SW_TEST)
 WOLFSSL_TEST_SUBROUTINE wc_test_ret_t cryptocb_test(void)
 {
@@ -84839,6 +85595,12 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t cryptocb_test(void)
 #endif
 #if defined(WC_RSA_PSS) && defined(WOLF_CRYPTO_CB_RSA_PAD)
     myCtx.rsaPssVerifyCount = 0;
+#endif
+#if defined(HAVE_HKDF) && !defined(NO_HMAC)
+    /* myCtx is uninitialized stack: a garbage arm would inject
+     * WC_PENDING_E into callers that are not polling. */
+    myCtx.hkdfPendArm = 0;
+    myCtx.hkdfPendCount = 0;
 #endif
 
     /* set devId to something other than INVALID_DEVID */
@@ -85320,6 +86082,11 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t cryptocb_test(void)
 #if defined(HAVE_HKDF) && !defined(NO_HMAC)
     if (ret == 0)
         ret = hkdf_test();
+#if !defined(NO_SHA256) && !defined(HAVE_SELFTEST) && \
+    (!defined(HAVE_FIPS) || FIPS_VERSION_GE(7,0))
+    if (ret == 0)
+        ret = hkdf_cryptocb_async_test(&myCtx);
+#endif
 #endif
 #if defined(HAVE_CMAC_KDF)
     if (ret == 0)

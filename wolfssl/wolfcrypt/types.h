@@ -329,6 +329,23 @@ typedef const char wcchar[];
  * the stored octet.  Used by the SHA-2/3, Hash-DRBG, base64 and ML-DSA packers. */
 #define WC_OCTET(x)  ((byte)((x) & 0xFF))
 
+/* Octet representation at the API boundary.
+ *
+ * Every wolfCrypt byte* buffer holds ONE octet per 'byte' cell.  Where
+ * CHAR_BIT != 8 (e.g. the TI C2000 C28x, a 16-bit cell) that costs twice the
+ * RAM but leaves the octet values unchanged.  Data from outside the CPU -
+ * flash, a serial link, a host tool - is instead PACKED: WC_OCTETS_PER_BYTE
+ * octets per cell, low octet first.  Convert at the boundary with
+ * wc_UnpackOctets()/wc_PackOctets(), declared only where a cell is wider than
+ * an octet - elsewhere the two layouts coincide and there is nothing to do. */
+#define WC_OCTETS_PER_BYTE       ((word32)(CHAR_BIT / 8))
+/* Cells needed to hold octetSz octets packed.  Divides before adding the
+ * round-up so a near-WORD32_MAX octetSz cannot wrap.  octetSz is evaluated
+ * more than once - do not pass an expression with side effects. */
+#define WC_PACKED_CELLS(octetSz)                                     \
+    (((word32)(octetSz) / WC_OCTETS_PER_BYTE) +                      \
+     ((((word32)(octetSz)) % WC_OCTETS_PER_BYTE) != 0U ? 1U : 0U))
+
 #if defined(HAVE___UINT128_T) && !defined(NO_INT128)
     #ifndef WOLFSSL_UINT128_T_DEFINED
         #ifdef __SIZEOF_INT128__
@@ -1287,6 +1304,19 @@ binding for XSNPRINTF
     #endif
 #endif /* STRING_USER */
 
+#ifdef WOLFSSL_WIDE_BYTE
+/* Packed octet stream -> one octet per byte cell.  All sizes are in byte cells;
+ * out needs octetSz, in needs WC_PACKED_CELLS(octetSz), and they must not
+ * overlap.  Returns 0, BAD_FUNC_ARG on NULL, BUFFER_E when either buffer is
+ * short.  Declared only where a cell is wider than an octet; elsewhere the two
+ * layouts are identical and there is nothing to convert. */
+WOLFSSL_API int wc_UnpackOctets(byte* out, word32 outSz, const byte* in,
+    word32 inSz, word32 octetSz);
+/* Inverse: out needs WC_PACKED_CELLS(octetSz), in needs octetSz. */
+WOLFSSL_API int wc_PackOctets(byte* out, word32 outSz, const byte* in,
+    word32 inSz, word32 octetSz);
+#endif /* WOLFSSL_WIDE_BYTE */
+
 #ifdef USE_WOLF_STRTOK
     WOLFSSL_API char* wc_strtok(char *str, const char *delim, char **nextp);
 #endif
@@ -1711,6 +1741,18 @@ enum wc_PkType {
     WC_PK_TYPE_CURVE448_GENERIC  = 46,
     #undef _WC_PK_TYPE_MAX
     #define _WC_PK_TYPE_MAX WC_PK_TYPE_CURVE448_GENERIC
+#if defined(WOLFSSL_HAVE_MLDSA) || defined(HAVE_FALCON) || \
+    defined(WOLFSSL_HAVE_SLHDSA)
+    /* Internal interface: the caller supplies the already built message
+     * representative rather than message and context. */
+    WC_PK_TYPE_PQC_SIG_SIGN_MSG   = 47,
+    WC_PK_TYPE_PQC_SIG_VERIFY_MSG = 48,
+    /* Seeded key generation. Its own type so a device that cannot derive
+     * from a seed declines instead of generating an unrelated key. */
+    WC_PK_TYPE_PQC_SIG_KEYGEN_SEED = 49,
+    #undef _WC_PK_TYPE_MAX
+    #define _WC_PK_TYPE_MAX WC_PK_TYPE_PQC_SIG_KEYGEN_SEED
+#endif
     WC_PK_TYPE_MAX = _WC_PK_TYPE_MAX
 };
 
