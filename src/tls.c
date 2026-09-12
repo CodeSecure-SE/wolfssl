@@ -3745,9 +3745,13 @@ int ProcessChainOCSPRequest(WOLFSSL* ssl)
                 /* Suppressing soft-fail responder errors. OCSP_CERT_REVOKED
                  * is an explicit positive assertion of revocation and must
                  * not be ignored. OCSP_NO_URL just means there is no
-                 * responder to staple from; stapling stays best-effort. */
+                 * responder to staple from, and OCSP_INVALID_STATUS covers
+                 * every other result the stapler could not turn into a usable
+                 * response - an unreachable responder, or a cached entry with
+                 * no raw response kept; stapling stays best-effort. */
                 if (ret == WC_NO_ERR_TRACE(OCSP_CERT_UNKNOWN) ||
                     ret == WC_NO_ERR_TRACE(OCSP_LOOKUP_FAIL) ||
+                    ret == WC_NO_ERR_TRACE(OCSP_INVALID_STATUS) ||
                     ret == WC_NO_ERR_TRACE(OCSP_NO_URL)) {
                     ret = 0;
                 }
@@ -18438,6 +18442,9 @@ int TLSX_ParseVersion(WOLFSSL* ssl, const byte* input, word16 length,
         offset += size;
     }
 
+#if defined(WOLFSSL_DTLS13) && defined(WOLFSSL_DTLS_CID)
+    ssl->options.haveSupportedVersions = (ret == 0 && *found);
+#endif
     return ret;
 }
 #endif

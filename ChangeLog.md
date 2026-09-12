@@ -2,6 +2,29 @@
 
 ## Behavioral Changes
 
+* **Behavioral change (`--disable-tlsv12` compiles TLS 1.2 out)**: the option
+  set the summary line and a few derived settings, but never defined
+  `WOLFSSL_NO_TLS12`, so the whole TLS 1.2 implementation was still built and a
+  peer could still negotiate it.  The only place the define was added is a FIPS
+  bundle, whose condition skips it when the user asked for the option, so no
+  autotools configuration reached it; the CMake `WOLFSSL_TLSV12=no` path was
+  unaffected.  The option now defines it, which is what the bundles that turn
+  the version off, `--enable-tinytls13` among them, have been documented as
+  doing.  A build that passes `--disable-tlsv12` and still expects to negotiate
+  TLS 1.2 has to stop passing it.  Because the pre-TLS-1.3 handshake is now
+  compiled out, configure rejects the combinations that depend on it:
+  `--enable-oldtls`, which builds on the TLS 1.2 handshake; TLS 1.3 off, which
+  would leave no version to negotiate; and DTLS without DTLS 1.3, for the same
+  reason on the datagram side; and multicast, which rides on DTLS 1.2 and its
+  NULL cipher suite.  CMake rejects the same four for `-DWOLFSSL_TLSV12=no`;
+  it used to accept `-DWOLFSSL_OLD_TLS=yes` beside it and define `NO_OLD_TLS`
+  anyway, so the reported option and the build disagreed.  The sniffer, the
+  examples and the test suite pick their code paths by version where they used
+  to assume TLS 1.2 was present, so `--disable-tlsv12`, that with
+  `--enable-ocspstapling --enable-opensslextra`, `--enable-sniffer
+  --disable-tlsv12` and `--enable-dtls --enable-dtls13 --enable-dtlscid
+  --enable-session-ticket --disable-tlsv12` now build and test cleanly.
+
 * **Behavioral change (`wc_PufReadSram` health tests the raw SRAM readout)**:
   the raw readout is now health tested before the context accepts it, and a
   readout that cannot be SRAM power-on noise is rejected with `PUF_READ_E`
@@ -187,7 +210,27 @@
   limit needs roughly 23.7 million early data records on one connection, so no
   practical caller is affected.
 
+* **Behavioral change (LMS/XMSS reloaded keys hold no public key)**:
+  `wc_LmsKey_Reload()` and `wc_XmssKey_Reload()` restore enough private state
+  to sign, but neither populates the key's public half.  The LMS software
+  reload passes `NULL` as `wc_hss_reload_key()`'s `pub_root`, the XMSS
+  software reload reads the secret key only to sanity check it and
+  `ForceZero`s it immediately, and under `WOLF_CRYPTO_CB` a device-backed
+  reload is a no-op that touches nothing.  The key nevertheless reached
+  `WC_LMS_STATE_OK` / `WC_XMSS_STATE_OK`, so `wc_LmsKey_ExportPubRaw()`,
+  `wc_XmssKey_ExportPubRaw()`, the `ExportPub` / `ExportPub_ex` and
+  `PublicKeyToDer` wrappers, and both `Verify` functions returned success
+  while handing back, or verifying against, an all-zero public key.  Keys now
+  carry an explicit `pubSet` flag, set only where the public key is really
+  populated - key generation, `ImportPubRaw` and an `ExportPub_ex`
+  destination - and those functions return `BAD_STATE_E` when it is unset.
+  Signing with a reloaded key is unaffected.  Callers that need the public
+  key of a reloaded key must keep the one exported at generation time, or
+  load it into a separate key with `ImportPubRaw`.
+
 ## New Features
+
+* Added `WC_ALGO_TYPE_KEYSTORE`, a crypto callback algorithm type for lifetime operations on keys held in a hardware key store, with the public API in `wolfssl/wolfcrypt/wc_keystore.h` behind `--enable-cryptocbutils=keystore`. Seven operations - plaintext and wrapped import/export, derive, delete and get-info - address keys by an opaque device-defined reference that wolfCrypt copies through and never interprets, the same way it treats a key object's `id[]` blob. This lets a device create, wrap, derive and destroy keys that never appear in memory, which `WOLF_CRYPTO_CB_SETKEY` and `WOLF_CRYPTO_CB_EXPORT_KEY` cannot express because both are bound to a wolfCrypt key object holding material for its own use.
 
 * Added Argon2 (RFC 9106) password hashing with all three variants - Argon2d, Argon2i and Argon2id - via `--enable-argon2`. Only version 0x13 is implemented. Provides the one-shot `wc_Argon2()`/`wc_Argon2_ex()` and a reusable context API (`wc_Argon2Init`/`wc_Argon2SetParams`/`wc_Argon2DeriveTag`/`wc_Argon2Free`, plus `wc_Argon2New`/`wc_Argon2Delete` unless `WC_NO_CONSTRUCTORS`) that allocates the memory block array once for applications deriving many tags. `--enable-argon2-threads` fills the segments of a slice in parallel, which does not change the derived tag: the one-shot functions use a thread per lane, and the context API takes a count from `wc_Argon2SetThreads()`. by @SparkiDev
 

@@ -6872,7 +6872,7 @@ int test_wolfSSL_client_server_nofail_memio(test_ssl_cbf* client_cb,
 #ifdef HAVE_IO_TESTS_DEPENDENCIES
 
 #ifdef WOLFSSL_SESSION_EXPORT
-#ifdef WOLFSSL_DTLS
+#if defined(WOLFSSL_DTLS) && !defined(WOLFSSL_NO_TLS12)
 /* set up function for sending session information */
 static int test_export(WOLFSSL* inSsl, byte* buf, word32 sz, void* userCtx)
 {
@@ -8085,7 +8085,8 @@ THREAD_RETURN WOLFSSL_THREAD run_wolfssl_server(void* args)
 #ifdef WOLFSSL_ENCRYPTED_KEYS
     wolfSSL_CTX_set_default_passwd_cb(ctx, PasswordCallBack);
 #endif
-#if defined(WOLFSSL_SESSION_EXPORT) && defined(WOLFSSL_DTLS)
+#if defined(WOLFSSL_SESSION_EXPORT) && defined(WOLFSSL_DTLS) && \
+    !defined(WOLFSSL_NO_TLS12)
     if (callbacks->method == wolfDTLSv1_2_server_method) {
         if (wolfSSL_CTX_dtls_set_export(ctx, test_export) != WOLFSSL_SUCCESS)
             goto cleanup;
@@ -10052,7 +10053,8 @@ static int test_wolfSSL_UseMaxFragment(void)
     wolfSSL_CTX_free(ctx);
 
 #if defined(OPENSSL_EXTRA) && defined(HAVE_MAX_FRAGMENT) && \
-    defined(HAVE_MANUAL_MEMIO_TESTS_DEPENDENCIES)
+    defined(HAVE_MANUAL_MEMIO_TESTS_DEPENDENCIES) && \
+    !defined(WOLFSSL_NO_TLS12)
     /* check negotiated max fragment size */
     {
         WOLFSSL *ssl_c = NULL;
@@ -11887,12 +11889,14 @@ static int test_wolfSSL_EVP_PKEY_ED25519_openssl(void)
         0x44, 0x49, 0xc5, 0x69, 0x7b, 0x32, 0x69, 0x19,
         0x70, 0x3b, 0xac, 0x03, 0x1c, 0xae, 0x7f, 0x60
     };
+#if !defined(HAVE_FIPS) || FIPS_VERSION3_GE(7,0,0)
     static const unsigned char ed25519SeedPub[ED25519_PUB_KEY_SIZE] = {
         0xd7, 0x5a, 0x98, 0x01, 0x82, 0xb1, 0x0a, 0xb7,
         0xd5, 0x4b, 0xfe, 0xd3, 0xc9, 0x64, 0x07, 0x3a,
         0x0e, 0xe1, 0x72, 0xf3, 0xda, 0xa6, 0x23, 0x25,
         0xaf, 0x02, 0x1a, 0x68, 0xf7, 0x07, 0x51, 0x1a
     };
+#endif
     WOLFSSL_EVP_PKEY_CTX* ctx = NULL;
     WOLFSSL_EVP_PKEY* pkey = NULL;
     WOLFSSL_EVP_PKEY* certPub = NULL;
@@ -11954,7 +11958,9 @@ static int test_wolfSSL_EVP_PKEY_ED25519_openssl(void)
         unsigned char* rawSpki = NULL;
         unsigned char* privSpki = NULL;
         int rawSpkiSz = 0;
+#if !defined(HAVE_FIPS) || FIPS_VERSION3_GE(7,0,0)
         int privSpkiSz = 0;
+#endif
         const int ed25519SpkiHdrSz = (int)sizeof(ed25519SpkiHdr);
 
         /* An Ed25519 SPKI is a fixed-size header followed by the raw public
@@ -11979,6 +11985,7 @@ static int test_wolfSSL_EVP_PKEY_ED25519_openssl(void)
         ExpectNotNull(rawPriv = wolfSSL_EVP_PKEY_new_raw_private_key(
             EVP_PKEY_ED25519, NULL, ed25519Seed, ED25519_KEY_SIZE));
 
+#if !defined(HAVE_FIPS) || FIPS_VERSION3_GE(7,0,0)
         /* The raw input is only the seed, so the key must derive its public
          * half on import -- otherwise a key built this way is unusable with
          * i2d_PUBKEY / EVP_PKEY_cmp / signing, unlike the same key decoded
@@ -12004,6 +12011,7 @@ static int test_wolfSSL_EVP_PKEY_ED25519_openssl(void)
         ExpectIntEQ(wolfSSL_EVP_PKEY_cmp(rawPriv, seedPub), 0);
         ExpectIntEQ(wolfSSL_EVP_PKEY_cmp(rawPriv, rawPub), -1);
 #endif
+#endif /* !HAVE_FIPS || FIPS_VERSION3_GE(7,0,0) */
 
         /* A raw private key caches the bare 32-byte seed, not PKCS#8, so
          * pkcs8_encode() must build the PKCS#8 wrapper from the key object
@@ -12037,7 +12045,8 @@ static int test_wolfSSL_EVP_PKEY_ED25519_openssl(void)
     /* (3) Encode the private key as PKCS#8 PrivateKeyInfo and (7) decode it
      * back.  These compat helpers (EVP_PKEY2PKCS8, i2d_PKCS8_PKEY,
      * d2i_AutoPrivateKey) are only built with OPENSSL_ALL. */
-#if defined(OPENSSL_ALL) && !defined(NO_AES)
+#if defined(OPENSSL_ALL) && !defined(NO_AES) && \
+    (!defined(HAVE_FIPS) || FIPS_VERSION3_GE(7,0,0))
     {
         WOLFSSL_PKCS8_PRIV_KEY_INFO* p8 = NULL;
         WOLFSSL_EVP_PKEY* decPriv = NULL;
@@ -12142,7 +12151,8 @@ static int test_wolfSSL_EVP_PKEY_ED25519_openssl(void)
         wolfSSL_EVP_PKEY_free(v2Priv);
         wc_ed25519_free(&v2Key);
     }
-#endif
+
+#endif /* OPENSSL_ALL && !NO_AES && (!HAVE_FIPS || FIPS_VERSION3_GE(7,0,0)) */
 
     /* (4)(5) Build an in-memory self-signed cert; Ed25519 signs with a NULL
      * digest (it carries its own hash). */
@@ -12288,7 +12298,7 @@ static int test_wolfSSL_EVP_PKEY_ED25519_openssl(void)
      * public-only key has no private half and must fail rather than emit its
      * raw public bytes wrapped as a bogus PKCS#8 private key. */
 #if defined(OPENSSL_ALL) && !defined(NO_BIO) && !defined(NO_PWDBASED) && \
-    defined(HAVE_PKCS8)
+    defined(HAVE_PKCS8) && (!defined(HAVE_FIPS) || FIPS_VERSION3_GE(7,0,0))
     {
         WOLFSSL_BIO* pkcs8Bio = NULL;
 
@@ -12828,7 +12838,7 @@ static int test_wolfSSL_mcast(void)
     EXPECT_DECLS;
 #if defined(WOLFSSL_DTLS) && defined(WOLFSSL_MULTICAST) && \
     (defined(WOLFSSL_TLS13) || defined(WOLFSSL_SNIFFER)) && \
-    !defined(NO_WOLFSSL_CLIENT)
+    !defined(NO_WOLFSSL_CLIENT) && !defined(WOLFSSL_NO_TLS12)
     WOLFSSL_CTX* ctx = NULL;
     WOLFSSL* ssl = NULL;
     byte preMasterSecret[512];
@@ -12857,7 +12867,7 @@ static int test_wolfSSL_mcast(void)
     wolfSSL_free(ssl);
     wolfSSL_CTX_free(ctx);
 #endif /* WOLFSSL_DTLS && WOLFSSL_MULTICAST && (WOLFSSL_TLS13 ||
-        * WOLFSSL_SNIFFER) */
+        * WOLFSSL_SNIFFER) && !NO_WOLFSSL_CLIENT && !WOLFSSL_NO_TLS12 */
     return EXPECT_RESULT();
 }
 
@@ -15431,7 +15441,8 @@ static int test_wolfSSL_set1_host(void)
 
 #if defined(OPENSSL_ALL) && !defined(NO_RSA) && !defined(NO_CERTS) && \
     !defined(NO_WOLFSSL_CLIENT) && !defined(NO_WOLFSSL_SERVER) && \
-    defined(HAVE_ECC) && !defined(NO_TLS) && defined(HAVE_AESGCM)
+    defined(HAVE_ECC) && !defined(NO_TLS) && defined(HAVE_AESGCM) && \
+    !defined(WOLFSSL_NO_TLS12)
 static int test_wolfSSL_get_client_ciphers_ctx_ready(WOLFSSL_CTX* ctx)
 {
     EXPECT_DECLS;
@@ -15474,7 +15485,8 @@ static int test_wolfSSL_get_client_ciphers(void)
     EXPECT_DECLS;
 #if defined(OPENSSL_ALL) && !defined(NO_RSA) && !defined(NO_CERTS) && \
     !defined(NO_WOLFSSL_CLIENT) && !defined(NO_WOLFSSL_SERVER) && \
-    defined(HAVE_ECC) && !defined(NO_TLS) && defined(HAVE_AESGCM)
+    defined(HAVE_ECC) && !defined(NO_TLS) && defined(HAVE_AESGCM) && \
+    !defined(WOLFSSL_NO_TLS12)
     test_ssl_cbf server_cb;
     test_ssl_cbf client_cb;
 
@@ -15553,7 +15565,8 @@ static int test_wolfSSL_CTX_set_client_CA_list(void)
         ExpectIntEQ(sk_X509_NAME_find(names, name), i);
     }
 
-#if !defined(SINGLE_THREADED) && defined(SESSION_CERTS)
+#if !defined(SINGLE_THREADED) && defined(SESSION_CERTS) && \
+    !defined(WOLFSSL_NO_TLS12)
     {
         tcp_ready ready;
         func_args server_args;
@@ -18721,6 +18734,7 @@ static int test_wolfSSL_Tls13_ECH_tamper_client(void)
 #if defined(HAVE_IO_TESTS_DEPENDENCIES) && \
 defined(OPENSSL_EXTRA) && !defined(NO_CERTS) && \
     defined(WOLFSSL_TLS13) && defined(WOLFSSL_POST_HANDSHAKE_AUTH)
+#ifndef WOLFSSL_NO_TLS12
 static int post_auth_version_cb(WOLFSSL* ssl)
 {
     EXPECT_DECLS;
@@ -18749,6 +18763,7 @@ static int post_auth_version_client_cb(WOLFSSL* ssl)
 #endif
     return EXPECT_RESULT();
 }
+#endif /* !WOLFSSL_NO_TLS12 */
 
 static int post_auth_cb(WOLFSSL* ssl)
 {
@@ -18784,6 +18799,7 @@ static int test_wolfSSL_Tls13_postauth(void)
     test_ssl_cbf server_cbf;
     test_ssl_cbf client_cbf;
 
+#ifndef WOLFSSL_NO_TLS12
     /* test version failure doing post auth with TLS 1.2 connection */
     XMEMSET(&server_cbf, 0, sizeof(server_cbf));
     XMEMSET(&client_cbf, 0, sizeof(client_cbf));
@@ -18795,6 +18811,7 @@ static int test_wolfSSL_Tls13_postauth(void)
 
     ExpectIntEQ(test_wolfSSL_client_server_nofail_memio(&client_cbf,
         &server_cbf, NULL), TEST_SUCCESS);
+#endif /* !WOLFSSL_NO_TLS12 */
 
     /* tests on post auth with TLS 1.3 */
     XMEMSET(&server_cbf, 0, sizeof(server_cbf));
@@ -24029,7 +24046,8 @@ static int test_wolfSSL_OPENSSL_hexstr2buf(void)
 static int test_wolfSSL_sk_CIPHER_description(void)
 {
     EXPECT_DECLS;
-#if !defined(NO_RSA) && !defined(NO_TLS) && !defined(NO_WOLFSSL_CLIENT)
+#if !defined(NO_RSA) && !defined(NO_TLS) && !defined(NO_WOLFSSL_CLIENT) && \
+    !defined(WOLFSSL_NO_TLS12)
     const long flags = SSL_OP_NO_SSLv2 | SSL_OP_NO_COMPRESSION;
     int i;
     int numCiphers = 0;
@@ -29305,8 +29323,6 @@ static int test_wc_SignCRL_ed25519(void)
     /* The key file carries the private key only, so derive the public key that
      * Ed25519 signing needs. */
     ExpectIntEQ(wc_ed25519_make_public(&key, key.p, ED25519_PUB_KEY_SIZE), 0);
-    if (EXPECT_SUCCESS())
-        key.pubKeySet = 1;
 
     if (EXPECT_SUCCESS()) {
         ExpectIntEQ(crl_sign_verify_ex2(certDer, (word32)certDerSz,
@@ -29348,8 +29364,6 @@ static int test_wc_SignCRL_ed448(void)
     /* The key file carries the private key only, so derive the public key that
      * Ed448 signing needs. */
     ExpectIntEQ(wc_ed448_make_public(&key, key.p, ED448_PUB_KEY_SIZE), 0);
-    if (EXPECT_SUCCESS())
-        key.pubKeySet = 1;
 
     if (EXPECT_SUCCESS()) {
         ExpectIntEQ(crl_sign_verify_ex2(certDer, (word32)certDerSz,
@@ -32070,7 +32084,7 @@ static int test_wolfSSL_certs_clear(void)
 {
     EXPECT_DECLS;
 #if defined(OPENSSL_EXTRA) && !defined(NO_RSA) && !defined(NO_FILESYSTEM) && \
-    !defined(NO_WOLFSSL_SERVER)
+    !defined(NO_WOLFSSL_SERVER) && !defined(NO_TLS)
     WOLFSSL_CTX* ctx = NULL;
     WOLFSSL* ssl = NULL;
 #ifdef KEEP_OUR_CERT
@@ -37114,7 +37128,8 @@ static int test_short_session_id(void)
 
 
 #if !defined(NO_WOLFSSL_CLIENT) && !defined(NO_WOLFSSL_SERVER) &&   \
-    defined(HAVE_IO_TESTS_DEPENDENCIES) && defined(HAVE_SECURE_RENEGOTIATION)
+    defined(HAVE_IO_TESTS_DEPENDENCIES) && \
+    defined(HAVE_SECURE_RENEGOTIATION) && !defined(WOLFSSL_NO_TLS12)
 
 static WOLFSSL_SESSION* test_wolfSSL_SCR_after_resumption_session = NULL;
 
@@ -37735,7 +37750,17 @@ static int test_revoked_loaded_int_cert(void)
 
 
 
-#if !defined(NO_WOLFSSL_CLIENT) && !defined(NO_WOLFSSL_SERVER)
+/* The parameter table in test_self_signed_stapling() must not come out empty:
+ * status_request_v2 is a TLS v1.2-only extension, and TLS v1.3 can only be
+ * exercised through status_request v1, so a build that has just one of the two
+ * with the matching version compiled out has nothing left to run. */
+#if !defined(NO_WOLFSSL_CLIENT) && !defined(NO_WOLFSSL_SERVER) && \
+    ((defined(WOLFSSL_TLS13) && defined(HAVE_CERTIFICATE_STATUS_REQUEST)) || \
+     (!defined(WOLFSSL_NO_TLS12) && \
+      (defined(HAVE_CERTIFICATE_STATUS_REQUEST) || \
+       defined(HAVE_CERTIFICATE_STATUS_REQUEST_V2))))
+#define TEST_SELF_SIGNED_STAPLING
+
 #ifdef HAVE_CERTIFICATE_STATUS_REQUEST
 static int test_self_signed_stapling_client_v1_ctx_ready(WOLFSSL_CTX* ctx)
 {
@@ -37747,7 +37772,7 @@ static int test_self_signed_stapling_client_v1_ctx_ready(WOLFSSL_CTX* ctx)
 }
 #endif
 
-#ifdef HAVE_CERTIFICATE_STATUS_REQUEST_V2
+#if defined(HAVE_CERTIFICATE_STATUS_REQUEST_V2) && !defined(WOLFSSL_NO_TLS12)
 static int test_self_signed_stapling_client_v2_ctx_ready(WOLFSSL_CTX* ctx)
 {
     EXPECT_DECLS;
@@ -37767,23 +37792,18 @@ static int test_self_signed_stapling_client_v2_multi_ctx_ready(WOLFSSL_CTX* ctx)
 }
 #endif
 
-#if defined(HAVE_CERTIFICATE_STATUS_REQUEST) \
- || defined(HAVE_CERTIFICATE_STATUS_REQUEST_V2)
 static int test_self_signed_stapling_server_ctx_ready(WOLFSSL_CTX* ctx)
 {
     EXPECT_DECLS;
     ExpectIntEQ(wolfSSL_CTX_EnableOCSPStapling(ctx), 1);
     return EXPECT_RESULT();
 }
-#endif
-#endif
+#endif /* TEST_SELF_SIGNED_STAPLING */
 
 static int test_self_signed_stapling(void)
 {
     EXPECT_DECLS;
-#if (defined(HAVE_CERTIFICATE_STATUS_REQUEST) || \
-     defined(HAVE_CERTIFICATE_STATUS_REQUEST_V2)) && \
-     !defined(NO_WOLFSSL_CLIENT) && !defined(NO_WOLFSSL_SERVER)
+#ifdef TEST_SELF_SIGNED_STAPLING
     test_ssl_cbf client_cbf;
     test_ssl_cbf server_cbf;
     size_t i;

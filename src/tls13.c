@@ -5626,6 +5626,9 @@ int DoTls13ServerHello(WOLFSSL* ssl, const byte* input, word32* inOutIdx,
     case TLS_ASYNC_BEGIN:
     {
     byte b;
+#if defined(WOLFSSL_DTLS13) && defined(WOLFSSL_DTLS_CID)
+    ssl->options.haveSupportedVersions = 0;
+#endif
 #ifdef WOLFSSL_CALLBACKS
     if (ssl->hsInfoOn) AddPacketName(ssl, "ServerHello");
     if (ssl->toInfoOn) AddLateName("ServerHello", &ssl->timeoutInfo);
@@ -7888,6 +7891,10 @@ int DoTls13ClientHello(WOLFSSL* ssl, const byte* input, word32* inOutIdx,
     int wantDowngrade = 0;
     word16 totalExtSz = 0;
 
+#if defined(WOLFSSL_DTLS13) && defined(WOLFSSL_DTLS_CID)
+    /* Reset for each ClientHello, including retries and legacy fallbacks. */
+    ssl->options.haveSupportedVersions = 0;
+#endif
 #ifdef WOLFSSL_CALLBACKS
     if (ssl->hsInfoOn) AddPacketName(ssl, "ClientHello");
     if (ssl->toInfoOn) AddLateName("ClientHello", &ssl->timeoutInfo);
@@ -13359,6 +13366,15 @@ exit_dcv:
         * HAVE_FALCON || WOLFSSL_HAVE_MLDSA || WOLFSSL_HAVE_SLHDSA */
 #endif /* !NO_CERTS */
 
+#ifdef WOLFSSL_POST_HANDSHAKE_AUTH
+/* Message is being processed after the enclosing handshake completed. Whatever
+ * resumption, PSK or deferred (post-handshake) verification excused during that
+ * handshake, a later post-handshake exchange has to stand on its own. */
+#define TLS13_AFTER_HANDSHAKE(ssl)  ((ssl)->options.handShakeDone)
+#else
+#define TLS13_AFTER_HANDSHAKE(ssl)  0
+#endif
+
 /* Parse and handle a TLS v1.3 Finished message.
  *
  * ssl       The SSL/TLS object.
@@ -13383,10 +13399,11 @@ int DoTls13Finished(WOLFSSL* ssl, const byte* input, word32* inOutIdx,
 
 #if !defined(NO_CERTS) && !defined(WOLFSSL_NO_CLIENT_AUTH)
     /* verify the client sent certificate if required */
-    if (ssl->options.side == WOLFSSL_SERVER_END && !ssl->options.resuming &&
+    if (ssl->options.side == WOLFSSL_SERVER_END &&
+            (!ssl->options.resuming || TLS13_AFTER_HANDSHAKE(ssl)) &&
             (ssl->options.mutualAuth || ssl->options.failNoCert)) {
 #ifdef OPENSSL_COMPATIBLE_DEFAULTS
-        if (ssl->options.isPSK) {
+        if (ssl->options.isPSK && !TLS13_AFTER_HANDSHAKE(ssl)) {
             WOLFSSL_MSG("TLS v1.3 client used PSK but cert required. Allowing "
                         "for OpenSSL compatibility");
         }
@@ -13394,10 +13411,10 @@ int DoTls13Finished(WOLFSSL* ssl, const byte* input, word32* inOutIdx,
 #endif
         if (
         #ifdef WOLFSSL_POST_HANDSHAKE_AUTH
-            /* Exempt only the initial handshake; a pending post-handshake
-             * CertificateRequest (certReqCtx != NULL) still requires a peer
-             * certificate and a valid CertificateVerify. */
-            (!ssl->options.verifyPostHandshake || ssl->certReqCtx != NULL) &&
+            /* Exempt only the enclosing handshake; a post-handshake exchange
+             * still requires a peer certificate and a valid
+             * CertificateVerify. */
+            (!ssl->options.verifyPostHandshake || TLS13_AFTER_HANDSHAKE(ssl)) &&
         #endif
             (!ssl->options.havePeerCert || !ssl->options.havePeerVerify)) {
             ret = NO_PEER_CERT; /* NO_PEER_VERIFY */
@@ -13611,12 +13628,12 @@ static int SendTls13Finished(WOLFSSL* ssl)
 
     ssl->options.buildingMsg = 1;
 
-    outputSz = WC_MAX_DIGEST_SIZE + DTLS_HANDSHAKE_HEADER_SZ + MAX_MSG_EXTRA;
+    outputSz = WC_MAX_DIGEST_SIZE + headerSz + MAX_MSG_EXTRA;
 #ifdef WOLFSSL_DTLS13
-    /* MAX_MSG_EXTRA only budgets RECORD_HEADER_SZ. The DTLS 1.3 unified header
-     * is longer and grows with the TX CID. */
+    /* MAX_MSG_EXTRA reserves RECORD_HEADER_SZ, which is the size of the DTLS
+     * 1.3 unified header without the CID, so only the CID is missing. */
     if (isDtls)
-        outputSz += Dtls13GetRlHeaderLength(ssl, 1);
+        outputSz += DtlsGetCidTxSize(ssl);
 #endif /* WOLFSSL_DTLS13 */
     /* Check buffers are big enough and grow if needed. */
     if ((ret = CheckAvailableSize(ssl, outputSz)) != 0)
@@ -15074,8 +15091,9 @@ static int SanityCheckTls13MsgReceived(WOLFSSL* ssl, byte type)
             }
         #endif
         #if defined(HAVE_SESSION_TICKET) || !defined(NO_PSK)
-            /* Server's authenticating with PSK must not send this. */
-            if (ssl->options.pskNegotiated
+            /* RFC 8446 4.3.2: a server authenticating with a PSK must not send
+             * this in the main handshake, but may send it post-handshake. */
+            if (ssl->options.pskNegotiated && !TLS13_AFTER_HANDSHAKE(ssl)
 #ifdef WOLFSSL_CERT_WITH_EXTERN_PSK
                 && !ssl->options.certWithExternPsk
 #endif
@@ -15235,7 +15253,9 @@ static int SanityCheckTls13MsgReceived(WOLFSSL* ssl, byte type)
             }
         #endif
         #if defined(HAVE_SESSION_TICKET) || !defined(NO_PSK)
-            if (!ssl->options.pskNegotiated
+            if (!ssl->options.pskNegotiated ||
+                (ssl->options.side == WOLFSSL_SERVER_END &&
+                 TLS13_AFTER_HANDSHAKE(ssl))
 #ifdef WOLFSSL_CERT_WITH_EXTERN_PSK
                 || ssl->options.certWithExternPsk
 #endif
@@ -15249,18 +15269,13 @@ static int SanityCheckTls13MsgReceived(WOLFSSL* ssl, byte type)
                 if (ssl->options.verifyPeer &&
                 #ifdef WOLFSSL_POST_HANDSHAKE_AUTH
                     /* The post-handshake-auth exemption is only valid during
-                     * the initial handshake. On the server, once a
-                     * post-handshake CertificateRequest is outstanding
-                     * (certReqCtx != NULL), a Certificate is required again.
-                     * Scoped to the server: certReqCtx means something
-                     * different on the client (a received request) and the
-                     * client does not process an inbound Finished in that
-                     * state. Whether an empty Certificate is then accepted
-                     * follows the verify mode (FAIL_IF_NO_PEER_CERT), exactly
-                     * as for first-handshake client authentication. */
+                     * the enclosing handshake. Once the server has requested a
+                     * certificate post-handshake, one is required again.
+                     * Whether an empty Certificate is then accepted follows the
+                     * verify mode (FAIL_IF_NO_PEER_CERT), exactly as for
+                     * first-handshake client authentication. */
                     (!ssl->options.verifyPostHandshake ||
-                     (ssl->options.side == WOLFSSL_SERVER_END &&
-                      ssl->certReqCtx != NULL)) &&
+                     TLS13_AFTER_HANDSHAKE(ssl)) &&
                 #endif
                                            !ssl->msgsReceived.got_certificate) {
                     WOLFSSL_MSG("Finished received out of order - "
@@ -16547,7 +16562,8 @@ int wolfSSL_connect_TLSv13(WOLFSSL* ssl)
                 return WOLFSSL_FATAL_ERROR;
             }
         #ifndef NO_CERTS
-            if (!ssl->options.resuming && ssl->options.sendVerify) {
+            if ((!ssl->options.resuming || TLS13_AFTER_HANDSHAKE(ssl)) &&
+                    ssl->options.sendVerify) {
                 ssl->error = SendTls13Certificate(ssl);
                 if (ssl->error != 0) {
                     wolfssl_local_MaybeCheckAlertOnErr(ssl, ssl->error);
@@ -16568,7 +16584,8 @@ int wolfSSL_connect_TLSv13(WOLFSSL* ssl)
              defined(HAVE_FALCON) || defined(WOLFSSL_HAVE_MLDSA) || \
              defined(WOLFSSL_HAVE_SLHDSA))) && \
              (!defined(NO_WOLFSSL_SERVER) || !defined(WOLFSSL_NO_CLIENT_AUTH))
-            if (!ssl->options.resuming && ssl->options.sendVerify) {
+            if ((!ssl->options.resuming || TLS13_AFTER_HANDSHAKE(ssl)) &&
+                    ssl->options.sendVerify) {
                 ssl->error = SendTls13CertificateVerify(ssl);
                 if (ssl->error != 0) {
                     wolfssl_local_MaybeCheckAlertOnErr(ssl, ssl->error);
@@ -17289,6 +17306,9 @@ int wolfSSL_request_certificate(WOLFSSL* ssl)
     ssl->msgsReceived.got_certificate = 0;
     ssl->msgsReceived.got_certificate_verify = 0;
     ssl->msgsReceived.got_finished = 0;
+    /* Each round must prove possession again; these are only ever set to 1. */
+    ssl->options.havePeerCert = 0;
+    ssl->options.havePeerVerify = 0;
 
     ret = SendTls13CertificateRequest(ssl, &certReqCtx->ctx, certReqCtx->len);
     if (ret == WC_NO_ERR_TRACE(WANT_WRITE))
