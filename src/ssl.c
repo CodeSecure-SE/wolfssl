@@ -174,7 +174,8 @@ static struct SystemCryptoPolicy crypto_policy;
  * OPENSSL_COMPATIBLE_DEFAULTS:
  *                  Default behavior compatible with OpenSSL           default: off
  * NO_WOLFSSL_STUB:            Disable stubs for unimplemented funcs   default: off
- * WOLFSSL_DEBUG_OPENSSL:      Debug logging for OpenSSL compat layer  default: off
+ * WOLFSSL_DEBUG_OPENSSL:
+ *                  Alias for WOLFSSL_VERBOSE_LOGGING                  default: off
  * WOLFSSL_HAVE_ERROR_QUEUE:   OpenSSL-compatible error queue          default: off
  * WOLFSSL_ERROR_CODE_OPENSSL: Use OpenSSL-compatible error codes      default: off
  * WOLFSSL_CIPHER_INTERNALNAME:
@@ -5701,6 +5702,10 @@ size_t wolfSSL_get_client_random(const WOLFSSL* ssl, unsigned char* out,
         ssl->options.hrrSentCookie = 0;
     #endif
         ssl->options.hrrSentKeyShare = 0;
+        ssl->options.sentChangeCipher = 0;
+        /* Matches InitSSL_Tls13Options(); the server clears it again when the
+         * next ClientHello carries an empty session id. */
+        ssl->options.tls13MiddleBoxCompat = 1;
     #endif
     #ifdef WOLFSSL_DTLS
         ssl->options.dtlsStateful = 0;
@@ -5708,6 +5713,7 @@ size_t wolfSSL_get_client_random(const WOLFSSL* ssl, unsigned char* out,
     #ifdef WOLFSSL_TLS13
     #if defined(HAVE_SESSION_TICKET) || !defined(NO_PSK)
         ssl->options.noPskDheKe = ssl->ctx->noPskDheKe;
+        ssl->options.noPskDheKePolicy = ssl->ctx->noPskDheKe;
         #ifdef HAVE_SUPPORTED_CURVES
         ssl->options.onlyPskDheKe = ssl->ctx->onlyPskDheKe;
         #endif
@@ -5741,6 +5747,13 @@ size_t wolfSSL_get_client_random(const WOLFSSL* ssl, unsigned char* out,
     #ifdef HAVE_SESSION_TICKET
         #ifdef WOLFSSL_TLS13
         ssl->options.ticketsSent = 0;
+        #if !defined(NO_WOLFSSL_SERVER) && \
+            defined(WOLFSSL_TLS13_TICKET_CHECK_PSK_MODES)
+        /* Recorded from the ClientHello, so it must not carry into the next
+         * connection on a reused object. */
+        ssl->options.pskKeModes = 0;
+        ssl->options.pskKeModesRecvd = 0;
+        #endif
         #endif
         ssl->options.rejectTicket = 0;
     #endif

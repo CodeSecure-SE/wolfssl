@@ -8070,7 +8070,7 @@ int SetSSL_CTX(WOLFSSL* ssl, WOLFSSL_CTX* ctx, int writeDup)
 
 int InitHandshakeHashes(WOLFSSL* ssl)
 {
-    int ret;
+    int ret = 0;
 
     /* make sure existing handshake hashes are free'd */
     if (ssl->hsHashes != NULL) {
@@ -8119,7 +8119,7 @@ int InitHandshakeHashes(WOLFSSL* ssl)
         wc_Sha384SetFlags(&ssl->hsHashes->hashSha384, WC_HASH_FLAG_WILLCOPY);
     #endif
 #endif
-#ifdef WOLFSSL_SHA512
+#ifdef WOLFSSL_HS_HASH_SHA512
     ret = wc_InitSha512_ex(&ssl->hsHashes->hashSha512, ssl->heap, ssl->devId);
     if (ret != 0)
         return ret;
@@ -8155,7 +8155,7 @@ void Free_HS_Hashes(HS_Hashes* hsHashes, void* heap)
     #ifdef WOLFSSL_SHA384
         wc_Sha384Free(&hsHashes->hashSha384);
     #endif
-    #ifdef WOLFSSL_SHA512
+    #ifdef WOLFSSL_HS_HASH_SHA512
         wc_Sha512Free(&hsHashes->hashSha512);
     #endif
     #ifdef WOLFSSL_SM3
@@ -8232,7 +8232,7 @@ int InitHandshakeHashesAndCopy(WOLFSSL* ssl, HS_Hashes* source,
         ret = wc_Sha384Copy(&source->hashSha384,
             &(*destination)->hashSha384);
     #endif
-    #ifdef WOLFSSL_SHA512
+    #ifdef WOLFSSL_HS_HASH_SHA512
     if (ret == 0)
         ret = wc_Sha512Copy(&source->hashSha512,
             &(*destination)->hashSha512);
@@ -8476,6 +8476,7 @@ static void InitSSL_Tls13Options(WOLFSSL* ssl, WOLFSSL_CTX* ctx)
     #endif
     #if defined(HAVE_SESSION_TICKET) || !defined(NO_PSK)
         ssl->options.noPskDheKe = ctx->noPskDheKe;
+        ssl->options.noPskDheKePolicy = ctx->noPskDheKe;
     #ifdef HAVE_SUPPORTED_CURVES
         ssl->options.onlyPskDheKe = ctx->onlyPskDheKe;
     #endif /* HAVE_SUPPORTED_CURVES */
@@ -8493,9 +8494,8 @@ static void InitSSL_Tls13Options(WOLFSSL* ssl, WOLFSSL_CTX* ctx)
         ssl->numGroups = ctx->numGroups;
     }
 
-    #ifdef WOLFSSL_TLS13_MIDDLEBOX_COMPAT
-        ssl->options.tls13MiddleBoxCompat = 1;
-    #endif
+    /* Server clears this when the ClientHello legacy_session_id is empty. */
+    ssl->options.tls13MiddleBoxCompat = 1;
 }
 #endif /* WOLFSSL_TLS13 */
 
@@ -11806,7 +11806,7 @@ int HashRaw(WOLFSSL* ssl, const byte* data, int sz)
         WOLFSSL_BUFFER(digest, WC_SHA384_DIGEST_SIZE);
     #endif
     #endif
-    #ifdef WOLFSSL_SHA512
+    #ifdef WOLFSSL_HS_HASH_SHA512
         ret = wc_Sha512Update(&ssl->hsHashes->hashSha512, data, (word32)sz);
         if (ret != 0)
             return ret;
@@ -26325,8 +26325,12 @@ int ProcessReplyEx(WOLFSSL* ssl, int allowSocketErr)
     return ret;
 }
 
+/* The TLS 1.3 server accept path calls this for RFC 8446 Appendix D.4, so a
+ * server needs it whenever TLS 1.3 is built, not only with middlebox compat.
+ * A TLS 1.3 client only sends one in a middlebox compat build. */
 #if !defined(WOLFSSL_NO_TLS12) || !defined(NO_OLD_TLS) || \
-             (defined(WOLFSSL_TLS13) && defined(WOLFSSL_TLS13_MIDDLEBOX_COMPAT))
+    (defined(WOLFSSL_TLS13) && (!defined(NO_WOLFSSL_SERVER) || \
+                                defined(WOLFSSL_TLS13_MIDDLEBOX_COMPAT)))
 int SendChangeCipher(WOLFSSL* ssl)
 {
     byte              *output;
@@ -26337,13 +26341,17 @@ int SendChangeCipher(WOLFSSL* ssl)
     #ifdef OPENSSL_EXTRA
     ssl->cbmode = WOLFSSL_CB_MODE_WRITE;
     if (ssl->options.side == WOLFSSL_SERVER_END){
-        ssl->options.serverState = SERVER_CHANGECIPHERSPEC_COMPLETE;
+        /* A TLS 1.3 record here is a dummy and moves no state. */
+        if (!IsAtLeastTLSv1_3(ssl->version))
+            ssl->options.serverState = SERVER_CHANGECIPHERSPEC_COMPLETE;
         if (ssl->CBIS != NULL)
             ssl->CBIS(ssl, WOLFSSL_CB_ACCEPT_LOOP, WOLFSSL_SUCCESS);
     }
     else {
-        ssl->options.clientState =
-            CLIENT_CHANGECIPHERSPEC_COMPLETE;
+        /* As above; nothing on the TLS 1.3 connect path reads clientState. */
+        if (!IsAtLeastTLSv1_3(ssl->version)) {
+            ssl->options.clientState = CLIENT_CHANGECIPHERSPEC_COMPLETE;
+        }
         if (ssl->CBIS != NULL)
             ssl->CBIS(ssl, WOLFSSL_CB_CONNECT_LOOP, WOLFSSL_SUCCESS);
     }
@@ -26443,7 +26451,7 @@ int SendChangeCipher(WOLFSSL* ssl)
         return SendBuffered(ssl);
 }
 #endif /* !WOLFSSL_NO_TLS12 || !NO_OLD_TLS ||
-        * (WOLFSSL_TLS13 && WOLFSSL_TLS13_MIDDLEBOX_COMPAT) */
+        * (WOLFSSL_TLS13 && (!NO_WOLFSSL_SERVER || WOLFSSL_TLS13_MIDDLEBOX_COMPAT)) */
 
 
 #if !defined(NO_OLD_TLS) && !defined(WOLFSSL_AEAD_ONLY)
@@ -26726,7 +26734,7 @@ int BuildCertHashes(const WOLFSSL* ssl, Hashes* hashes)
                 if (ret != 0)
                     return ret;
             #endif
-            #ifdef WOLFSSL_SHA512
+            #ifdef WOLFSSL_HS_HASH_SHA512
                 ret = wc_Sha512GetHash(&ssl->hsHashes->hashSha512,
                                        hashes->sha512);
                 if (ret != 0)
@@ -29968,7 +29976,9 @@ int RetrySendAlert(WOLFSSL* ssl)
     int ret = 0;
     int type;
     int severity;
-    WOLFSSL_ENTER("RetrySendAlert");
+    /* Called on every I/O and returns immediately when no alert is pending, so
+     * this fires constantly and says nothing. */
+    WOLFSSL_ENTER_VERBOSE("RetrySendAlert");
 
     if (ssl == NULL) {
         return BAD_FUNC_ARG;
@@ -38846,6 +38856,7 @@ const byte* MaskCurve25519PeerKey(const byte* pub, word32 pubSz,
             case WC_NO_ERR_TRACE(INCOMPLETE_DATA):
                 return missing_extension;
             case WC_NO_ERR_TRACE(MATCH_SUITE_ERROR):
+            case WC_NO_ERR_TRACE(KEY_SHARE_ERROR):
             case WC_NO_ERR_TRACE(MISSING_HANDSHAKE_DATA):
             case WC_NO_ERR_TRACE(PSK_MISSING_ERROR):
                 return handshake_failure;

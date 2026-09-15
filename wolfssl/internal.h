@@ -5457,6 +5457,10 @@ struct Options {
 #if defined(HAVE_SESSION_TICKET) && defined(WOLFSSL_TLS13)
     unsigned int      maxTicketTls13;  /* maximum number of tickets to send */
     unsigned int      ticketsSent;     /* keep track of the total sent */
+#if !defined(NO_WOLFSSL_SERVER) && \
+    defined(WOLFSSL_TLS13_TICKET_CHECK_PSK_MODES)
+    byte              pskKeModes;      /* modes client advertised in CH */
+#endif
 #endif
 
     /* on/off or small bit flags, optimize layout */
@@ -5509,6 +5513,11 @@ struct Options {
     word16            usingAnon_cipher:1; /* are we using an anon cipher */
 #if defined(HAVE_SESSION_TICKET) || !defined(NO_PSK)
     word16            noPskDheKe:1;       /* Don't use (EC)DHE with PSK */
+    /* noPskDheKe doubles as negotiated state - it is set when psk_ke is chosen
+     * and cleared on every certificate handshake. Decisions that must follow
+     * what the application configured use this copy, which is only written by
+     * the configuration APIs. */
+    word16            noPskDheKePolicy:1; /* Configured no (EC)DHE with PSK */
 #ifdef HAVE_SUPPORTED_CURVES
     word16            onlyPskDheKe:1;     /* Only use (EC)DHE with PSK */
 #endif
@@ -5538,6 +5547,10 @@ struct Options {
     word16            noTicketTls13:1;    /* Server won't create new Ticket */
 #ifdef WOLFSSL_EARLY_DATA
     word16            ticketPredatesCtx:1; /* PSK ticket minted before ctx */
+#endif
+#if !defined(NO_WOLFSSL_SERVER) && \
+    defined(WOLFSSL_TLS13_TICKET_CHECK_PSK_MODES)
+    word16            pskKeModesRecvd:1;  /* CH had psk_key_exchange_modes */
 #endif
 #endif
 #endif
@@ -5576,7 +5589,7 @@ struct Options {
 #ifdef WOLFSSL_ALT_CERT_CHAINS
     word16            usingAltCertChain:1;/* Alternate cert chain was used */
 #endif
-#if defined(WOLFSSL_TLS13) && defined(WOLFSSL_TLS13_MIDDLEBOX_COMPAT)
+#ifdef WOLFSSL_TLS13
     word16            sentChangeCipher:1; /* Change Cipher Spec sent */
 #endif
 #if !defined(WOLFSSL_NO_CLIENT_AUTH) && \
@@ -6185,10 +6198,26 @@ typedef struct MsgsReceived {
 } MsgsReceived;
 
 
+/* configure and CMake refuse this; a user_settings.h build reaches neither
+ * and would fail with "no member named hashSha512" instead. */
+#if defined(WOLFSSL_TLS13_SHA512) && !defined(WOLFSSL_SHA512)
+    #error "WOLFSSL_TLS13_SHA512 requires WOLFSSL_SHA512"
+#endif
+
+/* Hashed for the TLS 1.2 signature algorithms, and kept for TLS 1.3 when
+ * WOLFSSL_TLS13_SHA512 allows SHA-512 as its handshake hash. No suite selects
+ * SHA-512, so TLS 1.3 reaches it only for the HRR cookie HMAC. */
+#if defined(WOLFSSL_SHA512) && (!defined(WOLFSSL_NO_TLS12) || \
+                                defined(WOLFSSL_TLS13_SHA512))
+    #define WOLFSSL_HS_HASH_SHA512
+#endif
+
 /* Handshake hashes */
 typedef struct HS_Hashes {
+#ifndef WOLFSSL_NO_TLS12
     Hashes          verifyHashes;
     Hashes          certHashes;         /* for cert verify */
+#endif
 #if !defined(NO_SHA) && (!defined(NO_OLD_TLS) || \
                           defined(WOLFSSL_ALLOW_TLS_SHA1))
     wc_Sha          hashSha;            /* sha hash of handshake msgs */
@@ -6202,7 +6231,7 @@ typedef struct HS_Hashes {
 #ifdef WOLFSSL_SHA384
     wc_Sha384       hashSha384;         /* sha384 hash of handshake msgs */
 #endif
-#ifdef WOLFSSL_SHA512
+#ifdef WOLFSSL_HS_HASH_SHA512
     wc_Sha512       hashSha512;         /* sha512 hash of handshake msgs */
 #endif
 #ifdef WOLFSSL_SM3

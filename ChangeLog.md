@@ -1,6 +1,11 @@
 # wolfSSL Release (unreleased)
 
 ## Behavioral Changes
+* **Behavioral change (`ForceZero()` issues no CPU fences)**: the wipe is
+  kept alive by a compiler barrier that takes the buffer address, which also
+  keeps it from being optimized away for buffers that never leave the inlined
+  code.  A caller that needs the zeroed memory to be visible to another core
+  must order it itself with a lock or an atomic release.
 
 * **Behavioral change (`--disable-tlsv12` compiles TLS 1.2 out)**: the option
   set the summary line and a few derived settings, but never defined
@@ -227,6 +232,19 @@
   Signing with a reloaded key is unaffected.  Callers that need the public
   key of a reloaded key must keep the one exported at generation time, or
   load it into a separate key with `ImportPubRaw`.
+
+* **Behavioral change (TLS 1.3 server ChangeCipherSpec)**: a TLS 1.3 server
+  now answers a ClientHello carrying a non-empty `legacy_session_id` with a
+  ChangeCipherSpec record, as RFC 8446 Appendix D.4 describes for middlebox
+  compatibility mode.  It only did so before in builds defining
+  `WOLFSSL_TLS13_MIDDLEBOX_COMPAT`, which only `--enable-tls13-middlebox-compat`
+  and `--enable-jni` set and neither is on by default, so a default-built
+  server stayed silent and peers that expect the record - Erlang's `ssl`
+  among them - aborted the handshake with an unexpected_message alert.  A
+  client sending an empty session id still sees none, and DTLS and QUIC are
+  unaffected.  One visible difference: `wolfSSL_get_state()` no longer passes
+  through `WOLFSSL_SS_SERVER_CHANGECIPHERSPEC` or
+  `WOLFSSL_SS_CLIENT_CHANGECIPHERSPEC` on a TLS 1.3 connection.
 
 ## New Features
 

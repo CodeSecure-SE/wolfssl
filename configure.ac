@@ -1429,7 +1429,8 @@ then
 
     if test "$KERNEL_MODE_DEFAULTS" != "yes"
     then
-        # Disable QUIC with JNI since incompatible with WOLFSSL_TLS13_MIDDLEBOX_COMPAT
+        # Disable QUIC with JNI since incompatible with client-side
+        # WOLFSSL_TLS13_MIDDLEBOX_COMPAT
         test "$enable_quic" = "" && test "$enable_cryptonly" != "yes" && test "$enable_jni" != "yes" && enable_quic=yes
         AM_CFLAGS="$AM_CFLAGS -DHAVE_CRL_IO -DHAVE_IO_TIMEOUT"
     fi
@@ -1447,7 +1448,8 @@ then
 
     if test "$ENABLED_FIPS" = "no"
     then
-        # Disable ECH with JNI since incompatible with WOLFSSL_TLS13_MIDDLEBOX_COMPAT
+        # Disable ECH with JNI since incompatible with client-side
+        # WOLFSSL_TLS13_MIDDLEBOX_COMPAT
         test "$enable_ech" = "" && test "$enable_jni" != "yes" && enable_ech=yes
         test "$enable_scep" = "" && enable_scep=yes
         test "$enable_mcast" = "" && enable_mcast=yes
@@ -2742,9 +2744,19 @@ then
 fi
 
 
+# SHA-512 handshake transcript for TLS v1.3
+AC_ARG_ENABLE([tls13-sha512],
+    [AS_HELP_STRING([--enable-tls13-sha512],[Keep the SHA-512 handshake transcript for TLS v1.3 (default: disabled)])],
+    [ ENABLED_TLS13_SHA512=$enableval ],
+    [ ENABLED_TLS13_SHA512=no ]
+    )
+# ENABLED_TLS13 is still mutable here - the key exchange prerequisite check
+# further down can force it off - so the macro is only added to AM_CFLAGS in
+# the consistency check section near the end, once it has settled.
+
 # TLS v1.3 middlebox compatibility (RFC 8446 Appendix D.4)
 AC_ARG_ENABLE([tls13-middlebox-compat],
-    [AS_HELP_STRING([--enable-tls13-middlebox-compat],[Enable TLS v1.3 middlebox compatibility mode (default: disabled)])],
+    [AS_HELP_STRING([--enable-tls13-middlebox-compat],[Enable client-side TLS v1.3 middlebox compatibility: send a fake session id and a ChangeCipherSpec. Server-side is always on (default: disabled)])],
     [ ENABLED_TLS13_MIDDLEBOX_COMPAT=$enableval ],
     [ ENABLED_TLS13_MIDDLEBOX_COMPAT=no ]
     )
@@ -2756,7 +2768,7 @@ then
         ENABLED_TLS13_MIDDLEBOX_COMPAT="no"
     elif test "x$ENABLED_ECH" = "xyes"
     then
-        AC_MSG_NOTICE([ECH is incompatible with middlebox compatibility - disabling middlebox compatibility])
+        AC_MSG_NOTICE([ECH is incompatible with client-side middlebox compatibility - disabling middlebox compatibility])
         ENABLED_TLS13_MIDDLEBOX_COMPAT="no"
     else
         AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_TLS13_MIDDLEBOX_COMPAT"
@@ -9775,7 +9787,7 @@ then
     AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_ALWAYS_KEEP_SNI"
     if test "x$ENABLED_ECH" = "xyes"
     then
-        AC_MSG_NOTICE([ECH is incompatible with middlebox compatibility - not enabling middlebox compatibility for JNI])
+        AC_MSG_NOTICE([ECH is incompatible with client-side middlebox compatibility - not enabling middlebox compatibility for JNI])
     else
         AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_TLS13_MIDDLEBOX_COMPAT"
     fi
@@ -13142,6 +13154,21 @@ AS_IF([test "x$ENABLED_SRTP" = "xyes"],
 AS_IF([test "x$ENABLED_MCAST" = "xyes"],
       [AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_MULTICAST"])
 
+# Settled here rather than beside the option itself: ENABLED_TLS13 can still
+# be forced off by the key exchange prerequisite check above, and appending
+# the macro earlier would leave it in a build with TLS 1.3 disabled. The macro
+# also decides whether the handshake transcript carries a SHA-512 hash at all,
+# so a stale value changes a struct layout rather than just enabling dead code.
+AS_IF([test "x$ENABLED_TLS13_SHA512" = "xyes" && test "x$ENABLED_TLS13" = "xno"],
+      [AC_MSG_NOTICE([TLS 1.3 is disabled - not keeping the SHA-512 handshake transcript for it])
+       ENABLED_TLS13_SHA512="no"])
+# The transcript cannot hash with SHA-512 unless SHA-512 is built.
+AS_IF([test "x$ENABLED_TLS13_SHA512" = "xyes" && \
+       test "x$ENABLED_SHA512" = "xno"],
+      [AC_MSG_ERROR([--enable-tls13-sha512 requires sha512.])])
+AS_IF([test "x$ENABLED_TLS13_SHA512" = "xyes"],
+      [AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_TLS13_SHA512"])
+
 # WOLFSSL_AFALG does not support SHA224 yet
 AS_IF([(test "x$ENABLED_AFALG" = "xyes") && (test "x$ENABLED_SHA224" = "xyes")],
       [AC_MSG_ERROR([--enable-sha224 with --enable-afalg not yet supported])])
@@ -14189,6 +14216,7 @@ echo "   * TLS v1.0 (Old):             $ENABLED_TLSV10"
 echo "   * TLS v1.1 (Old):             $ENABLED_OLD_TLS"
 echo "   * TLS v1.2:                   $ENABLED_TLSV12"
 echo "   * TLS v1.3:                   $ENABLED_TLS13"
+echo "   * TLS v1.3 SHA-512:           $ENABLED_TLS13_SHA512"
 echo "   * Tiny TLS 1.3:               $ENABLED_TINYTLS13"
 echo "   * RPK:                        $ENABLED_RPK"
 echo "   * Post-handshake Auth:        $ENABLED_TLS13_POST_AUTH"
