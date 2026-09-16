@@ -510,7 +510,8 @@ int test_wolfSSL_CTX_set_tlsext_servername_callback_ext(void)
 int test_wolfSSL_set_tlsext_debug_arg_ext(void)
 {
     EXPECT_DECLS;
-#if defined(OPENSSL_EXTRA) && defined(HAVE_PK_CALLBACKS) && \
+#if defined(OPENSSL_EXTRA) && \
+    !defined(NO_TLS) && \
     !defined(NO_WOLFSSL_CLIENT)
     WOLFSSL_CTX* ctx = NULL;
     WOLFSSL* ssl = NULL;
@@ -524,6 +525,177 @@ int test_wolfSSL_set_tlsext_debug_arg_ext(void)
 
     wolfSSL_free(ssl);
     wolfSSL_CTX_free(ctx);
+#endif
+    return EXPECT_RESULT();
+}
+
+#if defined(OPENSSL_EXTRA) && \
+    !defined(NO_TLS) && \
+    (!defined(NO_WOLFSSL_CLIENT) || \
+     (defined(HAVE_MANUAL_MEMIO_TESTS_DEPENDENCIES) && \
+      defined(HAVE_TLS_EXTENSIONS)))
+/* State recorded by test_tlsext_debug_cb(). */
+struct test_tlsext_debug_data {
+    int count;          /* number of extensions reported */
+    int client_server;  /* client_server value reported */
+    int types[32];      /* extension types reported, in order */
+    int lens[32];       /* lengths of the reported extensions */
+};
+
+static void test_tlsext_debug_cb(WOLFSSL *ssl, int client_server, int type,
+        const byte *data, int len, void *arg)
+{
+    struct test_tlsext_debug_data *d = (struct test_tlsext_debug_data *)arg;
+    (void)ssl;
+    (void)data;
+
+    d->count++;
+    d->client_server = client_server;
+    if (d->count - 1 < (int)(sizeof(d->types) / sizeof(d->types[0]))) {
+        d->types[d->count - 1] = type;
+        d->lens[d->count - 1] = len;
+    }
+}
+#endif /* helper callback for the TLS ext debug callback tests */
+
+#if defined(OPENSSL_EXTRA) && \
+    !defined(NO_TLS) && \
+    defined(HAVE_MANUAL_MEMIO_TESTS_DEPENDENCIES) && \
+    defined(HAVE_TLS_EXTENSIONS) && \
+    (defined(WOLFSSL_TLS13) || defined(HAVE_EXTENDED_MASTER))
+/* Find an extension type in the recorded list; returns its length, -1 if
+ * not reported. */
+static int test_tlsext_debug_find_len(const struct test_tlsext_debug_data *d,
+        int type)
+{
+    int i;
+
+    for (i = 0; i < d->count &&
+            i < (int)(sizeof(d->types) / sizeof(d->types[0])); i++) {
+        if (d->types[i] == type)
+            return d->lens[i];
+    }
+    return -1;
+}
+#endif /* helper lookup for the TLS ext debug handshake test */
+
+#if defined(OPENSSL_EXTRA) && \
+    !defined(NO_WOLFSSL_CLIENT) && !defined(NO_TLS)
+/* Declared with OpenSSL's spelling of the callback, to check that the compat
+ * macro accepts it without a cast. */
+static void test_tlsext_debug_ossl_cb(SSL *s, int client_server, int type,
+        const unsigned char *data, int len, void *arg)
+{
+    (void)s;
+    (void)client_server;
+    (void)type;
+    (void)data;
+    (void)len;
+    (void)arg;
+}
+#endif
+
+/* Test installing the TLS extension debug callback.
+ *
+ * @return  TEST_SUCCESS on success.
+ */
+int test_wolfSSL_set_tlsext_debug_callback_ext(void)
+{
+    EXPECT_DECLS;
+#if defined(OPENSSL_EXTRA) && \
+    !defined(NO_WOLFSSL_CLIENT) && !defined(NO_TLS)
+    WOLFSSL_CTX* ctx = NULL;
+    WOLFSSL* ssl = NULL;
+
+    /* NULL object is rejected. */
+    ExpectIntEQ(wolfSSL_set_tlsext_debug_callback(NULL,
+        test_tlsext_debug_cb), WOLFSSL_FAILURE);
+
+    ExpectNotNull(ctx = wolfSSL_CTX_new(wolfSSLv23_client_method()));
+    ExpectNotNull(ssl = wolfSSL_new(ctx));
+    ExpectIntEQ(wolfSSL_set_tlsext_debug_callback(ssl, test_tlsext_debug_cb),
+        WOLFSSL_SUCCESS);
+    /* Setting NULL disables the callback. */
+    ExpectIntEQ(wolfSSL_set_tlsext_debug_callback(ssl, NULL),
+        WOLFSSL_SUCCESS);
+
+    /* The compat macro takes a callback spelled the OpenSSL way without a
+     * cast. A cast here would hide a signature mismatch and leave the call
+     * undefined. */
+    ExpectIntEQ(SSL_set_tlsext_debug_callback(ssl, test_tlsext_debug_ossl_cb),
+        WOLFSSL_SUCCESS);
+
+    wolfSSL_free(ssl);
+    wolfSSL_CTX_free(ctx);
+#endif
+    return EXPECT_RESULT();
+}
+
+/* Test that the TLS extension debug callback reports the extensions
+ * received during a handshake on both sides.
+ *
+ * client_server identifies the side of the connection and the argument set
+ * with wolfSSL_set_tlsext_debug_arg() is passed through to the callback.
+ *
+ * @return  TEST_SUCCESS on success.
+ */
+int test_wolfSSL_set_tlsext_debug_callback_handshake_ext(void)
+{
+    EXPECT_DECLS;
+#if defined(OPENSSL_EXTRA) && \
+    defined(HAVE_MANUAL_MEMIO_TESTS_DEPENDENCIES) && \
+    defined(HAVE_TLS_EXTENSIONS) && !defined(NO_TLS)
+    WOLFSSL_CTX *ctx_c = NULL, *ctx_s = NULL;
+    WOLFSSL *ssl_c = NULL, *ssl_s = NULL;
+    struct test_memio_ctx test_ctx;
+    struct test_tlsext_debug_data cData, sData;
+
+    XMEMSET(&test_ctx, 0, sizeof(test_ctx));
+    XMEMSET(&cData, 0, sizeof(cData));
+    XMEMSET(&sData, 0, sizeof(sData));
+
+    ExpectIntEQ(test_memio_setup(&test_ctx, &ctx_c, &ctx_s, &ssl_c, &ssl_s,
+            wolfSSLv23_client_method, wolfSSLv23_server_method), 0);
+
+    ExpectIntEQ(wolfSSL_set_tlsext_debug_callback(ssl_c, test_tlsext_debug_cb),
+        WOLFSSL_SUCCESS);
+    ExpectIntEQ(wolfSSL_set_tlsext_debug_arg(ssl_c, &cData), WOLFSSL_SUCCESS);
+    ExpectIntEQ(wolfSSL_set_tlsext_debug_callback(ssl_s, test_tlsext_debug_cb),
+        WOLFSSL_SUCCESS);
+    ExpectIntEQ(wolfSSL_set_tlsext_debug_arg(ssl_s, &sData), WOLFSSL_SUCCESS);
+
+    ExpectIntEQ(test_memio_do_handshake(ssl_c, ssl_s, 10, NULL), 0);
+
+    /* Each side saw extensions from the peer, tagged with its own side.
+     * The server always sees the client hello's core extensions (e.g.
+     * supported groups); the client sees the server hello's, which carries
+     * supported versions in TLS 1.3 or the echoed extended master secret in
+     * TLS 1.2. */
+    ExpectTrue(sData.count > 0);
+#if defined(HAVE_EXTENDED_MASTER) || defined(WOLFSSL_TLS13)
+    ExpectTrue(cData.count > 0);
+    ExpectIntEQ(cData.client_server, 1);
+#endif
+    ExpectIntEQ(sData.client_server, 0);
+
+    /* Known extensions are reported with the expected content. */
+#if defined(WOLFSSL_TLS13)
+    /* TLS 1.3: both sides see supported versions (a list of 2-byte
+     * versions, so at least 2 bytes). */
+    ExpectTrue(test_tlsext_debug_find_len(&cData,
+        TLSX_SUPPORTED_VERSIONS) >= 2);
+    ExpectTrue(test_tlsext_debug_find_len(&sData,
+        TLSX_SUPPORTED_VERSIONS) >= 2);
+#elif defined(HAVE_EXTENDED_MASTER)
+    /* TLS 1.2: the client offers extended master secret (empty content). */
+    ExpectIntEQ(test_tlsext_debug_find_len(&sData,
+        TLSX_EXTENDED_MASTER_SECRET), 0);
+#endif
+
+    wolfSSL_free(ssl_c);
+    wolfSSL_free(ssl_s);
+    wolfSSL_CTX_free(ctx_c);
+    wolfSSL_CTX_free(ctx_s);
 #endif
     return EXPECT_RESULT();
 }
@@ -1724,7 +1896,7 @@ int test_wolfSSL_api_null_operands(void)
     ExpectNotNull(ssl = wolfSSL_new(ctx));
 
     /* --- SetTmpDH: (ssl|ctx == NULL) || (p == NULL) || (g == NULL) ------ */
-#if !defined(NO_DH) && !defined(WOLFSSL_NO_TLS12)
+    #if !defined(NO_DH) && !defined(WOLFSSL_NO_TLS12)
     {
         static const byte p[] = { 0x00, 0x01 };
         static const byte g[] = { 0x02 };
@@ -1745,20 +1917,20 @@ int test_wolfSSL_api_null_operands(void)
         (void)wolfSSL_CTX_SetTmpDH(ctx, p, (int)sizeof(p), g, 0);
         (void)wolfSSL_CTX_SetTmpDH(ctx, p, (int)sizeof(p), g, (int)sizeof(g));
     }
-#endif
+    #endif /* !NO_DH && !WOLFSSL_NO_TLS12 */
 
     /* --- load_verify_locations_ex: ctx, then (file == NULL && path == NULL),
      * which is a compound operand a caller giving either one never takes --- */
-#ifndef NO_FILESYSTEM
+    #ifndef NO_FILESYSTEM
     (void)wolfSSL_CTX_load_verify_locations_ex(NULL, caCertFile, NULL, 0);
     (void)wolfSSL_CTX_load_verify_locations_ex(ctx, NULL, NULL, 0);
     (void)wolfSSL_CTX_load_verify_locations_ex(ctx, caCertFile, NULL, 0);
     (void)wolfSSL_CTX_load_verify_locations(NULL, caCertFile, NULL);
     (void)wolfSSL_CTX_load_verify_locations(ctx, NULL, NULL);
-#endif
+    #endif /* !NO_FILESYSTEM */
 
     /* --- export_keying_material: ssl, out, label, and the context pair --- */
-#ifdef HAVE_KEYING_MATERIAL
+    #ifdef HAVE_KEYING_MATERIAL
     (void)wolfSSL_export_keying_material(NULL, buf, sizeof(buf),
             "label", 5, NULL, 0, 0);
     (void)wolfSSL_export_keying_material(ssl, NULL, sizeof(buf),
@@ -1773,10 +1945,10 @@ int test_wolfSSL_api_null_operands(void)
             "label", 5, buf, 4, 1);
     (void)wolfSSL_export_keying_material(ssl, buf, sizeof(buf),
             "label", 5, NULL, 0, 0);
-#endif
+    #endif /* HAVE_KEYING_MATERIAL */
 
     /* --- SetServerID: ssl, id, then len <= 0 ---------------------------- */
-#ifndef NO_SESSION_CACHE
+    #if !defined(NO_SESSION_CACHE) && !defined(NO_CLIENT_CACHE)
     (void)wolfSSL_SetServerID(NULL, buf, iSz, 0);
     (void)wolfSSL_SetServerID(ssl, NULL, iSz, 0);
     (void)wolfSSL_SetServerID(ssl, buf, 0, 0);
@@ -1787,10 +1959,10 @@ int test_wolfSSL_api_null_operands(void)
      * from tests/api leaves an undefined reference in configurations that do
      * not export it. The public wolfSSL_set_session() is exercised above and
      * covers the same guard. */
-#endif
+    #endif /* !NO_SESSION_CACHE && !NO_CLIENT_CACHE */
 
     /* --- ALPN peer protocol: ssl, list, listSz -------------------------- */
-#ifdef HAVE_ALPN
+    #ifdef HAVE_ALPN
     {
         char* list = NULL;
         word16 listSz = 0;
@@ -1802,12 +1974,12 @@ int test_wolfSSL_api_null_operands(void)
         if (list != NULL)
             XFREE(list, NULL, DYNAMIC_TYPE_TLSX);
     }
-#endif
+    #endif /* HAVE_ALPN */
 
     /* --- SNI from a raw ClientHello buffer ------------------------------ */
     /* Server-side only: it parses what a client sent (HAVE_SNI &&
      * !NO_WOLFSSL_SERVER in src/ssl_api_ext.c). */
-#if defined(HAVE_SNI) && !defined(NO_WOLFSSL_SERVER) && !defined(NO_TLS)
+    #if defined(HAVE_SNI) && !defined(NO_WOLFSSL_SERVER) && !defined(NO_TLS)
     {
         byte hello[64];
         word32 outSz = (word32)sizeof(buf);
@@ -1826,25 +1998,25 @@ int test_wolfSSL_api_null_operands(void)
         (void)wolfSSL_SNI_GetFromBuffer(hello, (word32)sizeof(hello),
                 WOLFSSL_SNI_HOST_NAME, buf, &outSz);
     }
-#endif
+    #endif /* HAVE_SNI && !NO_WOLFSSL_SERVER && !NO_TLS */
 
     /* --- trusted CA: the (certId != NULL) || (certIdSz != 0) pair ------- */
-#ifdef HAVE_TRUSTED_CA
+    #ifdef HAVE_TRUSTED_CA
     (void)wolfSSL_UseTrustedCA(ssl, WOLFSSL_TRUSTED_CA_PRE_AGREED, buf, 0);
     (void)wolfSSL_UseTrustedCA(ssl, WOLFSSL_TRUSTED_CA_PRE_AGREED, NULL, 4);
     (void)wolfSSL_UseTrustedCA(ssl, WOLFSSL_TRUSTED_CA_KEY_SHA1, buf,
                                (word32)sizeof(buf));
-#endif
+    #endif /* HAVE_TRUSTED_CA */
 
     /* --- DTLS peer: `peer != NULL && peerSz != NULL` --------------------- */
-#ifdef WOLFSSL_DTLS
+    #ifdef WOLFSSL_DTLS
     bufSz = (word32)sizeof(buf);
     (void)wolfSSL_dtls_get_peer(ssl, NULL, &bufSz);
     (void)wolfSSL_dtls_get_peer(ssl, buf, NULL);
     (void)wolfSSL_dtls_get_peer(ssl, buf, &bufSz);
     /* got_timeout on a connection that is not DTLS: the second operand */
     (void)wolfSSL_dtls_got_timeout(ssl);
-#endif
+    #endif /* WOLFSSL_DTLS */
 
     /* --- cipher suite lookup by name: name, then the output pointers ---- */
     {
@@ -1864,7 +2036,7 @@ int test_wolfSSL_api_null_operands(void)
     (void)bufSz; (void)iSz;
     wolfSSL_free(ssl);
     wolfSSL_CTX_free(ctx);
-#endif
+#endif /* !NO_WOLFSSL_CLIENT && !NO_CERTS && !NO_TLS */
     return EXPECT_RESULT();
 }
 

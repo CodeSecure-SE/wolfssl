@@ -36,9 +36,11 @@ int test_wc_DecodeRsaPssParams(void);
 int test_SerialNumber0_RootCA(void);
 int test_DecodeAltNames_length_underflow(void);
 int test_DecodeCertExtensions_dup_certpol(void);
+int test_DecodeCertExtensions_crldp_multiple_uri(void);
 int test_DecodeCertExtensions_empty_certpol(void);
 int test_DecodeCertExtensions_certpol_trailing_junk(void);
 int test_DecodeCertExtensions_empty_certpol_trailing(void);
+int test_ParseCert_validity_length_overrun(void);
 int test_ParseCert_SM3wSM2_short_pubkey(void);
 int test_ParseCert_dnBufferBoundary(void);
 int test_ParseCert_nameComponentIds(void);
@@ -50,6 +52,7 @@ int test_ToTraditional_ex_negative(void);
 int test_ToTraditional_ex_mldsa_bad_params(void);
 int test_wc_SignCert_buffer_bounds(void);
 int test_wc_MakeCert_generalizedTimeValidity(void);
+int test_wc_MakeCert_serial_encoding(void);
 int test_wc_DecodeKeyUsage_decipherOnly(void);
 int test_wc_DecodeExtKeyUsage_ssh(void);
 int test_wc_DecodeExtKeyUsage_ssh_oid_collision(void);
@@ -69,9 +72,11 @@ int test_wc_AsnFeatureCoverage(void);
     TEST_DECL_GROUP("asn", test_SerialNumber0_RootCA),              \
     TEST_DECL_GROUP("asn", test_DecodeAltNames_length_underflow),   \
     TEST_DECL_GROUP("asn", test_DecodeCertExtensions_dup_certpol),  \
+    TEST_DECL_GROUP("asn", test_DecodeCertExtensions_crldp_multiple_uri), \
     TEST_DECL_GROUP("asn", test_DecodeCertExtensions_empty_certpol), \
     TEST_DECL_GROUP("asn", test_DecodeCertExtensions_certpol_trailing_junk), \
     TEST_DECL_GROUP("asn", test_DecodeCertExtensions_empty_certpol_trailing), \
+    TEST_DECL_GROUP("asn", test_ParseCert_validity_length_overrun), \
     TEST_DECL_GROUP("asn", test_ParseCert_SM3wSM2_short_pubkey),    \
     TEST_DECL_GROUP("asn", test_ParseCert_dnBufferBoundary),        \
     TEST_DECL_GROUP("asn", test_ParseCert_nameComponentIds),       \
@@ -83,6 +88,7 @@ int test_wc_AsnFeatureCoverage(void);
     TEST_DECL_GROUP("asn", test_ToTraditional_ex_mldsa_bad_params), \
     TEST_DECL_GROUP("asn", test_wc_SignCert_buffer_bounds),         \
     TEST_DECL_GROUP("asn", test_wc_MakeCert_generalizedTimeValidity), \
+    TEST_DECL_GROUP("asn", test_wc_MakeCert_serial_encoding),       \
     TEST_DECL_GROUP("asn", test_wc_DecodeKeyUsage_decipherOnly),    \
     TEST_DECL_GROUP("asn", test_wc_DecodeExtKeyUsage_ssh),          \
     TEST_DECL_GROUP("asn", test_wc_DecodeExtKeyUsage_ssh_oid_collision), \

@@ -810,7 +810,60 @@ int IsDtlsNotSrtpMode(WOLFSSL* ssl)
         err = inflate(&ssl->d_stream, Z_SYNC_FLUSH);
         if (err != Z_OK && err != Z_STREAM_END) return ZLIB_DECOMPRESS_ERROR;
 
+        /* RFC 5246 6.2.2: a fragment decompressing past the maximum plaintext
+         * size is fatal, it must not be silently truncated.  'out' is sized
+         * one byte over that limit (see EnsureDecompBuffer), so a full output
+         * buffer means the limit was passed.  Leftover input cannot be used
+         * for this: inflate() pulls the last input bytes into its bit
+         * accumulator with output still pending. */
+        if (ssl->d_stream.avail_out == 0) {
+            WOLFSSL_MSG("Decompressed record exceeds max plaintext size");
+            return ZLIB_DECOMPRESS_ERROR;
+        }
+
+        /* room was left, so anything unconsumed is trailing garbage or data
+         * past the end of a stream the peer terminated */
+        if (ssl->d_stream.avail_in != 0) {
+            WOLFSSL_MSG("Trailing bytes after decompressed record");
+            return ZLIB_DECOMPRESS_ERROR;
+        }
+
         return (int)ssl->d_stream.total_out - currTotal;
+    }
+
+
+    /* Size the decompression buffer one byte over the largest plaintext the
+     * peer may send, so myDeCompress() can tell a record at the limit apart
+     * from one past it.  Grows if a renegotiation raised the fragment size.
+     * Not DYNAMIC_TYPE_IN_BUFFER: a static memory build with a fixed IO pool
+     * serves that type from the same buffer as ssl->buffers.inputBuffer. */
+    static int EnsureDecompBuffer(WOLFSSL* ssl, word32* outSz)
+    {
+        word32 needed = (word32)wolfSSL_GetMaxFragSize(ssl) + 1;
+        byte*  tmp;
+
+        /* Report the current limit, not the allocation.  The buffer only
+         * grows, so a fragment size lowered after it was sized must not
+         * inherit the old one; GetRecordHeader() reads the live value too. */
+        *outSz = needed;
+
+        if (ssl->buffers.decompBuffer.length >= needed)
+            return 0;
+
+        tmp = (byte*)XMALLOC(needed, ssl->heap, DYNAMIC_TYPE_TMP_BUFFER);
+        if (tmp == NULL)
+            return MEMORY_E;
+
+        if (ssl->buffers.decompBuffer.buffer != NULL) {
+            ForceZero(ssl->buffers.decompBuffer.buffer,
+                      ssl->buffers.decompBuffer.length);
+            XFREE(ssl->buffers.decompBuffer.buffer, ssl->heap,
+                  DYNAMIC_TYPE_TMP_BUFFER);
+        }
+        ssl->buffers.decompBuffer.buffer = tmp;
+        ssl->buffers.decompBuffer.length = needed;
+
+        return 0;
     }
 
 #endif /* HAVE_LIBZ */
@@ -1696,6 +1749,11 @@ static int ImportOptions(WOLFSSL* ssl, const byte* exp, word32 len, byte ver,
         options->tls1_3 = 1;
     }
 
+    /* Record layer compression exists in neither DTLS nor TLS 1.3, so an
+     * export blob must not be able to turn it back on. */
+    if (options->dtls || options->tls1_3)
+        options->usingCompression = 0;
+
     return idx;
 }
 
@@ -2363,7 +2421,8 @@ int InitSSL_Side(WOLFSSL* ssl, word16 side)
 #endif /* WOLFSSL_HAVE_SLHDSA */
 
 #if defined(HAVE_EXTENDED_MASTER) && !defined(NO_WOLFSSL_CLIENT)
-    if (ssl->options.side == WOLFSSL_CLIENT_END) {
+    /* Don't re-arm EMS advertising that the user disabled. */
+    if (ssl->options.side == WOLFSSL_CLIENT_END && !ssl->options.disableEMS) {
         if ((ssl->ctx->method->version.major == SSLv3_MAJOR) &&
              (ssl->ctx->method->version.minor >= TLSv1_MINOR)) {
             ssl->options.haveEMS = 1;
@@ -8761,6 +8820,8 @@ int InitSSL(WOLFSSL* ssl, WOLFSSL_CTX* ctx, int writeDup)
 
 #ifdef HAVE_EXTENDED_MASTER
     ssl->options.haveEMS = ctx->haveEMS;
+    ssl->options.disableEMS = ctx->disableEMS;
+    ssl->options.requireEMS = ctx->requireEMS;
 #endif
     ssl->options.useClientOrder = ctx->useClientOrder;
     ssl->options.mutualAuth = ctx->mutualAuth;
@@ -9979,6 +10040,15 @@ void wolfSSL_ResourceFree(WOLFSSL* ssl)
 #endif
 #ifdef HAVE_LIBZ
     FreeStreams(ssl);
+    if (ssl->buffers.decompBuffer.buffer != NULL) {
+        /* holds decrypted application data */
+        ForceZero(ssl->buffers.decompBuffer.buffer,
+                  ssl->buffers.decompBuffer.length);
+        XFREE(ssl->buffers.decompBuffer.buffer, ssl->heap,
+              DYNAMIC_TYPE_TMP_BUFFER);
+        ssl->buffers.decompBuffer.buffer = NULL;
+        ssl->buffers.decompBuffer.length = 0;
+    }
 #endif
     FreeSSL_EccPeerKeys(ssl);
 #if defined(WOLFSSL_HAVE_MLDSA)
@@ -23796,7 +23866,7 @@ int DoApplicationData(WOLFSSL* ssl, byte* input, word32* inOutIdx, int sniff)
     int    dataSz;
     byte*  rawData = input + idx;  /* keep current  for hmac */
 #ifdef HAVE_LIBZ
-    byte   decomp[MAX_RECORD_SIZE + MAX_COMP_EXTRA];
+    word32 decompSz = 0;
 #endif
 #ifdef WOLFSSL_EARLY_DATA
     int    isEarlyData = ssl->options.tls1_3 &&
@@ -23932,8 +24002,27 @@ int DoApplicationData(WOLFSSL* ssl, byte* input, word32* inOutIdx, int sniff)
 
 #ifdef HAVE_LIBZ
         if (ssl->options.usingCompression) {
-            dataSz = myDeCompress(ssl, rawData, dataSz, decomp, sizeof(decomp));
-            if (dataSz < 0) return dataSz;
+            /* Plaintext goes into a connection owned buffer rather than back
+             * over 'input': a fragment can decompress to far more than the
+             * record it arrived in, and 'input' is only sized for that record
+             * and may hold the records queued behind it. */
+            dataSz = EnsureDecompBuffer(ssl, &decompSz);
+            if (dataSz != 0) {
+                WOLFSSL_ERROR_VERBOSE(dataSz);
+                return dataSz;
+            }
+
+            dataSz = myDeCompress(ssl, rawData, rawSz,
+                                  ssl->buffers.decompBuffer.buffer,
+                                  (int)decompSz);
+            if (dataSz < 0) {
+                if (sniff == NO_SNIFF) {
+                    SendAlert(ssl, alert_fatal, decompression_failure);
+                }
+                WOLFSSL_ERROR_VERBOSE(dataSz);
+                return dataSz;
+            }
+            rawData = ssl->buffers.decompBuffer.buffer;
         }
 #endif
         idx += (word32)rawSz;
@@ -23941,12 +24030,6 @@ int DoApplicationData(WOLFSSL* ssl, byte* input, word32* inOutIdx, int sniff)
         ssl->buffers.clearOutputBuffer.buffer = rawData;
         ssl->buffers.clearOutputBuffer.length = (unsigned int)dataSz;
     }
-
-#ifdef HAVE_LIBZ
-    /* decompress could be bigger, overwrite after verify */
-    if (ssl->options.usingCompression)
-        XMEMMOVE(rawData, decomp, dataSz);
-#endif
 
     *inOutIdx = idx;
 #ifdef WOLFSSL_DTLS13
@@ -25012,18 +25095,21 @@ static void DropAndRestartProcessReply(WOLFSSL* ssl)
  * Returns 0 if consistent, else sends a fatal alert and returns an error. */
 static int CheckResumptionConsistency(WOLFSSL* ssl)
 {
+    byte skipEmsCheck = 0;
+
     if (ssl->session == NULL) /* nothing to compare against */
         return 0;
-    /* EMS must match (RFC 7627 5.3); skip EAP-FAST (session-secret callback). */
-    if (
 #ifdef HAVE_SECRET_CALLBACK
-        !(ssl->sessionSecretCb != NULL
+    /* Skip the EMS checks for EAP-FAST (session-secret callback): the master
+     * secret comes from the callback rather than the cached session. */
+    skipEmsCheck = (ssl->sessionSecretCb != NULL
 #ifdef HAVE_SESSION_TICKET
                 && ssl->session->ticketLen > 0
 #endif
-                ) &&
+                ) ? 1 : 0;
 #endif
-        ssl->session->haveEMS != ssl->options.haveEMS) {
+    /* EMS must match (RFC 7627 5.3). */
+    if (!skipEmsCheck && ssl->session->haveEMS != ssl->options.haveEMS) {
         WOLFSSL_MSG("Resumed session EMS state does not match "
                     "ServerHello EMS state");
         SendAlert(ssl, alert_fatal, handshake_failure);
@@ -25941,9 +26027,13 @@ static int DoProcessReplyEx(WOLFSSL* ssl, int allowSocketErr)
                     >= ssl->buffers.inputBuffer.length) {
                 return BUFFER_ERROR;
             }
+            /* RFC 5246 6.2.2 lets a compressed fragment run MAX_COMP_EXTRA
+             * over the plaintext limit, same allowance GetRecordHeader()
+             * makes for the record length. */
        #if defined(HAVE_ENCRYPT_THEN_MAC) && !defined(WOLFSSL_AEAD_ONLY)
             if (IsEncryptionOn(ssl, 0) && ssl->options.startedETMRead) {
-                if ((ssl->curSize > MAX_PLAINTEXT_SZ)
+                if ((ssl->curSize > MAX_PLAINTEXT_SZ +
+                        (ssl->options.usingCompression ? MAX_COMP_EXTRA : 0))
 #ifdef WOLFSSL_ASYNC_CRYPT
                         && ssl->buffers.inputBuffer.length !=
                                 ssl->buffers.inputBuffer.idx
@@ -25961,7 +26051,8 @@ static int DoProcessReplyEx(WOLFSSL* ssl, int allowSocketErr)
        #endif
             /* TLS13 plaintext limit is checked earlier before decryption */
             if (!IsAtLeastTLSv1_3(ssl->version)
-                    && ssl->curSize > MAX_PLAINTEXT_SZ
+                    && ssl->curSize > MAX_PLAINTEXT_SZ +
+                        (ssl->options.usingCompression ? MAX_COMP_EXTRA : 0)
 #ifdef WOLFSSL_ASYNC_CRYPT
                     && ssl->buffers.inputBuffer.length !=
                             ssl->buffers.inputBuffer.idx
@@ -29332,8 +29423,18 @@ int SendData(WOLFSSL* ssl, const void* data, size_t sz)
         byte* sendBuffer = (byte*)data + sent;  /* may switch on comp */
         int   buffSz;                           /* may switch on comp */
         int   outputSz;
+        /* The threaded crypt path returns each record directly and never
+         * advances 'sent', so it only needs this when compressing. */
+#if defined(HAVE_LIBZ) || !defined(WOLFSSL_THREADED_CRYPT)
+        int   plainSz;                          /* buffSz before compression */
+#endif
 #ifdef HAVE_LIBZ
         byte  comp[MAX_RECORD_SIZE + MAX_COMP_EXTRA];
+        /* deflate may expand incompressible data, so the record has to be
+         * sized for the worst case before the payload is compressed into it */
+        int   compExtra = ssl->options.usingCompression ? MAX_COMP_EXTRA : 0;
+#else
+        const int compExtra = 0;
 #endif
 #ifdef WOLFSSL_THREADED_CRYPT
         int i;
@@ -29444,7 +29545,12 @@ int SendData(WOLFSSL* ssl, const void* data, size_t sz)
             int maxFrag = wolfSSL_GetMaxFragSize(ssl);
             if (maxFrag > 0)
                 buffSz = min((word32)buffSz, (word32)maxFrag);
-            outputSz = wolfssl_local_GetRecordSize(ssl, (word32)buffSz, 1);
+            /* No MTU to respect here, so the record is simply allocated big
+             * enough for deflate's worst case.  Without the allowance an
+             * incompressible full size fragment fails BuildMessage()'s outSz
+             * bound.  DTLS above cannot do this: there the size is charged
+             * against the MTU. */
+            outputSz = wolfssl_local_GetRecordSize(ssl, buffSz + compExtra, 1);
         }
 
         /* check for available size, it does also DTLS MTU checks */
@@ -29482,9 +29588,15 @@ int SendData(WOLFSSL* ssl, const void* data, size_t sz)
         out = encrypt->buffer.buffer;
 #endif
 
+        /* buffSz becomes the compressed length below, so hold on to the
+         * plaintext length: that is what the caller's 'sent' cursor and the
+         * WANT_WRITE resume point are measured in. */
+#if defined(HAVE_LIBZ) || !defined(WOLFSSL_THREADED_CRYPT)
+        plainSz = buffSz;
+#endif
 #ifdef HAVE_LIBZ
         if (ssl->options.usingCompression) {
-            buffSz = myCompress(ssl, sendBuffer, buffSz, comp, sizeof(comp));
+            buffSz = myCompress(ssl, sendBuffer, plainSz, comp, sizeof(comp));
             if (buffSz < 0) {
                 return buffSz;
             }
@@ -29576,7 +29688,7 @@ int SendData(WOLFSSL* ssl, const void* data, size_t sz)
             WOLFSSL_ERROR(error);
             /* store for next call if WANT_WRITE or user embedSend() that
                doesn't present like WANT_WRITE */
-            ssl->buffers.plainSz  = buffSz;
+            ssl->buffers.plainSz  = (word32)plainSz;
             ssl->buffers.prevSent = sent;
             if (error == WC_NO_ERR_TRACE(SOCKET_ERROR_E) &&
                     (ssl->options.connReset || ssl->options.isClosed)) {
@@ -29591,7 +29703,7 @@ int SendData(WOLFSSL* ssl, const void* data, size_t sz)
             ssl->error = 0; /* Clear any previous errors */
         }
 
-        sent += buffSz;
+        sent += (word32)plainSz;
 
         /* only one message per attempt */
         if (ssl->options.partialWrite == 1) {
@@ -30512,7 +30624,7 @@ const char* wolfSSL_ERR_reason_error_string(unsigned long e)
         return "Initialize ctx mutex error";
 
     case EXT_MASTER_SECRET_NEEDED_E:
-        return "Extended Master Secret must be enabled to resume EMS session";
+        return "Extended Master Secret required but not negotiated with peer";
 
     case DTLS_POOL_SZ_E:
         return "Maximum DTLS pool size exceeded";
@@ -34517,6 +34629,8 @@ static void MakePSKPreMasterSecret(Arrays* arrays, byte use_psk_key)
                + (word32)idSz + ENUM_LEN
                + SUITE_LEN
                + COMP_LEN + ENUM_LEN;
+        if (ssl->options.usingCompression)
+            length += ENUM_LEN;   /* null is offered next to zlib */
 #ifndef NO_FORCE_SCR_SAME_SUITE
         if (IsSCR(ssl))
             length += SUITE_LEN;
@@ -34634,12 +34748,18 @@ static void MakePSKPreMasterSecret(Arrays* arrays, byte use_psk_key)
             idx += suites->suiteSz;
         }
 
-        /* last, compression */
-        output[idx++] = COMP_LEN;
-        if (ssl->options.usingCompression)
+        /* last, compression.  RFC 5246 7.4.1.2 requires the list to always
+         * include CompressionMethod.null, so zlib is offered alongside it
+         * rather than on its own - a list of just zlib is rejected. */
+        if (ssl->options.usingCompression) {
+            output[idx++] = COMP_LEN + ENUM_LEN;
             output[idx++] = ZLIB_COMPRESSION;
-        else
             output[idx++] = NO_COMPRESSION;
+        }
+        else {
+            output[idx++] = COMP_LEN;
+            output[idx++] = NO_COMPRESSION;
+        }
 
 #ifdef HAVE_TLS_EXTENSIONS
         extSz = 0;
@@ -35153,8 +35273,16 @@ static void MakePSKPreMasterSecret(Arrays* arrays, byte use_psk_key)
                         if (OPAQUE16_LEN + OPAQUE16_LEN + extSz > totalExtSz)
                             return BUFFER_ERROR;
 
-                        if (extId == HELLO_EXT_EXTMS)
+                        if (extId == HELLO_EXT_EXTMS) {
+#ifdef HAVE_EXTENDED_MASTER
+                            /* Ignore the peer's extension when the user
+                             * disabled EMS. */
+                            if (!ssl->options.disableEMS)
+                                pendingEMS = 1;
+#else
                             pendingEMS = 1;
+#endif
+                        }
                         else
                             i += extSz;
 
@@ -35173,6 +35301,18 @@ static void MakePSKPreMasterSecret(Arrays* arrays, byte use_psk_key)
                 ssl->options.haveEMS = 0;
         }
 #endif /* HAVE_TLS_EXTENSIONS */
+
+#ifdef HAVE_EXTENDED_MASTER
+        /* The negotiated EMS state is final once the ServerHello extensions
+         * are parsed: abort a requiring client here, before any key material
+         * is computed or sent. */
+        if (ssl->options.requireEMS && !ssl->options.haveEMS) {
+            WOLFSSL_MSG("EMS required but not negotiated with peer");
+            SendAlert(ssl, alert_fatal, handshake_failure);
+            WOLFSSL_ERROR_VERBOSE(EXT_MASTER_SECRET_NEEDED_E);
+            return EXT_MASTER_SECRET_NEEDED_E;
+        }
+#endif /* HAVE_EXTENDED_MASTER */
 
 #if !defined(NO_WOLFSSL_CLIENT) && !defined(WOLFSSL_NO_TLS12) && \
     defined(HAVE_SERVER_RENEGOTIATION_INFO) && \
@@ -41253,6 +41393,31 @@ static int AddPSKtoPreMasterSecret(WOLFSSL* ssl)
         int ret = 0;
         WOLFSSL_SESSION* session;
 
+#ifdef HAVE_EXTENDED_MASTER
+        /* Resumption skips MakeMasterSecret, so enforce required EMS here,
+         * ahead of any session-secret callback. */
+        if (ssl->options.requireEMS && !ssl->options.haveEMS) {
+            WOLFSSL_MSG("EMS required but not negotiated with peer");
+        #ifdef WOLFSSL_EXTRA_ALERTS
+            SendAlert(ssl, alert_fatal, handshake_failure);
+        #endif
+            WOLFSSL_ERROR_VERBOSE(EXT_MASTER_SECRET_NEEDED_E);
+            return EXT_MASTER_SECRET_NEEDED_E;
+        }
+    #if defined(HAVE_SECRET_CALLBACK) && defined(HAVE_SESSION_TICKET)
+        /* An EMS ticket cannot be resumed without EMS (RFC 7627 5.3): under a
+         * local disable decline it ahead of the session-secret callback. */
+        if (ssl->options.disableEMS && ssl->options.useTicket &&
+                ssl->session->haveEMS) {
+            WOLFSSL_MSG("EMS disabled locally, declining resumption "
+                        "of an EMS ticket. Do full handshake.");
+            ssl->options.resuming = 0;
+            ssl->options.peerAuthGood = 0;
+            return ret;
+        }
+    #endif
+#endif /* HAVE_EXTENDED_MASTER */
+
 #ifdef HAVE_SECRET_CALLBACK
         if (ssl->sessionSecretCb != NULL
 #ifdef HAVE_SESSION_TICKET
@@ -41333,15 +41498,23 @@ static int AddPSKtoPreMasterSecret(WOLFSSL* ssl)
 #endif
         }
 #endif /* HAVE_SESSION_TICKET && (HAVE_SNI || HAVE_ALPN) */
+
 #if !defined(WOLFSSL_NO_TICKET_EXPIRE) && !defined(NO_ASN_TIME)
         /* check if the ticket is valid */
         if (LowResTimer() > session->bornOn + ssl->timeout) {
             WOLFSSL_MSG("Expired session, fall back to full handshake.");
             ssl->options.resuming = 0;
+            /* A declined ticket must not satisfy client auth. */
+            ssl->options.peerAuthGood = 0;
         }
 #endif /* !WOLFSSL_NO_TICKET_EXPIRE && !NO_ASN_TIME */
 
-        else if (session->haveEMS != ssl->options.haveEMS) {
+        if (!ssl->options.resuming) {
+            /* Resumption abandoned: DoClientHello runs a full handshake. */
+            return ret;
+        }
+
+        if (session->haveEMS != ssl->options.haveEMS) {
             /* RFC 7627, 5.3, server-side */
             /* if old sess didn't have EMS, but new does, full handshake */
             if (!session->haveEMS && ssl->options.haveEMS) {
@@ -41349,16 +41522,32 @@ static int AddPSKtoPreMasterSecret(WOLFSSL* ssl)
                             "use EMS with a new session with EMS. Do full "
                             "handshake.");
                 ssl->options.resuming = 0;
+                /* A declined ticket must not satisfy client auth. */
+                ssl->options.peerAuthGood = 0;
             }
             /* if old sess used EMS, but new doesn't, MUST abort */
             else if (session->haveEMS && !ssl->options.haveEMS) {
-                WOLFSSL_MSG("Trying to resume a session with EMS without "
-                            "using EMS");
-            #ifdef WOLFSSL_EXTRA_ALERTS
-                SendAlert(ssl, alert_fatal, handshake_failure);
-            #endif
-                ret = EXT_MASTER_SECRET_NEEDED_E;
-                WOLFSSL_ERROR_VERBOSE(ret);
+#ifdef HAVE_EXTENDED_MASTER
+                if (ssl->options.disableEMS) {
+                    /* Local disable, not a client downgrade: decline the
+                     * resumption and do a full handshake. */
+                    WOLFSSL_MSG("EMS disabled locally, declining resumption "
+                                "of an EMS session. Do full handshake.");
+                    ssl->options.resuming = 0;
+                    /* A declined ticket must not satisfy client auth. */
+                    ssl->options.peerAuthGood = 0;
+                }
+                else
+#endif
+                {
+                    WOLFSSL_MSG("Trying to resume a session with EMS without "
+                                "using EMS");
+                #ifdef WOLFSSL_EXTRA_ALERTS
+                    SendAlert(ssl, alert_fatal, handshake_failure);
+                #endif
+                    ret = EXT_MASTER_SECRET_NEEDED_E;
+                    WOLFSSL_ERROR_VERBOSE(ret);
+                }
             }
         }
         else {
@@ -42059,7 +42248,10 @@ static int AddPSKtoPreMasterSecret(WOLFSSL* ssl)
                         i += hashSigAlgoSz;
                     }
 #ifdef HAVE_EXTENDED_MASTER
-                    else if (extId == HELLO_EXT_EXTMS)
+                    /* Honor a user request to disable EMS on the server by
+                     * ignoring the peer's extension. */
+                    else if (extId == HELLO_EXT_EXTMS &&
+                             !ssl->options.disableEMS)
                         ssl->options.haveEMS = 1;
 #endif
                     else

@@ -2780,7 +2780,11 @@ WOLFSSL_API char* wolfSSL_get_srp_username(WOLFSSL *ssl);
 
 WOLFSSL_API long wolfSSL_clear_options(WOLFSSL *s,  long op);
 WOLFSSL_API long wolfSSL_set_tmp_dh(WOLFSSL *s, WOLFSSL_DH *dh);
+typedef void (*WOLFSSL_TLSEXT_DEBUG_CB)(WOLFSSL* ssl, int client_server,
+        int type, const byte* data, int len, void* arg);
 WOLFSSL_API long wolfSSL_set_tlsext_debug_arg(WOLFSSL *s, void *arg);
+WOLFSSL_API long wolfSSL_set_tlsext_debug_callback(WOLFSSL *s,
+        WOLFSSL_TLSEXT_DEBUG_CB cb);
 WOLFSSL_API long wolfSSL_set_tlsext_status_type(WOLFSSL *s, int type);
 WOLFSSL_API long wolfSSL_get_tlsext_status_type(WOLFSSL *s);
 WOLFSSL_API long wolfSSL_set_tlsext_status_exts(WOLFSSL *s, void *arg);
@@ -5203,6 +5207,12 @@ WOLFSSL_API int wolfSSL_CTX_add_client_custom_ext(WOLFSSL_CTX* ctx,
 /* TLS Extended Master Secret Extension */
 WOLFSSL_API int wolfSSL_DisableExtendedMasterSecret(WOLFSSL* ssl);
 WOLFSSL_API int wolfSSL_CTX_DisableExtendedMasterSecret(WOLFSSL_CTX* ctx);
+WOLFSSL_API int wolfSSL_EnableExtendedMasterSecret(WOLFSSL* ssl);
+WOLFSSL_API int wolfSSL_CTX_EnableExtendedMasterSecret(WOLFSSL_CTX* ctx);
+#ifndef WOLFSSL_NO_TLS12
+WOLFSSL_API int wolfSSL_RequireExtendedMasterSecret(WOLFSSL* ssl);
+WOLFSSL_API int wolfSSL_CTX_RequireExtendedMasterSecret(WOLFSSL_CTX* ctx);
+#endif
 
 
 #define WOLFSSL_CRL_MONITOR   0x01   /* monitor this dir flag */

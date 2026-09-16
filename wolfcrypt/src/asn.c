@@ -1879,7 +1879,7 @@ int GetASN_Items(const ASNItem* asn, ASNGetData *data, int count, int complete,
 #endif
 
     /* Set the end index at each depth to be the length. */
-    for (i=0; i<GET_ASN_MAX_DEPTH; i++) {
+    for (i = 0; i < GET_ASN_MAX_DEPTH; i++) {
         endIdx[i] = length;
     }
 
@@ -1891,13 +1891,18 @@ int GetASN_Items(const ASNItem* asn, ASNGetData *data, int count, int complete,
         data[i].offset = idx;
         /* Length of data in ASN.1 item starts empty. */
         data[i].length = 0;
-        /* Get current item depth. */
-        depth = asn[i].depth;
         if (depth >= GET_ASN_MAX_DEPTH) {
     #ifdef WOLFSSL_DEBUG_ASN_TEMPLATE
             WOLFSSL_MSG("Depth in template too large");
     #endif
             return ASN_PARSE_E;
+        }
+        /* Determine the current depth by checking index against end indices.
+         * Don't go lower than the expected depth. Depths lower than first
+         * may not have an end index set yet. */
+        while ((depth > asn[i].depth) &&
+                     ((depth <= asn[0].depth) || (idx == endIdx[depth]))) {
+            depth--;
         }
         /* Keep track of minimum depth. */
         if (depth < minDepth) {
@@ -1919,10 +1924,30 @@ int GetASN_Items(const ASNItem* asn, ASNGetData *data, int count, int complete,
             }
         }
 
-        /* Check for end of data or not a choice and tag not matching. */
+        /* A constructed item the data has not used up is not finished. When
+         * the items must completely use up the data, moving out of it would
+         * leave the excess to be skipped silently - reject. Otherwise the
+         * template is deliberately describing only a prefix of the data - the
+         * first of a SEQUENCE OF, say - and the rest is the caller's to walk,
+         * so follow the template back out. */
+        if (depth > asn[i].depth) {
+            if (complete) {
+        #ifdef WOLFSSL_DEBUG_ASN_TEMPLATE
+                WOLFSSL_MSG_VSNPRINTF("Depth %d in template, %d in data: %d",
+                        asn[i].depth, depth, i);
+        #endif
+                return ASN_PARSE_E;
+            }
+            depth = asn[i].depth;
+        }
+
+        /* Check for data not reaching this depth, end of data, or not a choice
+         * and tag not matching. Data not this deep means the item's enclosing
+         * item was never entered and the item cannot be present. */
         tmpW32Val = endIdx[depth];
         XFENCE(); /* Prevent memory access */
-        if (idx == tmpW32Val || (data[i].dataType != ASN_DATA_TYPE_CHOICE &&
+        if ((depth < asn[i].depth) || idx == tmpW32Val ||
+                                (data[i].dataType != ASN_DATA_TYPE_CHOICE &&
                               (input[idx] & ~ASN_CONSTRUCTED) != asn[i].tag)) {
             if (asn[i].optional) {
                 /* Skip over ASN.1 items underneath this optional item. */
@@ -2090,6 +2115,9 @@ int GetASN_Items(const ASNItem* asn, ASNGetData *data, int count, int complete,
             /* Store reference to data and length. */
             data[i].data.ref.data = input + idx;
             data[i].data.ref.length = (word32)len;
+            /* Index left at the start of the content - the items that
+             * follow are parsed out of this one, so move into it. */
+            depth++;
             continue;
         }
 
@@ -24206,7 +24234,7 @@ static int DecodeCertReq(DecodedCert* cert, int* criticalExt)
 int ParseCert(DecodedCert* cert, int type, int verify, void* cm)
 {
     int   ret;
-#if (!defined(WOLFSSL_NO_MALLOC) && !defined(NO_WOLFSSL_CM_VERIFY)) || \
+#if (!defined(WC_ASN_NO_HEAP) && !defined(NO_WOLFSSL_CM_VERIFY)) || \
     defined(WOLFSSL_DYN_CERT)
     char* ptr;
 #endif
@@ -24215,9 +24243,9 @@ int ParseCert(DecodedCert* cert, int type, int verify, void* cm)
     if (ret < 0)
         return ret;
 
-#if (!defined(WOLFSSL_NO_MALLOC) && !defined(NO_WOLFSSL_CM_VERIFY)) || \
+#if (!defined(WC_ASN_NO_HEAP) && !defined(NO_WOLFSSL_CM_VERIFY)) || \
     defined(WOLFSSL_DYN_CERT)
-    /* cert->subjectCN not stored as copy of WOLFSSL_NO_MALLOC defined */
+    /* cert->subjectCN not stored as a copy when there is no allocator */
     if (cert->subjectCNLen > 0) {
         ptr = (char*)XMALLOC((size_t)cert->subjectCNLen + 1, cert->heap,
                               DYNAMIC_TYPE_SUBJECT_CN);
@@ -24230,9 +24258,12 @@ int ParseCert(DecodedCert* cert, int type, int verify, void* cm)
     }
 #endif
 
-#if (!defined(WOLFSSL_NO_MALLOC) && !defined(NO_WOLFSSL_CM_VERIFY)) || \
+/* WC_ASN_NO_HEAP, not WOLFSSL_NO_MALLOC: a static-memory build defines the
+ * latter but still has an allocator, and StoreKey() copies the non-RSA keys
+ * on the same condition. Skipping the copy here leaves Signer.publicKey NULL,
+ * so every chain verify under an RSA CA fails BAD_FUNC_ARG. */
+#if (!defined(WC_ASN_NO_HEAP) && !defined(NO_WOLFSSL_CM_VERIFY)) || \
     defined(WOLFSSL_DYN_CERT)
-    /* cert->publicKey not stored as copy if WOLFSSL_NO_MALLOC defined */
     if ((cert->keyOID == RSAk
     #ifdef WC_RSA_PSS
          || cert->keyOID == RSAPSSk
@@ -31050,6 +31081,9 @@ static int MakeAnyCert(Cert* cert, byte* derBuffer, word32 derSz,
     int ret = 0;
     word32 issRawLen = 0;
     word32 sbjRawLen = 0;
+    const byte* serialPtr = NULL;
+    word32 serialLen = 0;
+    word32 encodedLen = 0;
     byte localBefore[MAX_DATE_SIZE];
     byte localAfter[MAX_DATE_SIZE];
 
@@ -31150,6 +31184,45 @@ static int MakeAnyCert(Cert* cert, byte* derBuffer, word32 derSz,
         cert->serialSz = CTC_GEN_SERIAL_SZ;
         ret = GenerateInteger(rng, cert->serial, CTC_GEN_SERIAL_SZ);
     }
+    /* Serial has to fit cert->serial, which is the RFC 5280 4.1.2.2 cap. */
+    if ((ret == 0) && ((cert->serialSz < 0) ||
+                       (cert->serialSz > CTC_SERIAL_SIZE))) {
+        WOLFSSL_MSG("Serial number size out of range");
+        WOLFSSL_ERROR_VERBOSE(BAD_FUNC_ARG);
+        ret = BAD_FUNC_ARG;
+    }
+    if (ret == 0) {
+        serialPtr = cert->serial;
+        serialLen = (word32)cert->serialSz;
+        /* DER requires the minimum number of octets, so drop the redundant
+         * leading zeros a caller-supplied fixed-width serial carries. Parsed
+         * serials are already minimal unless WOLFSSL_ASN_INT_LEAD_0_ANY. */
+        while ((serialLen > 1) && (serialPtr[0] == 0)) {
+            serialLen--;
+            serialPtr++;
+        }
+        /* The sign pad added for a set high bit counts towards the RFC 5280
+         * 4.1.2.2 limit of 20 octets. */
+        encodedLen = serialLen;
+        if ((serialPtr[0] & 0x80) != 0) {
+            encodedLen++;
+        }
+        if (encodedLen > CTC_SERIAL_SIZE) {
+            WOLFSSL_MSG("Encoded serial number longer than 20 octets");
+            WOLFSSL_ERROR_VERBOSE(BAD_FUNC_ARG);
+            ret = BAD_FUNC_ARG;
+        }
+    }
+#if !defined(WOLFSSL_NO_ASN_STRICT) && !defined(WOLFSSL_PYTHON) && \
+    !defined(WOLFSSL_ASN_ALLOW_0_SERIAL)
+    /* RFC 5280 4.1.2.2 requires a positive serial number. Reject zero rather
+     * than emit a certificate wolfSSL itself will not parse. */
+    if ((ret == 0) && (serialLen == 1) && (serialPtr[0] == 0)) {
+        WOLFSSL_MSG("Serial number must be positive (non-zero)");
+        WOLFSSL_ERROR_VERBOSE(BAD_FUNC_ARG);
+        ret = BAD_FUNC_ARG;
+    }
+#endif
     if (ret == 0) {
         /* Determine issuer name size. */
     #if defined(WOLFSSL_CERT_EXT) || defined(OPENSSL_EXTRA) || \
@@ -31203,8 +31276,8 @@ static int MakeAnyCert(Cert* cert, byte* derBuffer, word32 derSz,
         /* Set version, serial number and signature OID */
         SetASN_Int8Bit(&dataASN[X509CERTASN_IDX_TBS_VER_INT],
                        (byte)cert->version);
-        SetASN_Buffer(&dataASN[X509CERTASN_IDX_TBS_SERIAL], cert->serial,
-                (word32)cert->serialSz);
+        SetASN_Buffer(&dataASN[X509CERTASN_IDX_TBS_SERIAL], serialPtr,
+                serialLen);
 #ifdef WOLFSSL_DUAL_ALG_CERTS
         if (cert->sigType == 0) {
             /* sigOID being 0 indicates preTBS. Do not encode signature. */

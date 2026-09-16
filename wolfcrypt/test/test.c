@@ -1517,6 +1517,18 @@ static WC_MAYBE_UNUSED Aes* test_AesGcmNew(void* heap, int declaredDevId,
 #ifdef WOLFSSL_STATIC_MEMORY
     #if defined(WOLFSSL_STATIC_MEMORY_TEST_SZ)
         static byte gTestMemory[WOLFSSL_STATIC_MEMORY_TEST_SZ];
+    #elif defined(WOLFSSL_NO_MALLOC) && defined(OPENSSL_EXTRA) && \
+          !defined(WOLFCRYPT_ONLY) && !defined(NO_RSA) && !defined(NO_SHA)
+        /* No malloc, so the compatibility layer's NULL-heap allocations come
+         * out of this pool on top of what the algorithm tests need. */
+        #ifdef BENCH_EMBEDDED
+            #error "openssl_pkey0_test() needs about 1MB of pool, far more \
+than BENCH_EMBEDDED implies: set WOLFSSL_STATIC_MEMORY_TEST_SZ explicitly"
+        #elif defined(WOLFSSL_HAVE_FRODOKEM) || defined(WOLFSSL_HAVE_MLDSA)
+            static byte gTestMemory[2048*1024];
+        #else
+            static byte gTestMemory[1024*1024];
+        #endif
     #elif defined(WOLFSSL_HAVE_FRODOKEM)
         /* FrodoKEM keys (~44 KB) and decaps matrices (~86 KB) are large. */
         static byte gTestMemory[1024*1024];
@@ -2354,8 +2366,9 @@ options: [-s max_relative_stack_bytes] [-m max_relative_heap_memory_bytes]\n\
         printf("unable to load static memory.\n");
         EXIT_TEST(EXIT_FAILURE);
     }
-    #ifndef OPENSSL_EXTRA
-    wolfSSL_SetGlobalHeapHint(HEAP_HINT);
+    #if !defined(OPENSSL_EXTRA) || defined(WOLFSSL_NO_MALLOC)
+    if (wolfSSL_GetGlobalHeapHint() == NULL)
+        wolfSSL_SetGlobalHeapHint(HEAP_HINT);
     #endif
 #endif
 
@@ -3591,7 +3604,8 @@ options: [-s max_relative_stack_bytes] [-m max_relative_heap_memory_bytes]\n\
 #endif
 
 #if defined(WOLFSSL_STATIC_MEMORY) && !defined(OPENSSL_EXTRA)
-    wolfSSL_SetGlobalHeapHint(NULL);
+    if (wolfSSL_GetGlobalHeapHint() == HEAP_HINT)
+        wolfSSL_SetGlobalHeapHint(NULL);
 #endif
     TEST_PASS("Test complete\n");
 
@@ -29695,6 +29709,15 @@ static wc_test_ret_t cert_no_malloc_test(void)
             ret = WC_TEST_RET_ENC_NC;
         }
     }
+#elif !defined(NO_WOLFSSL_CM_VERIFY) || defined(WOLFSSL_DYN_CERT)
+    /* With an allocator the RSA key is copied out, so a Signer built from this
+     * cert keeps a public key of its own. */
+    if ((ret == 0) && ((cert.pubKeyStored != 1) ||
+                       (((wc_ptr_t)cert.publicKey >= (wc_ptr_t)cert.source) &&
+                        ((wc_ptr_t)cert.publicKey <
+                            (wc_ptr_t)cert.source + cert.maxIdx)))) {
+        ret = WC_TEST_RET_ENC_NC;
+    }
 #endif
     FreeDecodedCert(&cert);
 #endif
@@ -30682,26 +30705,34 @@ static wc_test_ret_t rsa_decode_test(RsaKey* keyPub)
     WOLFSSL_SMALL_STACK_STATIC const byte e[2] = { 0x00, 0x03 };
     WOLFSSL_SMALL_STACK_STATIC const byte good[] = { 0x30, 0x06, 0x02, 0x01, 0x23, 0x02, 0x1,
            0x03 };
+    /* In SubjectPublicKeyInfo the subjectPublicKey BIT STRING is a sibling of
+     * the AlgorithmIdentifier SEQUENCE, not part of it, so that SEQUENCE's
+     * length must cover only the OID and any algorithm parameters. */
     WOLFSSL_SMALL_STACK_STATIC const byte goodAlgId[] = {
-            0x30, 0x18, 0x30, 0x16,
+            0x30, 0x18, 0x30, 0x0b,
             0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01,
             0x03, 0x09, 0x00, 0x30, 0x06, 0x02, 0x01, 0x23, 0x02, 0x1, 0x03 };
     WOLFSSL_SMALL_STACK_STATIC const byte goodAlgIdNull[] = {
-            0x30, 0x1a, 0x30, 0x18,
+            0x30, 0x1a, 0x30, 0x0d,
             0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01,
             0x05, 0x00, 0x03, 0x09, 0x00, 0x30, 0x06, 0x02, 0x01, 0x23,
             0x02, 0x1, 0x03 };
+    /* Defect under test: the NULL algorithm parameters have a non-zero
+     * length. */
     WOLFSSL_SMALL_STACK_STATIC const byte badAlgIdNull[] = {
-            0x30, 0x1b, 0x30, 0x19,
+            0x30, 0x1b, 0x30, 0x0e,
             0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01,
             0x05, 0x01, 0x00, 0x03, 0x09, 0x00, 0x30, 0x06, 0x02, 0x01, 0x23,
             0x02, 0x1, 0x03 };
+    /* Defect under test: an OCTET STRING where a BIT STRING is required. */
     WOLFSSL_SMALL_STACK_STATIC const byte badNotBitString[] = {
-            0x30, 0x18, 0x30, 0x16,
+            0x30, 0x18, 0x30, 0x0b,
             0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01,
             0x04, 0x09, 0x00, 0x30, 0x06, 0x02, 0x01, 0x23, 0x02, 0x1, 0x03 };
+    /* Defect under test: the BIT STRING length runs past the end of the
+     * data. */
     WOLFSSL_SMALL_STACK_STATIC const byte badBitStringLen[] = {
-            0x30, 0x18, 0x30, 0x16,
+            0x30, 0x18, 0x30, 0x0b,
             0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01,
             0x03, 0x0a, 0x00, 0x30, 0x06, 0x02, 0x01, 0x23, 0x02, 0x1, 0x03};
     WOLFSSL_SMALL_STACK_STATIC const byte badNoSeq[] = {
@@ -30718,9 +30749,38 @@ static wc_test_ret_t rsa_decode_test(RsaKey* keyPub)
     WOLFSSL_SMALL_STACK_STATIC const byte badLength[] = {
             0x30, 0x04, 0x02, 0x01, 0x23, 0x02, 0x1, 0x03 };
     WOLFSSL_SMALL_STACK_STATIC const byte badBitStrNoZero[] = {
-            0x30, 0x17, 0x30, 0x15,
+            0x30, 0x17, 0x30, 0x0b,
             0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01,
             0x03, 0x08, 0x30, 0x06, 0x02, 0x01, 0x23, 0x02, 0x1, 0x03 };
+    /* Defect under test: the AlgorithmIdentifier SEQUENCE length runs past
+     * its OID and covers the subjectPublicKey BIT STRING that follows it.
+     * A parser resuming after the OID reads the key, one honouring the
+     * declared length looks for the key after it - one encoding, two
+     * readings. */
+    WOLFSSL_SMALL_STACK_STATIC const byte badAlgIdLenLong[] = {
+            0x30, 0x18, 0x30, 0x16,
+            0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01,
+            0x03, 0x09, 0x00, 0x30, 0x06, 0x02, 0x01, 0x23, 0x02, 0x1, 0x03 };
+    /* Defect under test: as above, with NULL algorithm parameters. */
+    WOLFSSL_SMALL_STACK_STATIC const byte badAlgIdNullLenLong[] = {
+            0x30, 0x1a, 0x30, 0x18,
+            0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01,
+            0x05, 0x00, 0x03, 0x09, 0x00, 0x30, 0x06, 0x02, 0x01, 0x23,
+            0x02, 0x1, 0x03 };
+    /* Defect under test: an extra element inside the SubjectPublicKeyInfo
+     * after the subjectPublicKey BIT STRING, which must end it. */
+    WOLFSSL_SMALL_STACK_STATIC const byte badSpkiTrailing[] = {
+            0x30, 0x1a, 0x30, 0x0b,
+            0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01,
+            0x03, 0x09, 0x00, 0x30, 0x06, 0x02, 0x01, 0x23, 0x02, 0x1, 0x03,
+            0x05, 0x00 };
+    /* Defect under test: the AlgorithmIdentifier SEQUENCE has one byte left
+     * over after its OID and NULL parameters. */
+    WOLFSSL_SMALL_STACK_STATIC const byte badAlgIdTrailing[] = {
+            0x30, 0x1b, 0x30, 0x0e,
+            0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01,
+            0x05, 0x00, 0x00,
+            0x03, 0x09, 0x00, 0x30, 0x06, 0x02, 0x01, 0x23, 0x02, 0x1, 0x03 };
 
     ret = wc_InitRsaKey(keyPub, NULL);
     if (ret != 0)
@@ -30857,16 +30917,13 @@ static wc_test_ret_t rsa_decode_test(RsaKey* keyPub)
         ret != WC_NO_ERR_TRACE(ASN_PARSE_E)) {
         ret = WC_TEST_RET_ENC_EC(ret); goto done;
     }
-    /* TODO: Shouldn't pass as the sequence length is too small. */
+    /* The SEQUENCE is too small to hold both integers - the exponent lies
+     * outside it and must not be read from beyond its end. */
     inSz = sizeof(badLength);
     inOutIdx = 0;
     ret = wc_RsaPublicKeyDecode(badLength, &inOutIdx, keyPub, inSz);
-#ifndef WOLFSSL_ASN_TEMPLATE
-    if (ret != 0)
-#else
-    if (ret != WC_NO_ERR_TRACE(ASN_PARSE_E))
-#endif
-    {
+    if (ret != WC_NO_ERR_TRACE(ASN_PARSE_E) &&
+        ret != WC_NO_ERR_TRACE(ASN_RSA_KEY_E)) {
         ret = WC_TEST_RET_ENC_EC(ret);
         goto done;
     }
@@ -30879,6 +30936,82 @@ static wc_test_ret_t rsa_decode_test(RsaKey* keyPub)
     ret = wc_RsaPublicKeyDecode(badBitStrNoZero, &inOutIdx, keyPub, inSz);
     if (ret != WC_NO_ERR_TRACE(ASN_EXPECT_0_E) &&
         ret != WC_NO_ERR_TRACE(ASN_PARSE_E)) {
+        ret = WC_TEST_RET_ENC_EC(ret); goto done;
+    }
+    wc_FreeRsaKey(keyPub);
+    ret = wc_InitRsaKey(keyPub, NULL);
+    if (ret != 0) return WC_TEST_RET_ENC_EC(ret);
+
+    /* A constructed ASN.1 item must be exactly used up by the items parsed
+     * out of it. Each of these declares an AlgorithmIdentifier longer than
+     * its contents and must be rejected rather than have the excess
+     * silently skipped. */
+    inSz = sizeof(badAlgIdLenLong); inOutIdx = 0;
+    ret = wc_RsaPublicKeyDecode(badAlgIdLenLong, &inOutIdx, keyPub, inSz);
+#if defined(WOLFSSL_ASN_TEMPLATE) || defined(OPENSSL_EXTRA) || \
+    defined(RSA_DECODE_EXTRA)
+    if (ret != WC_NO_ERR_TRACE(ASN_PARSE_E))
+#else
+    /* The original decoder without the decode extras never looks at the
+     * AlgorithmIdentifier - the SubjectPublicKeyInfo is read as a bare
+     * RSAPublicKey. */
+    if (ret != WC_NO_ERR_TRACE(ASN_RSA_KEY_E))
+#endif
+    {
+        ret = WC_TEST_RET_ENC_EC(ret); goto done;
+    }
+    wc_FreeRsaKey(keyPub);
+    ret = wc_InitRsaKey(keyPub, NULL);
+    if (ret != 0) return WC_TEST_RET_ENC_EC(ret);
+
+    inSz = sizeof(badAlgIdNullLenLong); inOutIdx = 0;
+    ret = wc_RsaPublicKeyDecode(badAlgIdNullLenLong, &inOutIdx, keyPub, inSz);
+#if defined(WOLFSSL_ASN_TEMPLATE) || defined(OPENSSL_EXTRA) || \
+    defined(RSA_DECODE_EXTRA)
+    if (ret != WC_NO_ERR_TRACE(ASN_PARSE_E))
+#else
+    /* The original decoder without the decode extras never looks at the
+     * AlgorithmIdentifier - the SubjectPublicKeyInfo is read as a bare
+     * RSAPublicKey. */
+    if (ret != WC_NO_ERR_TRACE(ASN_RSA_KEY_E))
+#endif
+    {
+        ret = WC_TEST_RET_ENC_EC(ret); goto done;
+    }
+    wc_FreeRsaKey(keyPub);
+    ret = wc_InitRsaKey(keyPub, NULL);
+    if (ret != 0) return WC_TEST_RET_ENC_EC(ret);
+
+    inSz = sizeof(badSpkiTrailing); inOutIdx = 0;
+    ret = wc_RsaPublicKeyDecode(badSpkiTrailing, &inOutIdx, keyPub, inSz);
+#if defined(WOLFSSL_ASN_TEMPLATE) || defined(OPENSSL_EXTRA) || \
+    defined(RSA_DECODE_EXTRA)
+    if (ret != WC_NO_ERR_TRACE(ASN_PARSE_E))
+#else
+    /* The original decoder without the decode extras never looks at the
+     * AlgorithmIdentifier - the SubjectPublicKeyInfo is read as a bare
+     * RSAPublicKey. */
+    if (ret != WC_NO_ERR_TRACE(ASN_RSA_KEY_E))
+#endif
+    {
+        ret = WC_TEST_RET_ENC_EC(ret); goto done;
+    }
+    wc_FreeRsaKey(keyPub);
+    ret = wc_InitRsaKey(keyPub, NULL);
+    if (ret != 0) return WC_TEST_RET_ENC_EC(ret);
+
+    inSz = sizeof(badAlgIdTrailing); inOutIdx = 0;
+    ret = wc_RsaPublicKeyDecode(badAlgIdTrailing, &inOutIdx, keyPub, inSz);
+#if defined(WOLFSSL_ASN_TEMPLATE) || defined(OPENSSL_EXTRA) || \
+    defined(RSA_DECODE_EXTRA)
+    if (ret != WC_NO_ERR_TRACE(ASN_PARSE_E))
+#else
+    /* The original decoder without the decode extras never looks at the
+     * AlgorithmIdentifier - the SubjectPublicKeyInfo is read as a bare
+     * RSAPublicKey. */
+    if (ret != WC_NO_ERR_TRACE(ASN_RSA_KEY_E))
+#endif
+    {
         ret = WC_TEST_RET_ENC_EC(ret); goto done;
     }
     wc_FreeRsaKey(keyPub);
@@ -45256,6 +45389,20 @@ static wc_test_ret_t ecc_decode_test(void)
     WOLFSSL_SMALL_STACK_STATIC const byte badPoint[] = { 0x30, 0x12, 0x30, 0x09, 0x06, 0x00,
             0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07,
             0x03, 0x03, 0x00, 0x04, 0x01 };
+    /* This is "good" with the AlgorithmIdentifier SEQUENCE length changed
+     * from 0x13 to 0x57 so that it runs past the two OIDs and covers the
+     * public key BIT STRING that follows it. */
+    WOLFSSL_SMALL_STACK_STATIC const byte badAlgIdLenLong[] = {
+            0x30, 0x59, 0x30, 0x57, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce,
+            0x3d, 0x02, 0x01, 0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d,
+            0x03, 0x01, 0x07, 0x03, 0x42, 0x00, 0x04, 0x55, 0xbf, 0xf4,
+            0x0f, 0x44, 0x50, 0x9a, 0x3d, 0xce, 0x9b, 0xb7, 0xf0, 0xc5,
+            0x4d, 0xf5, 0x70, 0x7b, 0xd4, 0xec, 0x24, 0x8e, 0x19, 0x80,
+            0xec, 0x5a, 0x4c, 0xa2, 0x24, 0x03, 0x62, 0x2c, 0x9b, 0xda,
+            0xef, 0xa2, 0x35, 0x12, 0x43, 0x84, 0x76, 0x16, 0xc6, 0x56,
+            0x95, 0x06, 0xcc, 0x01, 0xa9, 0xbd, 0xf6, 0x75, 0x1a, 0x42,
+            0xf7, 0xbd, 0xa9, 0xb2, 0x36, 0x22, 0x5f, 0xc7, 0x5d, 0x7f,
+            0xb4 };
 
 #if defined(WOLFSSL_SMALL_STACK) && !defined(WOLFSSL_NO_MALLOC)
     if (key == NULL)
@@ -45370,6 +45517,17 @@ static wc_test_ret_t ecc_decode_test(void)
         goto done;
     }
 
+    /* A constructed ASN.1 item must be exactly used up by the items parsed
+     * out of it - the AlgorithmIdentifier here is longer than its two OIDs
+     * and the excess must not be silently skipped. */
+    inSz = sizeof(badAlgIdLenLong);
+    inOutIdx = 0;
+    ret = wc_EccPublicKeyDecode(badAlgIdLenLong, &inOutIdx, key, inSz);
+    if (ret != WC_NO_ERR_TRACE(ASN_PARSE_E)) {
+        ret = WC_TEST_RET_ENC_EC(ret);
+        goto done;
+    }
+
     inSz = sizeof(good);
     inOutIdx = 0;
     ret = wc_EccPublicKeyDecode(good, &inOutIdx, key, inSz);
@@ -45394,6 +45552,42 @@ done:
 #ifdef WOLFSSL_CUSTOM_CURVES
 static const byte eccKeyExplicitCurve[] = {
     0x30, 0x81, 0xf5, 0x30, 0x81, 0xae, 0x06, 0x07,
+    0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01, 0x30,
+    0x81, 0xa2, 0x02, 0x01, 0x01, 0x30, 0x2c, 0x06,
+    0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x01, 0x01,
+    0x02, 0x21, 0x00, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xfe, 0xff,
+    0xff, 0xfc, 0x2f, 0x30, 0x06, 0x04, 0x01, 0x00,
+    0x04, 0x01, 0x07, 0x04, 0x41, 0x04, 0x79, 0xbe,
+    0x66, 0x7e, 0xf9, 0xdc, 0xbb, 0xac, 0x55, 0xa0,
+    0x62, 0x95, 0xce, 0x87, 0x0b, 0x07, 0x02, 0x9b,
+    0xfc, 0xdb, 0x2d, 0xce, 0x28, 0xd9, 0x59, 0xf2,
+    0x81, 0x5b, 0x16, 0xf8, 0x17, 0x98, 0x48, 0x3a,
+    0xda, 0x77, 0x26, 0xa3, 0xc4, 0x65, 0x5d, 0xa4,
+    0xfb, 0xfc, 0x0e, 0x11, 0x08, 0xa8, 0xfd, 0x17,
+    0xb4, 0x48, 0xa6, 0x85, 0x54, 0x19, 0x9c, 0x47,
+    0xd0, 0x8f, 0xfb, 0x10, 0xd4, 0xb8, 0x02, 0x21,
+    0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0xfe, 0xba, 0xae, 0xdc, 0xe6, 0xaf, 0x48, 0xa0,
+    0x3b, 0xbf, 0xd2, 0x5e, 0x8c, 0xd0, 0x36, 0x41,
+    0x41, 0x02, 0x01, 0x01, 0x03, 0x42, 0x00, 0x04,
+    0x3c, 0x4c, 0xc9, 0x5e, 0x2e, 0xa2, 0x3d, 0x49,
+    0xcc, 0x5b, 0xff, 0x4f, 0xc9, 0x2e, 0x1d, 0x4a,
+    0xc6, 0x21, 0xf6, 0xf3, 0xe6, 0x0b, 0x4f, 0xa9,
+    0x9d, 0x74, 0x99, 0xdd, 0x97, 0xc7, 0x6e, 0xbe,
+    0x14, 0x2b, 0x39, 0x9d, 0x63, 0xc7, 0x97, 0x0d,
+    0x45, 0x25, 0x40, 0x30, 0x77, 0x05, 0x76, 0x88,
+    0x38, 0x96, 0x29, 0x7d, 0x9c, 0xe1, 0x50, 0xbe,
+    0xac, 0xf0, 0x1d, 0x86, 0xf4, 0x2f, 0x65, 0x0b
+};
+/* eccKeyExplicitCurve with the AlgorithmIdentifier length raised from 0xae
+ * to 0xf2 so that it runs past the explicit ECParameters and covers the
+ * public key BIT STRING that follows it. */
+static const byte eccKeyExplicitCurveAlgIdLenLong[] = {
+    0x30, 0x81, 0xf5, 0x30, 0x81, 0xf2, 0x06, 0x07,
     0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01, 0x30,
     0x81, 0xa2, 0x02, 0x01, 0x01, 0x30, 0x2c, 0x06,
     0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x01, 0x01,
@@ -45511,8 +45705,22 @@ static wc_test_ret_t ecc_test_custom_curves(WC_RNG* rng)
     inOutIdx = 0;
     ret = wc_EccPublicKeyDecode(eccKeyExplicitCurve, &inOutIdx, key,
                                                    sizeof(eccKeyExplicitCurve));
-    if (ret != 0)
+    if (ret != 0) {
         ret = WC_TEST_RET_ENC_EC(ret);
+        goto done;
+    }
+
+    /* The explicit parameters must be exactly used up by the
+     * AlgorithmIdentifier holding them - an over-long length reaching into
+     * the public key BIT STRING must not have its excess skipped. */
+    inOutIdx = 0;
+    ret = wc_EccPublicKeyDecode(eccKeyExplicitCurveAlgIdLenLong, &inOutIdx, key,
+                                       sizeof(eccKeyExplicitCurveAlgIdLenLong));
+    if (ret != WC_NO_ERR_TRACE(ASN_PARSE_E)) {
+        ret = WC_TEST_RET_ENC_EC(ret);
+        goto done;
+    }
+    ret = 0;
 
   done:
 
@@ -47473,6 +47681,22 @@ done:
 #if defined(HAVE_ECC_ENCRYPT) && defined(HAVE_AES_CBC) && \
     (defined(WOLFSSL_AES_128) || defined(WOLFSSL_AES_256))
 
+/* ECIES takes its device from the context, not from the keys, so each context
+ * has to be told which device to use.  These tests build their keys with the
+ * global devId, which is a real device on ports that set WC_USE_DEVID or
+ * WOLFSSL_CAAM_DEVID.  Without this the tests below would quietly run in
+ * software there and never touch the hardware path.  Defined outside the
+ * guards below so every ECIES test in this file can use it. */
+#ifdef WOLF_CRYPTO_CB
+static wc_test_ret_t ecc_ctx_apply_devid(ecEncCtx* ctx)
+{
+    int ret = wc_ecc_ctx_set_dev_id(ctx, devId);
+    return (ret == 0) ? 0 : WC_TEST_RET_ENC_EC(ret);
+}
+#else
+#define ecc_ctx_apply_devid(ctx) (0)
+#endif
+
 #if !defined(WOLFSSL_NO_MALLOC)
 
 #if ((! defined(HAVE_FIPS)) || FIPS_VERSION_GE(5,3))
@@ -47550,6 +47774,11 @@ static wc_test_ret_t ecc_ctx_kdf_salt_test(WC_RNG* rng, ecc_key* a, ecc_key* b)
         if (bCtx == NULL)
             ret = WC_TEST_RET_ENC_NC;
     }
+
+    if (ret == 0)
+        ret = ecc_ctx_apply_devid(aCtx);
+    if (ret == 0)
+        ret = ecc_ctx_apply_devid(bCtx);
 
     /* set salt */
     if (ret == 0) {
@@ -47907,7 +48136,10 @@ static wc_test_ret_t ecc_encrypt_e2e_test(WC_RNG* rng, ecc_key* userA, ecc_key* 
     for (i = 0; i < (int)sizeof(msg); i++)
         msg[i] = i;
 
-    /* encrypt msg to B */
+    /* encrypt msg to B.  The NULL-context calls here and below run in software
+     * on purpose: ECIES takes its device from the context, so with no context
+     * there is nowhere to name one.  The context-based exchange further down
+     * covers the device path. */
     ret = wc_ecc_encrypt(userA, userB, msg, sizeof(msg), out, &outSz, NULL);
     if (ret != 0) {
         ret = WC_TEST_RET_ENC_EC(ret); goto done;
@@ -47949,6 +48181,12 @@ static wc_test_ret_t ecc_encrypt_e2e_test(WC_RNG* rng, ecc_key* userA, ecc_key* 
     if (cliCtx == NULL || srvCtx == NULL) {
         ret = WC_TEST_RET_ENC_ERRNO; goto done;
     }
+
+    ret = ecc_ctx_apply_devid(cliCtx);
+    if (ret == 0)
+        ret = ecc_ctx_apply_devid(srvCtx);
+    if (ret != 0)
+        goto done;
 
     ret = wc_ecc_ctx_set_algo(cliCtx, encAlgo, kdfAlgo, macAlgo);
     if (ret != 0)
@@ -48046,6 +48284,12 @@ static wc_test_ret_t ecc_encrypt_e2e_test(WC_RNG* rng, ecc_key* userA, ecc_key* 
         ret = WC_TEST_RET_ENC_ERRNO; goto done;
     }
 
+    ret = ecc_ctx_apply_devid(cliCtx);
+    if (ret == 0)
+        ret = ecc_ctx_apply_devid(srvCtx);
+    if (ret != 0)
+        goto done;
+
     ret = wc_ecc_ctx_set_algo(cliCtx, encAlgo, kdfAlgo, macAlgo);
     if (ret != 0)
         goto done;
@@ -48088,7 +48332,14 @@ static wc_test_ret_t ecc_encrypt_e2e_test(WC_RNG* rng, ecc_key* userA, ecc_key* 
     if (ret != 0)
         goto done;
 
-#ifndef WOLFSSL_ECIES_OLD
+#ifdef WOLFSSL_ECIES_OLD
+    /* tmpKey still holds B's public key from the reply above. */
+    tmpKey->dp = userA->dp;
+    ret = wc_ecc_copy_point(&userA->pubkey, &tmpKey->pubkey);
+    if (ret != 0) {
+        ret = WC_TEST_RET_ENC_EC(ret); goto done;
+    }
+#else
     wc_ecc_free(tmpKey);
 #endif
     /* B decrypts msg (request) from A - out has a compressed public key */
@@ -48325,6 +48576,8 @@ static wc_test_ret_t ecc_encrypt_gcm_kat_vec(WC_RNG* rng, byte encAlgo,
 
         srvCtx = wc_ecc_ctx_new(REQ_RESP_SERVER, rng);
         if (srvCtx == NULL) { ret = WC_TEST_RET_ENC_ERRNO; break; }
+        ret = ecc_ctx_apply_devid(srvCtx);
+        if (ret != 0) break;
         ret = wc_ecc_ctx_set_algo(srvCtx, encAlgo, kdfAlgo, ecHMAC_SHA256);
         if (ret == 0) {
             /* force our fixed own salt, then set the peer's fixed salt */
@@ -48480,9 +48733,10 @@ static wc_test_ret_t ecc_encrypt_gcm_kat(WC_RNG* rng)
 #endif /* GCM KAT guards */
 
 #if defined(WOLF_CRYPTO_CB) && !defined(WOLFSSL_NO_MALLOC)
-/* Minimal ECIES CryptoCb: with mode==1 it services the operation (forwarding to
- * software after clearing devId) and records that it was invoked; with mode==0
- * it returns CRYPTOCB_UNAVAILABLE so ECIES falls back to software. */
+/* Minimal ECIES CryptoCb: with mode==1 it handles the operation (by calling
+ * software after clearing the context devId) and records that it was called;
+ * with mode==0 it returns CRYPTOCB_UNAVAILABLE so ECIES falls back to
+ * software. */
 typedef struct EciesCbCtx {
     int mode;           /* 0 = force fallback, 1 = handle in callback */
     int encryptInvoked; /* set when the callback services an ECIES encrypt */
@@ -48499,8 +48753,13 @@ static int myEciesCryptoCb(int devIdArg, wc_CryptoInfo* info, void* ctx)
     int ret = WC_NO_ERR_TRACE(CRYPTOCB_UNAVAILABLE);
     EciesCbCtx* cbCtx = (EciesCbCtx*)ctx;
 
+    (void)devIdArg;
+
     if (info->algo_type == WC_ALGO_TYPE_PK) {
         if (info->pk.type == WC_PK_TYPE_ECIES_ENCRYPT) {
+            ecEncCtx* eCtx = info->pk.eciesencrypt.ctx;
+            int       savedDevId = INVALID_DEVID;
+
             if (cbCtx->mode == 0)
                 return WC_NO_ERR_TRACE(CRYPTOCB_UNAVAILABLE);
             cbCtx->encryptInvoked = 1;
@@ -48517,24 +48776,38 @@ static int myEciesCryptoCb(int devIdArg, wc_CryptoInfo* info, void* ctx)
                 *info->pk.eciesencrypt.outSz = needed;
                 return 0;
             }
-            info->pk.eciesencrypt.privKey->devId = INVALID_DEVID;
+            /* ECIES picks its device from the context devId, so clear that,
+             * not the caller's key, so the call back into wolfSSL stays in
+             * software.  A NULL context is already software-only. */
+            if (eCtx != NULL) {
+                (void)wc_ecc_ctx_get_dev_id(eCtx, &savedDevId);
+                (void)wc_ecc_ctx_set_dev_id(eCtx, INVALID_DEVID);
+            }
             ret = wc_ecc_encrypt_ex(info->pk.eciesencrypt.privKey,
                 info->pk.eciesencrypt.pubKey, info->pk.eciesencrypt.msg,
                 info->pk.eciesencrypt.msgSz, info->pk.eciesencrypt.out,
                 info->pk.eciesencrypt.outSz, info->pk.eciesencrypt.ctx,
                 info->pk.eciesencrypt.compressed);
-            info->pk.eciesencrypt.privKey->devId = devIdArg;
+            if (eCtx != NULL)
+                (void)wc_ecc_ctx_set_dev_id(eCtx, savedDevId);
         }
         else if (info->pk.type == WC_PK_TYPE_ECIES_DECRYPT) {
+            ecEncCtx* eCtx = info->pk.eciesdecrypt.ctx;
+            int       savedDevId = INVALID_DEVID;
+
             if (cbCtx->mode == 0)
                 return WC_NO_ERR_TRACE(CRYPTOCB_UNAVAILABLE);
             cbCtx->decryptInvoked = 1;
-            info->pk.eciesdecrypt.privKey->devId = INVALID_DEVID;
+            if (eCtx != NULL) {
+                (void)wc_ecc_ctx_get_dev_id(eCtx, &savedDevId);
+                (void)wc_ecc_ctx_set_dev_id(eCtx, INVALID_DEVID);
+            }
             ret = wc_ecc_decrypt(info->pk.eciesdecrypt.privKey,
                 info->pk.eciesdecrypt.pubKey, info->pk.eciesdecrypt.msg,
                 info->pk.eciesdecrypt.msgSz, info->pk.eciesdecrypt.out,
                 info->pk.eciesdecrypt.outSz, info->pk.eciesdecrypt.ctx);
-            info->pk.eciesdecrypt.privKey->devId = devIdArg;
+            if (eCtx != NULL)
+                (void)wc_ecc_ctx_set_dev_id(eCtx, savedDevId);
         }
     }
 
@@ -48610,6 +48883,13 @@ static wc_test_ret_t ecies_cryptocb_roundtrip(WC_RNG* rng, EciesCbCtx* cbCtx,
         ret = wc_ecc_ctx_set_algo(srvCtx, encAlgo, ecHKDF_SHA256, ecHMAC_SHA256);
     if (ret != 0) { ret = WC_TEST_RET_ENC_EC(ret); goto rt_done; }
 
+    /* ECIES picks its device from the context devId, not the key's, so the
+     * device has to be set here or the callback is never reached. */
+    ret = wc_ecc_ctx_set_dev_id(cliCtx, ECIES_CB_TEST_DEVID);
+    if (ret == 0)
+        ret = wc_ecc_ctx_set_dev_id(srvCtx, ECIES_CB_TEST_DEVID);
+    if (ret != 0) { ret = WC_TEST_RET_ENC_EC(ret); goto rt_done; }
+
     tmpSalt = wc_ecc_ctx_get_own_salt(cliCtx);
     if (tmpSalt == NULL) { ret = WC_TEST_RET_ENC_NC; goto rt_done; }
     XMEMCPY(cliSalt, tmpSalt, EXCHANGE_SALT_SZ);
@@ -48673,6 +48953,12 @@ static wc_test_ret_t ecies_cryptocb_state_test(WC_RNG* rng, EciesCbCtx* cbCtx,
         ret = WC_TEST_RET_ENC_NC; goto st_done;
     }
 
+    /* ECIES picks its device from the context devId, not the key's. */
+    ret = wc_ecc_ctx_set_dev_id(cliCtx, ECIES_CB_TEST_DEVID);
+    if (ret == 0)
+        ret = wc_ecc_ctx_set_dev_id(srvCtx, ECIES_CB_TEST_DEVID);
+    if (ret != 0) { ret = WC_TEST_RET_ENC_EC(ret); goto st_done; }
+
     /* Salt exchange brings the client ctx to ecCLI_SALT_SET (encrypt-ready). */
     tmpSalt = wc_ecc_ctx_get_own_salt(cliCtx);
     if (tmpSalt == NULL) { ret = WC_TEST_RET_ENC_NC; goto st_done; }
@@ -48696,11 +48982,16 @@ static wc_test_ret_t ecies_cryptocb_state_test(WC_RNG* rng, EciesCbCtx* cbCtx,
     /* Second encrypt on the same ctx must be rejected: the hardware path must
      * have advanced the single-use state. */
     outSz = sizeof(out);
+    cbCtx->encryptInvoked = 0;
     ret = wc_ecc_encrypt(userA, userB, msg, sizeof(msg), out, &outSz, cliCtx);
     if (ret != WC_NO_ERR_TRACE(BAD_STATE_E)) {
         ret = (ret == 0) ? WC_TEST_RET_ENC_NC : WC_TEST_RET_ENC_EC(ret);
         goto st_done;
     }
+    /* The reject has to come from the single-use check after the hardware
+     * handled the call, not from the callback being skipped and software
+     * rejecting it.  Otherwise this passes for the wrong reason. */
+    if (cbCtx->encryptInvoked != 1) { ret = WC_TEST_RET_ENC_NC; goto st_done; }
     ret = 0;
 
 st_done:
@@ -82747,23 +83038,39 @@ static int myCryptoDevCb(int devIdArg, wc_CryptoInfo* info, void* ctx)
         }
     #ifdef HAVE_ECC_ENCRYPT
         else if (info->pk.type == WC_PK_TYPE_ECIES_ENCRYPT) {
-            /* set devId to invalid so the software path runs */
-            info->pk.eciesencrypt.privKey->devId = INVALID_DEVID;
+            /* ECIES picks its device from the context devId, so clear that,
+             * not the caller's key, so the software path runs instead of
+             * calling straight back into this callback. */
+            ecEncCtx* eCtx = info->pk.eciesencrypt.ctx;
+            int       savedDevId = INVALID_DEVID;
+
+            if (eCtx != NULL) {
+                (void)wc_ecc_ctx_get_dev_id(eCtx, &savedDevId);
+                (void)wc_ecc_ctx_set_dev_id(eCtx, INVALID_DEVID);
+            }
             ret = wc_ecc_encrypt_ex(info->pk.eciesencrypt.privKey,
                 info->pk.eciesencrypt.pubKey, info->pk.eciesencrypt.msg,
                 info->pk.eciesencrypt.msgSz, info->pk.eciesencrypt.out,
                 info->pk.eciesencrypt.outSz, info->pk.eciesencrypt.ctx,
                 info->pk.eciesencrypt.compressed);
-            /* reset devId */
-            info->pk.eciesencrypt.privKey->devId = devIdArg;
+            /* put back the caller's device */
+            if (eCtx != NULL)
+                (void)wc_ecc_ctx_set_dev_id(eCtx, savedDevId);
         }
         else if (info->pk.type == WC_PK_TYPE_ECIES_DECRYPT) {
-            info->pk.eciesdecrypt.privKey->devId = INVALID_DEVID;
+            ecEncCtx* eCtx = info->pk.eciesdecrypt.ctx;
+            int       savedDevId = INVALID_DEVID;
+
+            if (eCtx != NULL) {
+                (void)wc_ecc_ctx_get_dev_id(eCtx, &savedDevId);
+                (void)wc_ecc_ctx_set_dev_id(eCtx, INVALID_DEVID);
+            }
             ret = wc_ecc_decrypt(info->pk.eciesdecrypt.privKey,
                 info->pk.eciesdecrypt.pubKey, info->pk.eciesdecrypt.msg,
                 info->pk.eciesdecrypt.msgSz, info->pk.eciesdecrypt.out,
                 info->pk.eciesdecrypt.outSz, info->pk.eciesdecrypt.ctx);
-            info->pk.eciesdecrypt.privKey->devId = devIdArg;
+            if (eCtx != NULL)
+                (void)wc_ecc_ctx_set_dev_id(eCtx, savedDevId);
         }
     #endif /* HAVE_ECC_ENCRYPT */
         else if (info->pk.type == WC_PK_TYPE_EC_GET_SIZE) {

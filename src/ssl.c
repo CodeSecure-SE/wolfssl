@@ -1587,6 +1587,14 @@ int wolfSSL_GetOutputSize(WOLFSSL* ssl, int inSz)
     if (inSz > maxSize)
         return INPUT_SIZE_E;
 
+#ifdef HAVE_LIBZ
+    /* SendData() sizes the record for deflate's worst case, so report that
+     * same bound: an incompressible fragment emits more than its plaintext
+     * length. */
+    if (ssl->options.usingCompression)
+        inSz += MAX_COMP_EXTRA;
+#endif
+
     return wolfssl_local_GetRecordSize(ssl, inSz, 1);
 }
 
@@ -3959,6 +3967,17 @@ int wolfSSL_set_compression(WOLFSSL* ssl)
     WOLFSSL_ENTER("wolfSSL_set_compression");
     (void)ssl;
 #ifdef HAVE_LIBZ
+    if (ssl == NULL)
+        return BAD_FUNC_ARG;
+#ifdef WOLFSSL_DTLS
+    /* zlib keeps one deflate stream running across records, so a datagram
+     * that is lost, duplicated or reordered desyncs the peer's inflate state
+     * for the rest of the connection. */
+    if (ssl->options.dtls) {
+        WOLFSSL_MSG("Compression not supported over DTLS");
+        return BAD_FUNC_ARG;
+    }
+#endif
     ssl->options.usingCompression = 1;
     return WOLFSSL_SUCCESS;
 #else
@@ -5697,6 +5716,23 @@ size_t wolfSSL_get_client_random(const WOLFSSL* ssl, unsigned char* out,
         ssl->options.haveSessionId = 0;
         ssl->options.tls = 0;
         ssl->options.tls1_1 = 0;
+#ifdef HAVE_EXTENDED_MASTER
+        /* haveEMS is negotiated per handshake: re-arm an EMS-capable client
+         * unless the user disabled EMS, and clear a server until the next
+         * ClientHello. The requireEMS/disableEMS policy persists. */
+        ssl->options.haveEMS = 0;
+        if (ssl->options.side == WOLFSSL_CLIENT_END &&
+                !ssl->options.disableEMS) {
+            if (ssl->ctx->method->version.major == SSLv3_MAJOR &&
+                    ssl->ctx->method->version.minor >= TLSv1_MINOR) {
+                ssl->options.haveEMS = 1;
+            }
+        #ifdef WOLFSSL_DTLS
+            if (ssl->ctx->method->version.major == DTLS_MAJOR)
+                ssl->options.haveEMS = 1;
+        #endif
+        }
+#endif
     #ifdef WOLFSSL_TLS13
     #ifdef WOLFSSL_TLS13_COOKIE
         ssl->options.hrrSentCookie = 0;

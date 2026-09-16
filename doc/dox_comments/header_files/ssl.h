@@ -2809,7 +2809,8 @@ int  wolfSSL_get_alert_history(WOLFSSL* ssl, WOLFSSL_ALERT_HISTORY *h);
 
     \return SSL_SUCCESS will be returned upon successfully setting the session.
     \return SSL_FAILURE will be returned on failure.  This could be caused
-    by the session cache being disabled, or if the session has timed out.
+    by the session cache being disabled, the session having timed out, or an
+    EMS session being declined because EMS is disabled.
 
     \return When OPENSSL_EXTRA and WOLFSSL_ERROR_CODE_OPENSSL are defined,
     SSL_SUCCESS will be returned even if the session has timed out.
@@ -6370,6 +6371,59 @@ long wolfSSL_get_options(const WOLFSSL *s);
 long wolfSSL_set_tlsext_debug_arg(WOLFSSL *s, void *arg);
 
 /*!
+    \ingroup Setup
+
+    \brief Callback type for the TLS extension debug callback.
+
+    Invoked once for every TLS extension received during the handshake,
+    in wire order, before the extension is processed.
+
+    \param ssl The WOLFSSL object receiving the extension.
+    \param client_server 1 if the WOLFSSL object is a client, 0 if a server.
+    \param type The extension type, e.g. TLSX_SERVER_NAME.
+    \param data The raw extension content (data after the 2-byte length).
+    \param len Length of the extension content in bytes.
+    \param arg The argument set with wolfSSL_set_tlsext_debug_arg().
+
+    Note that, unlike OpenSSL 3.x, the callback also reports unknown
+    (unregistered) extension types.
+*/
+typedef void (*WOLFSSL_TLSEXT_DEBUG_CB)(WOLFSSL* ssl, int client_server,
+        int type, const byte* data, int len, void* arg);
+
+/*!
+    \ingroup Setup
+
+    \brief This is used to set the TLS extension debug callback on the
+    object.
+
+    The callback (type WOLFSSL_TLSEXT_DEBUG_CB) is invoked once for every
+    TLS extension received during the handshake, in wire order, before the
+    extension is processed. It reports the side of the connection, the
+    extension type, the raw extension content and the argument set with
+    wolfSSL_set_tlsext_debug_arg(). Passing a NULL callback disables it.
+
+    \return WOLFSSL_SUCCESS On successful setting of the callback.
+    \return WOLFSSL_FAILURE If a NULL ssl is passed in.
+
+    \param s WOLFSSL structure to set the callback in.
+    \param cb Callback to invoke for each received TLS extension, or NULL
+    to disable it.
+
+    _Example_
+    \code
+    WOLFSSL* ssl;
+    long ret;
+    // create ssl object
+    ret = wolfSSL_set_tlsext_debug_callback(ssl, my_tlsext_debug_cb);
+    // check ret value
+    \endcode
+
+    \sa wolfSSL_set_tlsext_debug_arg
+*/
+long wolfSSL_set_tlsext_debug_callback(WOLFSSL *s, WOLFSSL_TLSEXT_DEBUG_CB cb);
+
+/*!
     \ingroup openSSL
 
     \brief This function is called when the client application request
@@ -7252,9 +7306,23 @@ int wolfSSL_negotiate(WOLFSSL* ssl);
     the amount of data saved by compression usually takes longer in time to
     analyze than it does to send it raw on all but the slowest of networks.
 
+    Record layer compression was removed in TLS 1.3 (RFC 8446 section 5.2).
+    A connection that negotiates TLS 1.3 or DTLS 1.3 therefore completes
+    uncompressed and this request is silently dropped; the call still returns
+    SSL_SUCCESS, so check the negotiated protocol version rather than this
+    return value to learn whether compression is actually in use. For the same
+    reason a ClientHello that offers TLS 1.3 never advertises zlib.
+
+    Compression is not available over DTLS at all. zlib keeps one deflate
+    stream running across records, so a datagram that is lost, duplicated or
+    reordered would desync the peer for the rest of the connection. Since the
+    transport is known when the WOLFSSL object is created, this is reported
+    rather than dropped.
+
     \return SSL_SUCCESS upon success.
     \return NOT_COMPILED_IN will be returned if compression support wasn’t
     built into the library.
+    \return BAD_FUNC_ARG will be returned if ssl is NULL or is a DTLS session.
 
     \param ssl pointer to the SSL session, created with wolfSSL_new().
 
@@ -17476,3 +17544,154 @@ int wolfSSL_get_scr_check_enabled(const WOLFSSL* ssl);
     \sa wolfSSL_get_scr_check_enabled
 */
 int wolfSSL_set_scr_check_enabled(WOLFSSL* ssl, byte enabled);
+
+/*!
+    \ingroup Setup
+    \brief Disables the TLS Extended Master Secret extension (RFC 7627) on
+    the context: a client stops advertising it and a server ignores the
+    peer's request, so a standard master secret is negotiated. A server also
+    declines resumption of sessions or tickets that used EMS and does a full
+    handshake instead. TLS 1.2 and earlier only. Requires
+    HAVE_EXTENDED_MASTER.
+
+    \return WOLFSSL_SUCCESS on success.
+    \return BAD_FUNC_ARG if ctx is NULL.
+
+    \param ctx a pointer to a WOLFSSL_CTX structure, created using
+    wolfSSL_CTX_new().
+
+    _Example_
+    \code
+    wolfSSL_CTX_DisableExtendedMasterSecret(ctx);
+    \endcode
+
+    \sa wolfSSL_DisableExtendedMasterSecret
+    \sa wolfSSL_CTX_EnableExtendedMasterSecret
+    \sa wolfSSL_CTX_RequireExtendedMasterSecret
+*/
+int wolfSSL_CTX_DisableExtendedMasterSecret(WOLFSSL_CTX* ctx);
+
+/*!
+    \ingroup Setup
+    \brief Disables the TLS Extended Master Secret extension (RFC 7627) on
+    the SSL object: a client stops advertising it and a server ignores the
+    peer's request, so a standard master secret is negotiated. A server also
+    declines resumption of sessions or tickets that used EMS and does a full
+    handshake instead. Call before the handshake starts, or after
+    wolfSSL_clear. TLS 1.2 and earlier only. Requires HAVE_EXTENDED_MASTER.
+
+    \return WOLFSSL_SUCCESS on success.
+    \return BAD_FUNC_ARG if ssl is NULL.
+    \return BAD_STATE_E if the handshake has started.
+
+    \param ssl a pointer to a WOLFSSL structure, created using wolfSSL_new().
+
+    _Example_
+    \code
+    wolfSSL_DisableExtendedMasterSecret(ssl);
+    \endcode
+
+    \sa wolfSSL_CTX_DisableExtendedMasterSecret
+    \sa wolfSSL_EnableExtendedMasterSecret
+    \sa wolfSSL_RequireExtendedMasterSecret
+*/
+int wolfSSL_DisableExtendedMasterSecret(WOLFSSL* ssl);
+
+/*!
+    \ingroup Setup
+    \brief Re-enables the TLS Extended Master Secret extension (RFC 7627) on
+    the context (the default): EMS is used when the peer supports it but is
+    not mandatory. Undoes a previous disable or require. Requires
+    HAVE_EXTENDED_MASTER.
+
+    \return WOLFSSL_SUCCESS on success.
+    \return BAD_FUNC_ARG if ctx is NULL.
+
+    \param ctx a pointer to a WOLFSSL_CTX structure, created using
+    wolfSSL_CTX_new().
+
+    _Example_
+    \code
+    wolfSSL_CTX_EnableExtendedMasterSecret(ctx);
+    \endcode
+
+    \sa wolfSSL_EnableExtendedMasterSecret
+    \sa wolfSSL_CTX_DisableExtendedMasterSecret
+    \sa wolfSSL_CTX_RequireExtendedMasterSecret
+*/
+int wolfSSL_CTX_EnableExtendedMasterSecret(WOLFSSL_CTX* ctx);
+
+/*!
+    \ingroup Setup
+    \brief Re-enables the TLS Extended Master Secret extension (RFC 7627) on
+    the SSL object (the default): EMS is used when the peer supports it but
+    is not mandatory. Undoes a previous disable or require. Call before the
+    handshake starts, or after wolfSSL_clear. Requires HAVE_EXTENDED_MASTER.
+
+    \return WOLFSSL_SUCCESS on success.
+    \return BAD_FUNC_ARG if ssl is NULL.
+    \return BAD_STATE_E if the handshake has started.
+
+    \param ssl a pointer to a WOLFSSL structure, created using wolfSSL_new().
+
+    _Example_
+    \code
+    wolfSSL_EnableExtendedMasterSecret(ssl);
+    \endcode
+
+    \sa wolfSSL_CTX_EnableExtendedMasterSecret
+    \sa wolfSSL_DisableExtendedMasterSecret
+    \sa wolfSSL_RequireExtendedMasterSecret
+*/
+int wolfSSL_EnableExtendedMasterSecret(WOLFSSL* ssl);
+
+/*!
+    \ingroup Setup
+    \brief Makes the TLS Extended Master Secret extension (RFC 7627)
+    mandatory on the context: if it is not negotiated, the connection
+    is aborted with EXT_MASTER_SECRET_NEEDED_E. A client advertises
+    the extension even after a previous disable. TLS 1.2 and earlier
+    only. Requires HAVE_EXTENDED_MASTER.
+
+    \return WOLFSSL_SUCCESS on success.
+    \return BAD_FUNC_ARG if ctx is NULL.
+
+    \param ctx a pointer to a WOLFSSL_CTX structure, created using
+    wolfSSL_CTX_new().
+
+    _Example_
+    \code
+    wolfSSL_CTX_RequireExtendedMasterSecret(ctx);
+    \endcode
+
+    \sa wolfSSL_RequireExtendedMasterSecret
+    \sa wolfSSL_CTX_EnableExtendedMasterSecret
+    \sa wolfSSL_CTX_DisableExtendedMasterSecret
+*/
+int wolfSSL_CTX_RequireExtendedMasterSecret(WOLFSSL_CTX* ctx);
+
+/*!
+    \ingroup Setup
+    \brief Makes the TLS Extended Master Secret extension (RFC 7627)
+    mandatory on the SSL object: if it is not negotiated, including on
+    resumption, the connection is aborted with EXT_MASTER_SECRET_NEEDED_E. A
+    client advertises the extension even after a previous disable. Call
+    before the handshake starts, or after wolfSSL_clear. TLS 1.2 and earlier
+    only. Requires HAVE_EXTENDED_MASTER.
+
+    \return WOLFSSL_SUCCESS on success.
+    \return BAD_FUNC_ARG if ssl is NULL.
+    \return BAD_STATE_E if the handshake has started.
+
+    \param ssl a pointer to a WOLFSSL structure, created using wolfSSL_new().
+
+    _Example_
+    \code
+    wolfSSL_RequireExtendedMasterSecret(ssl);
+    \endcode
+
+    \sa wolfSSL_CTX_RequireExtendedMasterSecret
+    \sa wolfSSL_EnableExtendedMasterSecret
+    \sa wolfSSL_DisableExtendedMasterSecret
+*/
+int wolfSSL_RequireExtendedMasterSecret(WOLFSSL* ssl);
