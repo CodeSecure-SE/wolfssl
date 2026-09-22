@@ -4418,7 +4418,7 @@ struct WOLFSSL_CTX {
 #endif
     word32          timeout;            /* session timeout */
 #if defined(HAVE_ECC) || defined(HAVE_ED25519) || defined(HAVE_CURVE25519) || \
-    defined(HAVE_ED448)
+    defined(HAVE_ED448) || defined(HAVE_CURVE448)
     word32          ecdhCurveOID;       /* curve Ecc_Sum */
 #endif
 #ifdef HAVE_ECC
@@ -5066,6 +5066,7 @@ struct WOLFSSL_SESSION {
     WOLFSSL_SESSION_TYPE type;
 #ifndef NO_SESSION_CACHE
     int                cacheRow;          /* row in session cache     */
+    word32             cacheGen;          /* writes into this entry   */
 #endif
     wolfSSL_Ref        ref;
     byte               altSessionID[ID_LEN];
@@ -5182,7 +5183,7 @@ WOLFSSL_TEST_VIS int AddSessionToCache(WOLFSSL_CTX* ctx,
 #ifndef NO_CLIENT_CACHE
 WOLFSSL_LOCAL ClientSession* AddSessionToClientCache(int side, int row, int idx,
                       byte* serverID, word16 idLen, const byte* sessionID,
-                      word16 useTicket);
+                      word16 useTicket, word32 cacheGen);
 #endif
 WOLFSSL_LOCAL
 WOLFSSL_SESSION* ClientSessionToSession(const WOLFSSL_SESSION* session);
