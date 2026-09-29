@@ -3513,7 +3513,10 @@ options: [-s max_relative_stack_bytes] [-m max_relative_heap_memory_bytes]\n\
 #endif
 
 #if defined(WOLFSSL_HAVE_XMSS)
-    #if !defined(WOLFSSL_SMALL_STACK) && WOLFSSL_XMSS_MIN_HEIGHT <= 10
+    #if !defined(WOLFSSL_SMALL_STACK) && WOLFSSL_XMSS_MIN_HEIGHT <= 10 && \
+        defined(WC_XMSS_SHA256) && \
+        WOLFSSL_WC_XMSS_MIN_HASH_SIZE <= 256 && \
+        WOLFSSL_WC_XMSS_MAX_HASH_SIZE >= 256
     if ( (ret = xmss_test_verify_only()) != 0)
         TEST_FAIL("XMSS Vfy test failed!\n", ret);
     else
@@ -54029,6 +54032,25 @@ static wc_test_ret_t curve25519_check_public_test(void)
             0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
             0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x81
         },
+        /* p-1 (u = -1), p and p+1: low-order, canonical or not */
+        {
+            0xec,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0x7f
+        },
+        {
+            0xed,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0x7f
+        },
+        {
+            0xee,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0x7f
+        },
     };
     /* Big-endian values that will fail */
     byte fail_be[][CURVE25519_KEYSIZE] = {
@@ -54050,6 +54072,25 @@ static wc_test_ret_t curve25519_check_public_test(void)
             0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
             0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x01
         },
+        /* p-1 (u = -1), p and p+1: low-order, canonical or not */
+        {
+            0x7f,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xec
+        },
+        {
+            0x7f,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xed
+        },
+        {
+            0x7f,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xee
+        },
     };
     /* Good or valid public value */
     byte good[CURVE25519_KEYSIZE] = {
@@ -54057,6 +54098,37 @@ static wc_test_ret_t curve25519_check_public_test(void)
         0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
         0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
         0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x01
+    };
+    /* Little-endian non-canonical values that must pass: p+2 and p+18
+     * (RFC 7748 Section 5, p = 2^255-19). */
+    byte pass_le[][CURVE25519_KEYSIZE] = {
+        {
+            0xef,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0x7f
+        },
+        {
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0x7f
+        },
+    };
+    /* Big-endian non-canonical values that must pass: p+2 and p+18. */
+    byte pass_be[][CURVE25519_KEYSIZE] = {
+        {
+            0x7f,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xef
+        },
+        {
+            0x7f,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff
+        },
     };
     int i;
 
@@ -54107,6 +54179,21 @@ static wc_test_ret_t curve25519_check_public_test(void)
         }
     }
 
+    /* Little-endian non-canonical pass cases */
+    for (i = 0; i < (int)(sizeof(pass_le) / sizeof(*pass_le)); i++) {
+        if (wc_curve25519_check_public(pass_le[i], CURVE25519_KEYSIZE,
+                                                  EC25519_LITTLE_ENDIAN) != 0) {
+            return WC_TEST_RET_ENC_I(i);
+        }
+    }
+    /* Big-endian non-canonical pass cases */
+    for (i = 0; i < (int)(sizeof(pass_be) / sizeof(*pass_be)); i++) {
+        if (wc_curve25519_check_public(pass_be[i], CURVE25519_KEYSIZE,
+                                                     EC25519_BIG_ENDIAN) != 0) {
+            return WC_TEST_RET_ENC_I(i);
+        }
+    }
+
     /* Check a valid public value works! */
     ret = wc_curve25519_check_public(good, CURVE25519_KEYSIZE,
                                      EC25519_LITTLE_ENDIAN);
@@ -54121,6 +54208,130 @@ static wc_test_ret_t curve25519_check_public_test(void)
 
     return 0;
 }
+
+
+#if !defined(FREESCALE_LTC_ECC) && !defined(WOLFSSL_SE050)
+/* Non-canonical public values (RFC 7748 Section 5): u in [p, 2^255-1],
+ * p = 2^255-19, must be accepted and processed as if reduced modulo p.
+ * Private key: RFC 7748 Section 6.1 Alice. Peer u = p+9 and p+18, the
+ * non-canonical encodings of 9 and 18. Expected shared secrets were computed
+ * with OpenSSL 3.6.3 (pkeyutl -derive) and must also be produced by the
+ * canonical encodings 9 and 18.
+ *
+ * returns 0 on success and -ve on failure.
+ */
+static wc_test_ret_t curve25519_noncanonical_test(WC_RNG* rng)
+{
+    wc_test_ret_t ret;
+    WOLFSSL_SMALL_STACK_STATIC const byte priv[CURVE25519_KEYSIZE] = {
+        0x77,0x07,0x6d,0x0a,0x73,0x18,0xa5,0x7d,
+        0x3c,0x16,0xc1,0x72,0x51,0xb2,0x66,0x45,
+        0xdf,0x4c,0x2f,0x87,0xeb,0xc0,0x99,0x2a,
+        0xb1,0x77,0xfb,0xa5,0x1d,0xb9,0x2c,0x2a
+    };
+    /* p + 9 = 0x7fff..fff6 (little-endian) */
+    WOLFSSL_SMALL_STACK_STATIC const byte pubP9[CURVE25519_KEYSIZE] = {
+        0xf6,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+        0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+        0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+        0xff,0xff,0xff,0xff,0xff,0xff,0xff,0x7f
+    };
+    /* p + 18 = 0x7fff..ffff (little-endian) */
+    WOLFSSL_SMALL_STACK_STATIC const byte pubP18[CURVE25519_KEYSIZE] = {
+        0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+        0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+        0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+        0xff,0xff,0xff,0xff,0xff,0xff,0xff,0x7f
+    };
+    WOLFSSL_SMALL_STACK_STATIC const byte pub9[CURVE25519_KEYSIZE] = {
+        0x09,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+        0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+        0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+        0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00
+    };
+    WOLFSSL_SMALL_STACK_STATIC const byte pub18[CURVE25519_KEYSIZE] = {
+        0x12,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+        0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+        0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+        0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00
+    };
+    WOLFSSL_SMALL_STACK_STATIC const byte ss9[CURVE25519_KEYSIZE] = {
+        0x85,0x20,0xf0,0x09,0x89,0x30,0xa7,0x54,
+        0x74,0x8b,0x7d,0xdc,0xb4,0x3e,0xf7,0x5a,
+        0x0d,0xbf,0x3a,0x0d,0x26,0x38,0x1a,0xf4,
+        0xeb,0xa4,0xa9,0x8e,0xaa,0x9b,0x4e,0x6a
+    };
+    WOLFSSL_SMALL_STACK_STATIC const byte ss18[CURVE25519_KEYSIZE] = {
+        0x35,0x96,0x68,0xd7,0x9a,0x67,0x26,0x7a,
+        0x57,0xff,0xef,0x8f,0x0f,0x4a,0x98,0x82,
+        0xa7,0xc0,0xe3,0x12,0x2c,0xb1,0x99,0x9c,
+        0x56,0x26,0x34,0x63,0x83,0xf9,0xf8,0x11
+    };
+    const byte* pubs[4];
+    const byte* expected[4];
+    curve25519_key userA;
+    curve25519_key userB;
+    byte   shared[CURVE25519_KEYSIZE];
+    word32 sharedSz;
+    int    i;
+
+    pubs[0] = pubP9;  expected[0] = ss9;
+    pubs[1] = pubP18; expected[1] = ss18;
+    pubs[2] = pub9;   expected[2] = ss9;
+    pubs[3] = pub18;  expected[3] = ss18;
+
+    ret = wc_curve25519_init_ex(&userA, HEAP_HINT, devId);
+    if (ret != 0)
+        return WC_TEST_RET_ENC_EC(ret);
+    ret = wc_curve25519_init_ex(&userB, HEAP_HINT, devId);
+    if (ret != 0) {
+        wc_curve25519_free(&userA);
+        return WC_TEST_RET_ENC_EC(ret);
+    }
+#ifdef WOLFSSL_CURVE25519_BLINDING
+    ret = wc_curve25519_set_rng(&userA, rng);
+    if (ret != 0)
+        ERROR_OUT(WC_TEST_RET_ENC_EC(ret), done);
+#else
+    (void)rng;
+#endif
+
+    ret = wc_curve25519_import_private_ex(priv, CURVE25519_KEYSIZE, &userA,
+                                          EC25519_LITTLE_ENDIAN);
+    if (ret != 0)
+        ERROR_OUT(WC_TEST_RET_ENC_EC(ret), done);
+
+    for (i = 0; i < 4; i++) {
+        ret = wc_curve25519_check_public(pubs[i], CURVE25519_KEYSIZE,
+                                         EC25519_LITTLE_ENDIAN);
+        if (ret != 0)
+            ERROR_OUT(WC_TEST_RET_ENC_I(i), done);
+        ret = wc_curve25519_import_public_ex(pubs[i], CURVE25519_KEYSIZE,
+                                             &userB, EC25519_LITTLE_ENDIAN);
+        if (ret != 0)
+            ERROR_OUT(WC_TEST_RET_ENC_I(i), done);
+        sharedSz = sizeof(shared);
+        XMEMSET(shared, 0, sizeof(shared));
+        ret = wc_curve25519_shared_secret_ex(&userA, &userB, shared, &sharedSz,
+                                             EC25519_LITTLE_ENDIAN);
+    #if defined(WOLFSSL_ASYNC_CRYPT)
+        if (ret == WC_NO_ERR_TRACE(WC_PENDING_E))
+            ret = wc_AsyncWait(ret, &userA.asyncDev, WC_ASYNC_FLAG_NONE);
+    #endif
+        if (ret != 0)
+            ERROR_OUT(WC_TEST_RET_ENC_I(i), done);
+        if (sharedSz != CURVE25519_KEYSIZE ||
+                XMEMCMP(shared, expected[i], CURVE25519_KEYSIZE) != 0) {
+            ERROR_OUT(WC_TEST_RET_ENC_I(i), done);
+        }
+    }
+
+done:
+    wc_curve25519_free(&userB);
+    wc_curve25519_free(&userA);
+    return ret;
+}
+#endif /* !FREESCALE_LTC_ECC && !WOLFSSL_SE050 */
 
 #endif /* HAVE_CURVE25519_SHARED_SECRET && HAVE_CURVE25519_KEY_IMPORT */
 
@@ -54802,6 +55013,11 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t curve25519_test(void)
     ret = curve25519_check_public_test();
     if (ret != 0)
         goto cleanup;
+#if !defined(FREESCALE_LTC_ECC) && !defined(WOLFSSL_SE050)
+    ret = curve25519_noncanonical_test(&rng);
+    if (ret != 0)
+        goto cleanup;
+#endif
 #endif /* HAVE_CURVE25519_SHARED_SECRET && HAVE_CURVE25519_KEY_IMPORT */
 
 #if !defined(NO_ASN) && defined(HAVE_CURVE25519_KEY_EXPORT) && \
@@ -56411,6 +56627,34 @@ static wc_test_ret_t curve448_check_public_test(void)
             0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
             0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00
         },
+        /* p-1 (u = -1), p and p+1: low-order, canonical or not */
+        {
+            0xfe,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+            0xff,0xff,0xff,0xff,0xfe,0xff,0xff,0xff,
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff
+        },
+        {
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+            0xff,0xff,0xff,0xff,0xfe,0xff,0xff,0xff,
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff
+        },
+        {
+            0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+            0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+            0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+            0x00,0x00,0x00,0x00,0xff,0xff,0xff,0xff,
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff
+        },
     };
     /* Big-endian values that will fail */
     byte fail_be[][CURVE448_KEY_SIZE] = {
@@ -56432,6 +56676,34 @@ static wc_test_ret_t curve448_check_public_test(void)
             0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
             0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x01
         },
+        /* p-1 (u = -1), p and p+1: low-order, canonical or not */
+        {
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+            0xff,0xff,0xff,0xfe,0xff,0xff,0xff,0xff,
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xfe
+        },
+        {
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+            0xff,0xff,0xff,0xfe,0xff,0xff,0xff,0xff,
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff
+        },
+        {
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+            0xff,0xff,0xff,0xff,0x00,0x00,0x00,0x00,
+            0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+            0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+            0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00
+        },
     };
     /* Good or valid public value */
     byte good[CURVE448_KEY_SIZE] = {
@@ -56442,6 +56714,49 @@ static wc_test_ret_t curve448_check_public_test(void)
         0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
         0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
         0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x01
+    };
+    /* Little-endian non-canonical values that must pass: p+2 and 2^448-1
+     * (RFC 7748 Section 5, p = 2^448 - 2^224 - 1). */
+    byte pass_le[][CURVE448_KEY_SIZE] = {
+        {
+            0x01,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+            0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+            0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+            0x00,0x00,0x00,0x00,0xff,0xff,0xff,0xff,
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff
+        },
+        {
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff
+        },
+    };
+    /* Big-endian non-canonical values that must pass: p+2 and 2^448-1. */
+    byte pass_be[][CURVE448_KEY_SIZE] = {
+        {
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+            0xff,0xff,0xff,0xff,0x00,0x00,0x00,0x00,
+            0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+            0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+            0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x01
+        },
+        {
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff
+        },
     };
     int i;
     wc_test_ret_t ret;
@@ -56487,6 +56802,21 @@ static wc_test_ret_t curve448_check_public_test(void)
     for (i = 0; i < (int)(sizeof(fail_be) / sizeof(*fail_be)); i++) {
         if (wc_curve448_check_public(fail_be[i], CURVE448_KEY_SIZE,
                                                        EC448_BIG_ENDIAN) == 0) {
+            return WC_TEST_RET_ENC_I(i);
+        }
+    }
+
+    /* Little-endian non-canonical pass cases */
+    for (i = 0; i < (int)(sizeof(pass_le) / sizeof(*pass_le)); i++) {
+        if (wc_curve448_check_public(pass_le[i], CURVE448_KEY_SIZE,
+                                                    EC448_LITTLE_ENDIAN) != 0) {
+            return WC_TEST_RET_ENC_I(i);
+        }
+    }
+    /* Big-endian non-canonical pass cases */
+    for (i = 0; i < (int)(sizeof(pass_be) / sizeof(*pass_be)); i++) {
+        if (wc_curve448_check_public(pass_be[i], CURVE448_KEY_SIZE,
+                                                       EC448_BIG_ENDIAN) != 0) {
             return WC_TEST_RET_ENC_I(i);
         }
     }
@@ -56750,6 +57080,144 @@ static wc_test_ret_t curve448_kat_test(WC_RNG* rng,
 }
 #endif /* HAVE_CURVE448_SHARED_SECRET && HAVE_CURVE448_KEY_IMPORT */
 
+#if defined(HAVE_CURVE448_SHARED_SECRET) && defined(HAVE_CURVE448_KEY_IMPORT)
+/* Non-canonical public values (RFC 7748 Section 5): u in [p, 2^448-1],
+ * p = 2^448 - 2^224 - 1, must be accepted and processed as if reduced
+ * modulo p. Private key: RFC 7748 Section 6.2 Alice. Peer u = p+2 and
+ * 2^448-1, the non-canonical encodings of 2 and 2^224. Expected shared
+ * secrets were computed with OpenSSL 3.6.3 (pkeyutl -derive) and must also
+ * be produced by the canonical encodings.
+ *
+ * returns 0 on success and -ve on failure.
+ */
+static wc_test_ret_t curve448_noncanonical_test(void)
+{
+    wc_test_ret_t ret;
+    WOLFSSL_SMALL_STACK_STATIC const byte priv[CURVE448_KEY_SIZE] = {
+        0x9a,0x8f,0x49,0x25,0xd1,0x51,0x9f,0x57,
+        0x75,0xcf,0x46,0xb0,0x4b,0x58,0x00,0xd4,
+        0xee,0x9e,0xe8,0xba,0xe8,0xbc,0x55,0x65,
+        0xd4,0x98,0xc2,0x8d,0xd9,0xc9,0xba,0xf5,
+        0x74,0xa9,0x41,0x97,0x44,0x89,0x73,0x91,
+        0x00,0x63,0x82,0xa6,0xf1,0x27,0xab,0x1d,
+        0x9a,0xc2,0xd8,0xc0,0xa5,0x98,0x72,0x6b
+    };
+    /* p + 2 (little-endian) */
+    WOLFSSL_SMALL_STACK_STATIC const byte pubP2[CURVE448_KEY_SIZE] = {
+        0x01,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+        0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+        0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+        0x00,0x00,0x00,0x00,0xff,0xff,0xff,0xff,
+        0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+        0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+        0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff
+    };
+    /* 2^448 - 1 (little-endian) */
+    WOLFSSL_SMALL_STACK_STATIC const byte pubMax[CURVE448_KEY_SIZE] = {
+        0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+        0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+        0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+        0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+        0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+        0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+        0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff
+    };
+    WOLFSSL_SMALL_STACK_STATIC const byte pub2[CURVE448_KEY_SIZE] = {
+        0x02,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+        0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+        0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+        0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+        0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+        0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+        0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00
+    };
+    /* 2^224 (little-endian) */
+    WOLFSSL_SMALL_STACK_STATIC const byte pub224[CURVE448_KEY_SIZE] = {
+        0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+        0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+        0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+        0x00,0x00,0x00,0x00,0x01,0x00,0x00,0x00,
+        0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+        0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+        0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00
+    };
+    WOLFSSL_SMALL_STACK_STATIC const byte ss2[CURVE448_KEY_SIZE] = {
+        0x6c,0xbd,0xf8,0x29,0x07,0xd2,0xa3,0xf3,
+        0xbd,0x7a,0x48,0x68,0xac,0x6a,0xe3,0x54,
+        0xf9,0x7d,0x60,0xc4,0x78,0xfc,0xac,0x33,
+        0x38,0x9f,0xea,0xb9,0xf0,0x22,0xa2,0x6c,
+        0xcd,0x71,0x64,0xa2,0xfb,0x9c,0xfb,0x2b,
+        0x74,0x07,0xa9,0x24,0xc6,0x26,0x26,0xf7,
+        0x38,0xa6,0x28,0x69,0xf7,0x17,0xdf,0xad
+    };
+    WOLFSSL_SMALL_STACK_STATIC const byte ss224[CURVE448_KEY_SIZE] = {
+        0x66,0xe2,0xe6,0x82,0xb1,0xf8,0xe6,0x8c,
+        0x80,0x9f,0x1b,0xb3,0xe4,0x06,0xbd,0x82,
+        0x69,0x21,0xd9,0xc1,0xa5,0xbf,0xbf,0xcb,
+        0xab,0x7a,0xe7,0x2f,0xee,0xce,0xe6,0x36,
+        0x60,0xea,0xbd,0x54,0x93,0x4f,0x33,0x82,
+        0x06,0x1d,0x17,0x60,0x7f,0x58,0x1a,0x90,
+        0xbd,0xac,0x91,0x7a,0x06,0x49,0x59,0xfb
+    };
+    const byte* pubs[4];
+    const byte* expected[4];
+    curve448_key userA;
+    curve448_key userB;
+    byte   shared[CURVE448_KEY_SIZE];
+    word32 sharedSz;
+    int    i;
+
+    pubs[0] = pubP2;  expected[0] = ss2;
+    pubs[1] = pubMax; expected[1] = ss224;
+    pubs[2] = pub2;   expected[2] = ss2;
+    pubs[3] = pub224; expected[3] = ss224;
+
+    ret = wc_curve448_init_ex(&userA, HEAP_HINT, devId);
+    if (ret != 0)
+        return WC_TEST_RET_ENC_EC(ret);
+    ret = wc_curve448_init_ex(&userB, HEAP_HINT, devId);
+    if (ret != 0) {
+        wc_curve448_free(&userA);
+        return WC_TEST_RET_ENC_EC(ret);
+    }
+
+    ret = wc_curve448_import_private_ex(priv, CURVE448_KEY_SIZE, &userA,
+                                        EC448_LITTLE_ENDIAN);
+    if (ret != 0)
+        ERROR_OUT(WC_TEST_RET_ENC_EC(ret), done);
+
+    for (i = 0; i < 4; i++) {
+        ret = wc_curve448_check_public(pubs[i], CURVE448_KEY_SIZE,
+                                       EC448_LITTLE_ENDIAN);
+        if (ret != 0)
+            ERROR_OUT(WC_TEST_RET_ENC_I(i), done);
+        ret = wc_curve448_import_public_ex(pubs[i], CURVE448_KEY_SIZE, &userB,
+                                           EC448_LITTLE_ENDIAN);
+        if (ret != 0)
+            ERROR_OUT(WC_TEST_RET_ENC_I(i), done);
+        sharedSz = sizeof(shared);
+        XMEMSET(shared, 0, sizeof(shared));
+        ret = wc_curve448_shared_secret_ex(&userA, &userB, shared, &sharedSz,
+                                           EC448_LITTLE_ENDIAN);
+    #if defined(WOLFSSL_ASYNC_CRYPT)
+        if (ret == WC_NO_ERR_TRACE(WC_PENDING_E))
+            ret = wc_AsyncWait(ret, &userA.asyncDev, WC_ASYNC_FLAG_NONE);
+    #endif
+        if (ret != 0)
+            ERROR_OUT(WC_TEST_RET_ENC_I(i), done);
+        if (sharedSz != CURVE448_KEY_SIZE ||
+                XMEMCMP(shared, expected[i], CURVE448_KEY_SIZE) != 0) {
+            ERROR_OUT(WC_TEST_RET_ENC_I(i), done);
+        }
+    }
+
+done:
+    wc_curve448_free(&userB);
+    wc_curve448_free(&userA);
+    return ret;
+}
+#endif /* HAVE_CURVE448_SHARED_SECRET && HAVE_CURVE448_KEY_IMPORT */
+
 WOLFSSL_TEST_SUBROUTINE wc_test_ret_t curve448_test(void)
 {
     WC_RNG  rng;
@@ -56781,6 +57249,9 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t curve448_test(void)
         return ret;
 
     ret = curve448_check_public_test();
+    if (ret != 0)
+        return ret;
+    ret = curve448_noncanonical_test();
     if (ret != 0)
         return ret;
 #endif /* HAVE_CURVE448_SHARED_SECRET && HAVE_CURVE448_KEY_IMPORT */
@@ -67658,7 +68129,21 @@ static int xmss_reload_and_sign(const char* param, byte* skBuf, byte* sig,
     return ret;
 }
 
-WOLFSSL_TEST_SUBROUTINE wc_test_ret_t xmss_test(void)
+/* Exercise one XMSS parameter set: key generation, signing, verification and
+ * rejection of a corrupted signature.
+ *
+ * @param [in] param     Parameter set name.
+ * @param [in] exp_pkSz  Public key length the set must report - 4 bytes of
+ *                       OID plus the root and the seed, so 4 + 2n.
+ * @param [in] rounds    Signatures to make and verify.
+ * @param [in] required  Whether the set must be present.  Only the primary
+ *                       one is: the others cover the remaining hash families
+ *                       and are skipped when the build leaves them out, or
+ *                       when their signature will not fit a no-malloc build's
+ *                       fixed buffers.
+ */
+static wc_test_ret_t xmss_test_param(const char* param, word32 exp_pkSz,
+    int rounds, int required)
 {
     int             i = 0;
     int             j = 0;
@@ -67676,15 +68161,6 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t xmss_test(void)
 #endif
     const char *    msg = "XMSS post quantum signature test";
     word32          msgSz = (word32) XSTRLEN(msg);
-#if WOLFSSL_XMSS_MIN_HEIGHT <= 10
-    const char *    param = "XMSS-SHA2_10_256";
-#elif WOLFSSL_XMSS_MIN_HEIGHT <= 20
-    const char *    param = "XMSSMT-SHA2_20/4_256";
-#elif WOLFSSL_XMSS_MIN_HEIGHT <= 40
-    const char *    param = "XMSSMT-SHA2_40/8_256";
-#else
-    const char *    param = "XMSSMT-SHA2_60/12_256";
-#endif
 #ifdef WOLFSSL_NO_MALLOC
     static byte     sig[4096];
     static byte     old_sig[4096];
@@ -67715,12 +68191,21 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t xmss_test(void)
     /* Set the parameter string to the signing key, and
      * get sizes for secret key, pub key, and signature. */
     ret = wc_XmssKey_SetParamStr(&signingKey, param);
-    if (ret != 0) { ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out); }
+    if (ret != 0) {
+        if (!required) {
+            /* Not built in this configuration. */
+            ret = 0;
+        }
+        else {
+            ret = WC_TEST_RET_ENC_EC(ret);
+        }
+        goto out;
+    }
 
     ret = wc_XmssKey_GetPubLen(&signingKey, &pkSz);
     if (ret != 0) { ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out); }
 
-    if (pkSz != XMSS_SHA256_PUBLEN) {
+    if (pkSz != exp_pkSz) {
         ERROR_OUT(WC_TEST_RET_ENC_I(pkSz), out);
     }
 
@@ -67733,8 +68218,13 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t xmss_test(void)
     /* Allocate signature buffers (current and previous iteration). */
 #ifdef WOLFSSL_NO_MALLOC
 
-    if (sigSz > sizeof(sig))
+    if (sigSz > sizeof(sig)) {
+        if (!required) {
+            ret = 0;
+            goto out;
+        }
         ERROR_OUT(WC_TEST_RET_ENC_NC, out);
+    }
 #else
     sig = (byte *)XMALLOC(sigSz, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
     if (sig == NULL) { ERROR_OUT(WC_TEST_RET_ENC_ERRNO, out); }
@@ -67755,8 +68245,13 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t xmss_test(void)
     /* Allocate the secret key buffer used by the software write/read
      * callbacks. */
 #ifdef WOLFSSL_NO_MALLOC
-    if (skSz > sizeof(sk))
+    if (skSz > sizeof(sk)) {
+        if (!required) {
+            ret = 0;
+            goto out;
+        }
         ERROR_OUT(WC_TEST_RET_ENC_NC, out);
+    }
 #else
     sk = (unsigned char *)XMALLOC(skSz, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
     if (sk == NULL) { ERROR_OUT(WC_TEST_RET_ENC_ERRNO, out); }
@@ -67787,7 +68282,7 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t xmss_test(void)
      *   2. We can verify each new signature.
      * Only do a few times, because the full signature space
      * for this parameter set is huge. */
-    for (i = 0; i < 10; ++i) {
+    for (i = 0; i < rounds; ++i) {
         ret = wc_XmssKey_Sign(&signingKey, sig, &sigSz, (byte *) msg, msgSz);
         if (ret != 0) { ERROR_OUT(WC_TEST_RET_ENC_I(i), out); }
         if (sigSz != bufSz) { ERROR_OUT(WC_TEST_RET_ENC_I(i), out); }
@@ -67927,10 +68422,127 @@ out:
 
     return ret;
 }
+
+/* Hash family and size of the primary set below.  Two things decide which sets
+ * a build has: the hash-size range (WOLFSSL_WC_XMSS_MIN_HASH_SIZE and
+ * WOLFSSL_WC_XMSS_MAX_HASH_SIZE), and which hashes are compiled in at all -
+ * NO_SHA256 or WOLFSSL_WC_XMSS_NO_SHA256 removes the SHA-2 32- and 24-byte
+ * sets while leaving the range untouched.  Both have to be consulted, or the
+ * test asks for a parameter set the build does not have. */
+#define XMSS_TEST_PRIMARY_REQ   1
+#if defined(WC_XMSS_SHA256) && WOLFSSL_WC_XMSS_MIN_HASH_SIZE <= 256 && \
+    WOLFSSL_WC_XMSS_MAX_HASH_SIZE >= 256
+    #define XMSS_TEST_FAM       "SHA2"
+    #define XMSS_TEST_SUFFIX    "256"
+    #define XMSS_TEST_N         32
+#elif defined(WC_XMSS_SHA256) && WOLFSSL_WC_XMSS_MAX_HASH_SIZE < 256
+    #define XMSS_TEST_FAM       "SHA2"
+    #define XMSS_TEST_SUFFIX    "192"
+    #define XMSS_TEST_N         24
+#elif defined(WC_XMSS_SHA512) && WOLFSSL_WC_XMSS_MAX_HASH_SIZE >= 512
+    #define XMSS_TEST_FAM       "SHA2"
+    #define XMSS_TEST_SUFFIX    "512"
+    #define XMSS_TEST_N         64
+#elif defined(WC_XMSS_SHAKE128) && WOLFSSL_WC_XMSS_MIN_HASH_SIZE <= 256 && \
+      WOLFSSL_WC_XMSS_MAX_HASH_SIZE >= 256
+    #define XMSS_TEST_FAM       "SHAKE"
+    #define XMSS_TEST_SUFFIX    "256"
+    #define XMSS_TEST_N         32
+#elif defined(WC_XMSS_SHAKE256) && WOLFSSL_WC_XMSS_MAX_HASH_SIZE >= 512
+    /* The "SHAKE" family name covers two hashes: the 32-byte sets are
+     * SHAKE-128, but the 64-byte ones are SHAKE-256, so this branch keys off
+     * SHAKE-256 like the entries in wc_xmss.c do. */
+    #define XMSS_TEST_FAM       "SHAKE"
+    #define XMSS_TEST_SUFFIX    "512"
+    #define XMSS_TEST_N         64
+#elif defined(WC_XMSS_SHAKE256) && WOLFSSL_WC_XMSS_MIN_HASH_SIZE <= 256 && \
+      WOLFSSL_WC_XMSS_MAX_HASH_SIZE >= 256
+    #define XMSS_TEST_FAM       "SHAKE256"
+    #define XMSS_TEST_SUFFIX    "256"
+    #define XMSS_TEST_N         32
+#elif defined(WC_XMSS_SHAKE256) && WOLFSSL_WC_XMSS_MAX_HASH_SIZE < 256
+    #define XMSS_TEST_FAM       "SHAKE256"
+    #define XMSS_TEST_SUFFIX    "192"
+    #define XMSS_TEST_N         24
+#else
+    /* No family this test knows of: name one anyway and let
+     * xmss_test_param() skip it rather than fail the build. */
+    #define XMSS_TEST_FAM       "SHA2"
+    #define XMSS_TEST_SUFFIX    "256"
+    #define XMSS_TEST_N         32
+    #undef  XMSS_TEST_PRIMARY_REQ
+    #define XMSS_TEST_PRIMARY_REQ   0
+#endif
+/* 4 bytes of OID, then root and seed. */
+#define XMSS_TEST_PKSZ          (4 + 2 * XMSS_TEST_N)
+
+WOLFSSL_TEST_SUBROUTINE wc_test_ret_t xmss_test(void)
+{
+    wc_test_ret_t ret;
+
+    /* The primary set has to be there; which height and which hash size
+     * depends on the build. */
+#if WOLFSSL_XMSS_MIN_HEIGHT <= 10
+    ret = xmss_test_param("XMSS-" XMSS_TEST_FAM "_10_" XMSS_TEST_SUFFIX,
+        XMSS_TEST_PKSZ, 10, XMSS_TEST_PRIMARY_REQ);
+#elif WOLFSSL_XMSS_MIN_HEIGHT <= 20
+    ret = xmss_test_param("XMSSMT-" XMSS_TEST_FAM "_20/4_" XMSS_TEST_SUFFIX,
+        XMSS_TEST_PKSZ, 10, XMSS_TEST_PRIMARY_REQ);
+#elif WOLFSSL_XMSS_MIN_HEIGHT <= 40
+    ret = xmss_test_param("XMSSMT-" XMSS_TEST_FAM "_40/8_" XMSS_TEST_SUFFIX,
+        XMSS_TEST_PKSZ, 10, XMSS_TEST_PRIMARY_REQ);
+#else
+    ret = xmss_test_param("XMSSMT-" XMSS_TEST_FAM "_60/12_" XMSS_TEST_SUFFIX,
+        XMSS_TEST_PKSZ, 10, XMSS_TEST_PRIMARY_REQ);
+#endif
+    if (ret != 0) {
+        return ret;
+    }
+
+    /* One set for each of the other hash-and-size shapes XMSS defines, so
+     * that every hash family the build has is signed and verified rather
+     * than only SHA-256 with 32-byte hashes.  Each is skipped when the build
+     * does not have it, and a shorter run keeps the cost down: the point is
+     * coverage of the family, which the primary set above already exercises
+     * at length.  Public key length is 4 bytes of OID plus root and seed. */
+    ret = xmss_test_param("XMSS-SHA2_10_192", 4 + 2 * 24, 2, 0);
+    if (ret != 0) {
+        return ret;
+    }
+    ret = xmss_test_param("XMSS-SHA2_10_512", 4 + 2 * 64, 2, 0);
+    if (ret != 0) {
+        return ret;
+    }
+    ret = xmss_test_param("XMSS-SHAKE_10_256", 4 + 2 * 32, 2, 0);
+    if (ret != 0) {
+        return ret;
+    }
+    ret = xmss_test_param("XMSS-SHAKE_10_512", 4 + 2 * 64, 2, 0);
+    if (ret != 0) {
+        return ret;
+    }
+    ret = xmss_test_param("XMSS-SHAKE256_10_256", 4 + 2 * 32, 2, 0);
+    if (ret != 0) {
+        return ret;
+    }
+    ret = xmss_test_param("XMSS-SHAKE256_10_192", 4 + 2 * 24, 2, 0);
+    if (ret != 0) {
+        return ret;
+    }
+
+    return 0;
+}
 #endif /*if defined(WOLFSSL_HAVE_XMSS) && !defined(WOLFSSL_XMSS_VERIFY_ONLY)*/
 
+/* The vectors below are XMSS-SHA2_10_256, so this test needs a build whose
+ * hash-size range includes the 32-byte sets AND that has SHA-256 compiled in:
+ * NO_SHA256 or WOLFSSL_WC_XMSS_NO_SHA256 drops the SHA-2 sets without
+ * narrowing the range. */
 #if defined(WOLFSSL_HAVE_XMSS) && !defined(WOLFSSL_SMALL_STACK) && \
-    WOLFSSL_XMSS_MIN_HEIGHT <= 10
+    defined(WC_XMSS_SHA256) && \
+    WOLFSSL_XMSS_MIN_HEIGHT <= 10 && \
+    WOLFSSL_WC_XMSS_MIN_HASH_SIZE <= 256 && \
+    WOLFSSL_WC_XMSS_MAX_HASH_SIZE >= 256
 
 /* A simple xmss verify only test using:
  *   XMSS-SHA2_10_256
@@ -68417,9 +69029,15 @@ static int lms_read_key_mem(byte * priv, word32 privSz, void *context)
     return WC_LMS_RC_READ_TO_MEMORY;
 }
 
-/* LMS signature sizes are a function of their parameters. This
- * test has a signature of 8688 bytes. */
-#ifndef WOLFSSL_NO_LMS_SHA256_256
+/* LMS signature sizes are a function of their parameters.  This test asks for
+ * levels 1, height 5, Winternitz 1 and takes the first family in the table
+ * that has it: SHA-256/256, then SHA-256/192, then SHAKE-256/256, then
+ * SHAKE-256/192.  A 32-byte hash gives 8688 bytes and a 24-byte one 4960. */
+#if !defined(WOLFSSL_NO_LMS_SHA256_256)
+#define WC_TEST_LMS_SIG_LEN (8688)
+#elif defined(WOLFSSL_LMS_SHA256_192)
+#define WC_TEST_LMS_SIG_LEN (4960)
+#elif defined(WOLFSSL_LMS_SHAKE256) && !defined(WOLFSSL_NO_LMS_SHAKE256_256)
 #define WC_TEST_LMS_SIG_LEN (8688)
 #else
 #define WC_TEST_LMS_SIG_LEN (4960)
@@ -88388,6 +89006,7 @@ static int myCryptoDevCb(int devIdArg, wc_CryptoInfo* info, void* ctx)
         }
     #endif /* HAVE_FALCON && !WOLF_CRYPTO_CB_ONLY_FALCON */
     #ifdef WOLFSSL_HAVE_MLKEM
+    #ifndef WOLFSSL_MLKEM_NO_MAKE_KEY
         if (info->pk.type == WC_PK_TYPE_PQC_KEM_KEYGEN) {
             if ((info->pk.pqc_kem_kg.type == WC_PQC_KEM_TYPE_MLKEM) &&
                 (info->pk.pqc_kem_kg.key != NULL)) {
@@ -88408,7 +89027,9 @@ static int myCryptoDevCb(int devIdArg, wc_CryptoInfo* info, void* ctx)
                 key->prf.devId = prfDevId;
             }
         }
-        else if (info->pk.type == WC_PK_TYPE_PQC_KEM_ENCAPS) {
+    #endif
+    #ifndef WOLFSSL_MLKEM_NO_ENCAPSULATE
+        if (info->pk.type == WC_PK_TYPE_PQC_KEM_ENCAPS) {
             if ((info->pk.pqc_encaps.type == WC_PQC_KEM_TYPE_MLKEM) &&
                 (info->pk.pqc_encaps.key != NULL)) {
                 MlKemKey* key = (MlKemKey*)info->pk.pqc_encaps.key;
@@ -88431,7 +89052,9 @@ static int myCryptoDevCb(int devIdArg, wc_CryptoInfo* info, void* ctx)
                 key->prf.devId = prfDevId;
             }
         }
-        else if (info->pk.type == WC_PK_TYPE_PQC_KEM_DECAPS) {
+    #endif
+    #ifndef WOLFSSL_MLKEM_NO_DECAPSULATE
+        if (info->pk.type == WC_PK_TYPE_PQC_KEM_DECAPS) {
             if ((info->pk.pqc_decaps.type == WC_PQC_KEM_TYPE_MLKEM) &&
                 (info->pk.pqc_decaps.key != NULL)) {
                 MlKemKey* key = (MlKemKey*)info->pk.pqc_decaps.key;
@@ -88454,6 +89077,7 @@ static int myCryptoDevCb(int devIdArg, wc_CryptoInfo* info, void* ctx)
                 key->prf.devId = prfDevId;
             }
         }
+    #endif
     #endif /* WOLFSSL_HAVE_MLKEM */
     #ifdef WOLFSSL_HAVE_FRODOKEM
         if (info->pk.type == WC_PK_TYPE_PQC_KEM_KEYGEN) {
