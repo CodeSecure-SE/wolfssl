@@ -3567,16 +3567,20 @@ static WC_INLINE void AddSuiteHashSigAlgo(byte* hashSigAlgo, byte macAlgo,
         else
     #endif
     #ifdef HAVE_FALCON
+      #ifndef WOLFSSL_NO_FALCON_LEVEL1
         if (sigAlgo == falcon_level1_sa_algo) {
             ADD_HASH_SIG_ALGO(hashSigAlgo, inOutIdx,
                 FALCON_LEVEL1_SA_MAJOR, FALCON_LEVEL1_SA_MINOR);
         }
         else
+      #endif
+      #ifndef WOLFSSL_NO_FALCON_LEVEL5
         if (sigAlgo == falcon_level5_sa_algo) {
             ADD_HASH_SIG_ALGO(hashSigAlgo, inOutIdx,
                 FALCON_LEVEL5_SA_MAJOR, FALCON_LEVEL5_SA_MINOR);
         }
         else
+      #endif
     #endif /* HAVE_FALCON */
     #ifdef WOLFSSL_HAVE_MLDSA
         if (sigAlgo == mldsa_44_sa_algo) {
@@ -3792,10 +3796,14 @@ void InitSuitesHashSigAlgo(byte* hashSigAlgo, int haveSig, int tls1_2,
 #endif
 #ifdef HAVE_FALCON
     if (haveSig & SIG_FALCON) {
+    #ifndef WOLFSSL_NO_FALCON_LEVEL1
         AddSuiteHashSigAlgo(hashSigAlgo, no_mac, falcon_level1_sa_algo, keySz,
             &idx);
+    #endif
+    #ifndef WOLFSSL_NO_FALCON_LEVEL5
         AddSuiteHashSigAlgo(hashSigAlgo, no_mac, falcon_level5_sa_algo, keySz,
             &idx);
+    #endif
     }
 #endif /* HAVE_FALCON */
 #ifdef WOLFSSL_HAVE_MLDSA
@@ -9542,7 +9550,7 @@ static int ReuseKey(WOLFSSL* ssl, int type, void* pKey)
     #if defined(HAVE_FALCON)
         case DYNAMIC_TYPE_FALCON:
             wc_falcon_free((falcon_key*)pKey);
-            ret = wc_falcon_init((falcon_key*)pKey);
+            ret = wc_falcon_init_ex((falcon_key*)pKey, ssl->heap, ssl->devId);
             break;
     #endif /* HAVE_FALCON */
     #if defined(WOLFSSL_HAVE_MLDSA)
@@ -12284,8 +12292,8 @@ WC_MAYBE_UNUSED static int SendHandshakeMsg(WOLFSSL* ssl, byte* input,
 }
 
 
-/* return bytes received, WOLFSSL_FATAL_ERROR on error,
- * or BAD_FUNC_ARG if ssl is null */
+/* return bytes received, WANT_READ or WANT_WRITE to call again,
+ * WOLFSSL_FATAL_ERROR on error, or BAD_FUNC_ARG if ssl is null */
 static int wolfSSLReceive(WOLFSSL* ssl, byte* buf, word32 sz)
 {
     int recvd;
@@ -12371,8 +12379,14 @@ retry:
             #ifdef WOLFSSL_DTLS
 #ifdef WOLFSSL_DTLS13
                 if (ssl->options.dtls && IsAtLeastTLSv1_3(ssl->version)) {
-                    /* TODO: support WANT_WRITE here */
-                    if (Dtls13RtxTimeout(ssl) < 0) {
+                    int rtxRet = Dtls13RtxTimeout(ssl);
+                    if (rtxRet == WC_NO_ERR_TRACE(WANT_WRITE)) {
+                        /* Record that this ACK or retransmit still owes a
+                         * write, so the next flush sends it. */
+                        ssl->dtls13SendingAckOrRtx = 1;
+                        return WC_NO_ERR_TRACE(WANT_WRITE);
+                    }
+                    if (rtxRet < 0) {
                         WOLFSSL_MSG(
                             "Error trying to retransmit DTLS buffered message");
                         return WOLFSSL_FATAL_ERROR;
@@ -24677,6 +24691,11 @@ static int GetInputData_ex(WOLFSSL *ssl, word32 size, word32 readAhead)
         if (in == WC_NO_ERR_TRACE(WANT_READ))
             return WC_NO_ERR_TRACE(WANT_READ);
 
+#ifdef WOLFSSL_DTLS13
+        if (in == WC_NO_ERR_TRACE(WANT_WRITE))
+            return WC_NO_ERR_TRACE(WANT_WRITE);
+#endif
+
         if (in < 0) {
             WOLFSSL_ERROR_VERBOSE(SOCKET_ERROR_E);
             return SOCKET_ERROR_E;
@@ -25814,6 +25833,10 @@ static int DoProcessReplyEx(WOLFSSL* ssl, int allowSocketErr)
                     /* invalid record length, RFC 8446 section 5.1 */
                     SendAlert(ssl, alert_fatal, record_overflow);
                     break;
+                case WC_NO_ERR_TRACE(UNKNOWN_RECORD_TYPE):
+                    /* undefined record type, RFC 8446/9846 section 5 */
+                    SendAlert(ssl, alert_fatal, unexpected_message);
+                    break;
                 default:
                     break;
                 }
@@ -26432,6 +26455,11 @@ static int DoProcessReplyEx(WOLFSSL* ssl, int allowSocketErr)
                 FALL_THROUGH;
 #endif /* WOLFSSL_DTLS13 */
                 default:
+                    /* undefined record type, RFC 8446/9846 section 5. DTLS
+                     * must not answer an invalid record with an alert, so it
+                     * returns the error without one. */
+                    if (!ssl->options.dtls)
+                        SendAlert(ssl, alert_fatal, unexpected_message);
                     WOLFSSL_ERROR(UNKNOWN_RECORD_TYPE);
                     return UNKNOWN_RECORD_TYPE;
             }
