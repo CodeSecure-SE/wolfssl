@@ -16471,11 +16471,11 @@ static THREAD_RETURN WOLFSSL_THREAD server_task_ech(void* args)
         if (0 < (idx = wolfSSL_read(ssl, input, sizeof(input)-1))) {
             input[idx] = 0;
             fprintf(stderr, "Client message: %s\n", input);
-        }
 
-        AssertIntEQ(privateNameLen, wolfSSL_write(ssl, privateName,
-            privateNameLen));
-        ((func_args*)args)->return_code = TEST_SUCCESS;
+            AssertIntEQ(privateNameLen, wolfSSL_write(ssl, privateName,
+                privateNameLen));
+            ((func_args*)args)->return_code = TEST_SUCCESS;
+        }
     }
 
     if (callbacks->on_result)
@@ -30969,7 +30969,13 @@ static int test_wolfSSL_d2i_X509_REQ(void)
         /*
          * Verify the signature in the CSR
          */
+#ifdef WC_FIPS_RSA_VERIFY_MIN_2048
+        /* certs/csr.ext.der has a 1024-bit RSA key; IG C.F requires at least
+         * 2048 bits for FIPS 186-5 signature verification. */
+        ExpectIntEQ(X509_REQ_verify(req, pub_key), 0);
+#else
         ExpectIntEQ(X509_REQ_verify(req, pub_key), 1);
+#endif
 
 #ifdef OPENSSL_ALL
         ExpectNotNull(exts = (STACK_OF(X509_EXTENSION)*)X509_REQ_get_extensions(
