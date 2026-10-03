@@ -91,6 +91,15 @@ EXTRA_DIST += wolfcrypt/src/port/ti/ti-aes.c \
               wolfcrypt/src/port/nxp/dcp_port.c \
               wolfcrypt/src/port/nxp/se050_port.c \
               wolfcrypt/src/port/nxp/README.md \
+              wolfcrypt/src/port/nxp/sec_qoriq.c \
+              wolfcrypt/src/port/nxp/sec_qoriq_cb.c \
+              wolfcrypt/src/port/nxp/sec_qoriq_hash.c \
+              wolfcrypt/src/port/nxp/sec_qoriq_aes.c \
+              wolfcrypt/src/port/nxp/sec_qoriq_rng.c \
+              wolfcrypt/src/port/nxp/sec_qoriq_pkha.c \
+              wolfcrypt/src/port/nxp/sec_qoriq_baremetal.c \
+              wolfcrypt/src/port/nxp/sec_qoriq_linux.c \
+              wolfcrypt/src/port/nxp/sec_qoriq_sim.c \
               wolfcrypt/src/port/nxp/casper_port.c \
               wolfcrypt/src/port/nxp/hashcrypt_port.c \
               wolfcrypt/src/port/atmel/README.md \
@@ -134,6 +143,14 @@ EXTRA_DIST += wolfcrypt/src/port/ti/ti-aes.c \
               wolfcrypt/src/port/silabs/silabs_ecc.c \
               wolfcrypt/src/port/silabs/silabs_hash.c \
               wolfcrypt/src/port/silabs/silabs_random.c \
+              wolfcrypt/src/port/silabs/silabs_cryptocb.c \
+              wolfcrypt/src/port/silabs/silabs_cb_rng.c \
+              wolfcrypt/src/port/silabs/silabs_cb_hash.c \
+              wolfcrypt/src/port/silabs/silabs_cb_cipher.c \
+              wolfcrypt/src/port/silabs/silabs_cb_cmac.c \
+              wolfcrypt/src/port/silabs/silabs_cb_pk.c \
+              wolfcrypt/src/port/silabs/silabs_cb_kdf.c \
+              wolfcrypt/src/port/silabs/silabs_key.c \
               wolfcrypt/src/port/silabs/README.md \
               wolfcrypt/src/port/st/stm32.c \
               wolfcrypt/src/port/st/README.md \
@@ -271,6 +288,18 @@ src_libwolfssl@LIBSUFFIX@_la_SOURCES += wolfcrypt/src/port/caam/caam_linux.c
 src_libwolfssl@LIBSUFFIX@_la_SOURCES += wolfcrypt/src/port/caam/wolfcaam_linux.c
 endif
 
+if BUILD_SEC_QORIQ
+src_libwolfssl@LIBSUFFIX@_la_SOURCES += wolfcrypt/src/port/nxp/sec_qoriq.c
+src_libwolfssl@LIBSUFFIX@_la_SOURCES += wolfcrypt/src/port/nxp/sec_qoriq_cb.c
+src_libwolfssl@LIBSUFFIX@_la_SOURCES += wolfcrypt/src/port/nxp/sec_qoriq_hash.c
+src_libwolfssl@LIBSUFFIX@_la_SOURCES += wolfcrypt/src/port/nxp/sec_qoriq_aes.c
+src_libwolfssl@LIBSUFFIX@_la_SOURCES += wolfcrypt/src/port/nxp/sec_qoriq_rng.c
+src_libwolfssl@LIBSUFFIX@_la_SOURCES += wolfcrypt/src/port/nxp/sec_qoriq_pkha.c
+src_libwolfssl@LIBSUFFIX@_la_SOURCES += wolfcrypt/src/port/nxp/sec_qoriq_baremetal.c
+src_libwolfssl@LIBSUFFIX@_la_SOURCES += wolfcrypt/src/port/nxp/sec_qoriq_linux.c
+src_libwolfssl@LIBSUFFIX@_la_SOURCES += wolfcrypt/src/port/nxp/sec_qoriq_sim.c
+endif
+
 if BUILD_CAAM
 src_libwolfssl@LIBSUFFIX@_la_SOURCES += wolfcrypt/src/port/caam/wolfcaam_init.c
 src_libwolfssl@LIBSUFFIX@_la_SOURCES += wolfcrypt/src/port/caam/wolfcaam_qnx.c
@@ -298,6 +327,21 @@ endif
 
 if BUILD_RTL8735B
 src_libwolfssl@LIBSUFFIX@_la_SOURCES += wolfcrypt/src/port/realtek/rtl8735b.c
+endif
+
+if BUILD_SILABS_CRYPTOCB
+src_libwolfssl@LIBSUFFIX@_la_SOURCES += wolfcrypt/src/port/silabs/silabs_aes.c
+src_libwolfssl@LIBSUFFIX@_la_SOURCES += wolfcrypt/src/port/silabs/silabs_ecc.c
+src_libwolfssl@LIBSUFFIX@_la_SOURCES += wolfcrypt/src/port/silabs/silabs_hash.c
+src_libwolfssl@LIBSUFFIX@_la_SOURCES += wolfcrypt/src/port/silabs/silabs_random.c
+src_libwolfssl@LIBSUFFIX@_la_SOURCES += wolfcrypt/src/port/silabs/silabs_cryptocb.c
+src_libwolfssl@LIBSUFFIX@_la_SOURCES += wolfcrypt/src/port/silabs/silabs_cb_rng.c
+src_libwolfssl@LIBSUFFIX@_la_SOURCES += wolfcrypt/src/port/silabs/silabs_cb_hash.c
+src_libwolfssl@LIBSUFFIX@_la_SOURCES += wolfcrypt/src/port/silabs/silabs_cb_cipher.c
+src_libwolfssl@LIBSUFFIX@_la_SOURCES += wolfcrypt/src/port/silabs/silabs_cb_cmac.c
+src_libwolfssl@LIBSUFFIX@_la_SOURCES += wolfcrypt/src/port/silabs/silabs_cb_pk.c
+src_libwolfssl@LIBSUFFIX@_la_SOURCES += wolfcrypt/src/port/silabs/silabs_cb_kdf.c
+src_libwolfssl@LIBSUFFIX@_la_SOURCES += wolfcrypt/src/port/silabs/silabs_key.c
 endif
 
 if BUILD_PSA

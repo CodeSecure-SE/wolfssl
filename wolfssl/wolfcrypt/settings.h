@@ -443,6 +443,20 @@
     #include <wolfssl/wolfcrypt/port/xilinx/versal_gen2_asu/asu_settings.h>
 #endif
 
+/* SE Manager context members are embedded in the public Aes, ecc_key and
+ * wc_Sha* structs. Both SiLabs ports need them, so gate those members on this
+ * umbrella rather than on either port's own macro. */
+#if defined(WOLFSSL_SILABS_SE_ACCEL) && !defined(WOLFSSL_SILABS_SE_TYPES)
+    #define WOLFSSL_SILABS_SE_TYPES
+#endif
+
+/* Silicon Labs crypto callback port: enable the callback and map WC_USE_DEVID
+ * before the rest of settings.h and before the test and benchmark read it.
+ * Macro only, no SDK dependencies. */
+#if defined(WOLFSSL_SILABS_CRYPTOCB)
+    #include <wolfssl/wolfcrypt/port/silabs/silabs_settings.h>
+#endif
+
 /* Forward propagation of the legacy parent gate to the canonical name
  * (HAVE_DILITHIUM -> WOLFSSL_HAVE_MLDSA). Always active: required so that
  * a user_settings.h or build flag using only the legacy spelling still
@@ -3270,6 +3284,43 @@
     /* shim layer for QNX hashing not yet implemented */
     #define WOLFSSL_NO_CAAM_HASH
 #endif
+
+/* NXP QorIQ SEC, the T-series PowerPC security engine. Shares the CAAM
+ * descriptor architecture but is a separate, self-contained port. */
+#ifdef WOLFSSL_SEC_QORIQ
+    /* The engine is normally reached through the crypto callback layer.
+     * A minimal build (bring-up harness, boot loader) can call the driver
+     * API directly and skip that layer entirely. */
+    #ifndef WOLFSSL_SEC_QORIQ_NO_CRYPTOCB
+        #undef  WOLF_CRYPTO_CB
+        #define WOLF_CRYPTO_CB
+    #endif
+
+    /* devId must be visible to every translation unit, not just the ones
+     * that include the port header: wolfcrypt/test/test.c and the benchmark
+     * select their device from WC_USE_DEVID and never include sec_qoriq.h.
+     * Defining it only there left the port registered but never called. */
+    #ifndef WOLFSSL_SEC_QORIQ_DEVID
+        #define WOLFSSL_SEC_QORIQ_DEVID 0x53454351 /* "SECQ" */
+    #endif
+    #if !defined(WC_USE_DEVID) && !defined(WOLFSSL_SEC_QORIQ_NO_CRYPTOCB)
+        #define WC_USE_DEVID WOLFSSL_SEC_QORIQ_DEVID
+    #endif
+
+    /* pick a backend if the build did not name one */
+    #if !defined(WOLFSSL_SEC_QORIQ_BAREMETAL) && \
+        !defined(WOLFSSL_SEC_QORIQ_LINUX) && \
+        !defined(WOLFSSL_SEC_QORIQ_SIM)
+        #define WOLFSSL_SEC_QORIQ_BAREMETAL
+    #endif
+    #if (defined(WOLFSSL_SEC_QORIQ_BAREMETAL) && \
+            defined(WOLFSSL_SEC_QORIQ_LINUX)) || \
+        (defined(WOLFSSL_SEC_QORIQ_BAREMETAL) && \
+            defined(WOLFSSL_SEC_QORIQ_SIM)) || \
+        (defined(WOLFSSL_SEC_QORIQ_LINUX) && defined(WOLFSSL_SEC_QORIQ_SIM))
+        #error "Select only one WOLFSSL_SEC_QORIQ backend"
+    #endif
+#endif /* WOLFSSL_SEC_QORIQ */
 
 #ifdef WOLFSSL_CAAM
     /* switch for all AES type algos */
@@ -6108,6 +6159,22 @@ blinding by defining WC_BLINDING_NO_RNG_ACKNOWLEDGE_WEAKNESS."
 
 #if defined(WC_C_DYNAMIC_FALLBACK) && !defined(WC_HAVE_VECTOR_SPEEDUPS)
     #error WC_C_DYNAMIC_FALLBACK requires WC_HAVE_VECTOR_SPEEDUPS
+#endif
+
+/* Keccak-256 uses the legacy 0x01 pad and is not one of the functions FIPS 202
+ * specifies, so a certifiable build refuses it.  dev and dev-no-post are not
+ * certifiable and keep it, as they keep the run-time C block switch. */
+#if FIPS_VERSION3_GE(7,0,0) && !defined(WOLFSSL_FIPS_DEV)
+    #define WOLFSSL_NO_KECCAK256
+#endif
+
+/* KMAC and cSHAKE (SP 800-185) are outside the FIPS v7 module boundary, so a
+ * validated build drops them however they were requested; the dev and ready
+ * prep builds keep them. */
+#if FIPS_VERSION3_GE(7,0,0) && !defined(WOLFSSL_FIPS_DEV) && \
+    !defined(WOLFSSL_FIPS_READY)
+    #undef WOLFSSL_KMAC
+    #undef WOLFSSL_CSHAKE
 #endif
 
 /* setup for opt-in DH in FIPS v7+ */

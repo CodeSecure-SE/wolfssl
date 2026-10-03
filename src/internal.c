@@ -1574,6 +1574,7 @@ static int ImportOptions(WOLFSSL* ssl, const byte* exp, word32 len, byte ver,
 
     switch (ver) {
         case WOLFSSL_EXPORT_VERSION:
+        case WOLFSSL_EXPORT_VERSION_6:
             if (len < DTLS_EXPORT_OPT_SZ) {
                 WOLFSSL_MSG("Sanity check on buffer size failed");
                 return BAD_FUNC_ARG;
@@ -1748,9 +1749,8 @@ static int ImportOptions(WOLFSSL* ssl, const byte* exp, word32 len, byte ver,
         return VERSION_ERROR;
     }
 
-    /* set TLS 1.3 flag in options if this was a TLS 1.3 connection */
-    if (ssl->version.major == SSLv3_MAJOR &&
-            ssl->version.minor == TLSv1_3_MINOR) {
+    /* set TLS 1.3 flag in options if this was a (D)TLS 1.3 connection */
+    if (IsAtLeastTLSv1_3(ssl->version)) {
         options->tls1_3 = 1;
     }
 
@@ -1815,8 +1815,10 @@ static int ImportPeerInfo(WOLFSSL* ssl, const byte* buf, word32 len, byte ver)
     word16 port;
     char   ip[MAX_EXPORT_IP];
 
-    if (ver != WOLFSSL_EXPORT_VERSION && ver != WOLFSSL_EXPORT_VERSION_5 &&
-            ver != WOLFSSL_EXPORT_VERSION_4 && ver != WOLFSSL_EXPORT_VERSION_3) {
+    if (ver != WOLFSSL_EXPORT_VERSION && ver != WOLFSSL_EXPORT_VERSION_6 &&
+            ver != WOLFSSL_EXPORT_VERSION_5 &&
+            ver != WOLFSSL_EXPORT_VERSION_4 &&
+            ver != WOLFSSL_EXPORT_VERSION_3) {
         WOLFSSL_MSG("Export version not supported");
         return BAD_FUNC_ARG;
     }
@@ -1875,6 +1877,15 @@ int wolfSSL_dtls_export_state_internal(WOLFSSL* ssl, byte* buf, word32 sz)
         return BAD_FUNC_ARG;
     }
 
+#ifdef WOLFSSL_DTLS13
+    if (ssl->options.dtls && ssl->version.major == DTLS_MAJOR &&
+            ssl->version.minor == DTLSv1_3_MINOR) {
+        WOLFSSL_MSG("DTLS 1.3 does not support state only export");
+        WOLFSSL_LEAVE("wolfSSL_dtls_export_state_internal", VERSION_ERROR);
+        return VERSION_ERROR;
+    }
+#endif
+
     totalLen += WOLFSSL_EXPORT_LEN * 2; /* 2 protocol bytes and 2 length bytes */
     /* each of the following have a 2 byte length before data */
     totalLen += WOLFSSL_EXPORT_LEN + DTLS_EXPORT_MIN_KEY_SZ;
@@ -1884,8 +1895,10 @@ int wolfSSL_dtls_export_state_internal(WOLFSSL* ssl, byte* buf, word32 sz)
     }
 
     buf[idx++] =  (byte)DTLS_EXPORT_STATE_PRO;
+    /* the state only payload has not changed since version 6, so stamp that
+     * rather than the current session format version */
     buf[idx++] = ((byte)DTLS_EXPORT_STATE_PRO & 0xF0) |
-                 ((byte)WOLFSSL_EXPORT_VERSION & 0X0F);
+                 ((byte)WOLFSSL_EXPORT_VERSION_6 & 0X0F);
     idx += WOLFSSL_EXPORT_LEN; /* leave room for total length */
 
     /* export keys struct and dtls state -- variable length stored in ret */
@@ -1931,6 +1944,15 @@ int wolfSSL_dtls_import_state_internal(WOLFSSL* ssl, const byte* buf, word32 sz)
         return BAD_FUNC_ARG;
     }
 
+#ifdef WOLFSSL_DTLS13
+    if (ssl->options.dtls && ssl->version.major == DTLS_MAJOR &&
+            ssl->version.minor == DTLSv1_3_MINOR) {
+        WOLFSSL_MSG("DTLS 1.3 does not support state only import");
+        WOLFSSL_LEAVE("wolfSSL_dtls_import_state_internal", VERSION_ERROR);
+        return VERSION_ERROR;
+    }
+#endif
+
     if (buf[idx++] !=  (byte)DTLS_EXPORT_STATE_PRO ||
             (buf[idx] & 0xF0) != ((byte)DTLS_EXPORT_PRO & 0xF0)) {
         WOLFSSL_MSG("Incorrect protocol");
@@ -1958,6 +1980,7 @@ int wolfSSL_dtls_import_state_internal(WOLFSSL* ssl, const byte* buf, word32 sz)
     /* perform sanity checks and extract Options information used */
     switch (version) {
         case WOLFSSL_EXPORT_VERSION:
+        case WOLFSSL_EXPORT_VERSION_6:
             break;
 
         default:
@@ -2066,6 +2089,7 @@ int wolfSSL_session_import_internal(WOLFSSL* ssl, const unsigned char* buf,
     if (ret == 0) {
         switch (version) {
             case WOLFSSL_EXPORT_VERSION:
+            case WOLFSSL_EXPORT_VERSION_6:
                 if (type == WOLFSSL_EXPORT_DTLS) {
                     optSz = DTLS_EXPORT_OPT_SZ;
                 }
@@ -2206,6 +2230,113 @@ int wolfSSL_session_import_internal(WOLFSSL* ssl, const unsigned char* buf,
         }
     }
 
+#ifdef WOLFSSL_TLS13
+    /* TLS 1.3 secrets, present for a stream and a DTLS 1.3 session alike since
+     * export version 7, ahead of the DTLS 1.3 epochs whose keys derive from
+     * them */
+    if (ret == 0 && version > WOLFSSL_EXPORT_VERSION_6 &&
+            IsAtLeastTLSv1_3(ssl->version)) {
+        if (WOLFSSL_EXPORT_LEN + idx > sz) {
+            WOLFSSL_MSG("Import TLS 1.3 state error");
+            ret = BUFFER_E;
+        }
+        else {
+            ato16(buf + idx, &length); idx += WOLFSSL_EXPORT_LEN;
+            if (idx + length > sz) {
+                WOLFSSL_MSG("Import TLS 1.3 state error");
+                ret = BUFFER_E;
+            }
+            else {
+                rc = ImportTls13State(ssl, buf + idx, length);
+                if (rc < 0) {
+                    WOLFSSL_MSG("Import TLS 1.3 state error");
+                    ret = rc;
+                }
+                else {
+                    idx += length;
+                }
+            }
+        }
+    }
+#endif
+
+    /* DTLS 1.3 record layer state, present since export version 7 */
+    if (ret == 0 && type == WOLFSSL_EXPORT_DTLS &&
+            ssl->version.major == DTLS_MAJOR &&
+            ssl->version.minor == DTLSv1_3_MINOR) {
+        if (version <= WOLFSSL_EXPORT_VERSION_6) {
+            WOLFSSL_MSG("Serialized DTLS 1.3 session too old to import");
+            ret = VERSION_ERROR;
+        }
+        else if (WOLFSSL_EXPORT_LEN + idx > sz) {
+            WOLFSSL_MSG("Import DTLS 1.3 state error");
+            ret = BUFFER_E;
+        }
+        else {
+            ato16(buf + idx, &length); idx += WOLFSSL_EXPORT_LEN;
+            if (idx + length > sz) {
+                WOLFSSL_MSG("Import DTLS 1.3 state error");
+                ret = BUFFER_E;
+            }
+            else {
+        #ifdef WOLFSSL_DTLS13
+                rc = ImportDtls13State(ssl, buf + idx, length);
+                if (rc < 0) {
+                    WOLFSSL_MSG("Import DTLS 1.3 state error");
+                    ret = rc;
+                }
+                else {
+                    idx += length;
+                }
+        #else
+                if (length > 0) {
+                    WOLFSSL_MSG("Can not import a DTLS 1.3 session without "
+                                "DTLS 1.3 support");
+                    ret = NOT_COMPILED_IN;
+                }
+        #endif
+            }
+        }
+    }
+
+    /* Connection ID, written for every DTLS session since export version 7,
+     * with a zero length when there is none */
+    if (ret == 0 && type == WOLFSSL_EXPORT_DTLS &&
+            version > WOLFSSL_EXPORT_VERSION_6) {
+        if (WOLFSSL_EXPORT_LEN + idx > sz) {
+            WOLFSSL_MSG("Import CID error");
+            ret = BUFFER_E;
+        }
+        else {
+            ato16(buf + idx, &length); idx += WOLFSSL_EXPORT_LEN;
+            if (idx + length > sz) {
+                WOLFSSL_MSG("Import CID error");
+                ret = BUFFER_E;
+            }
+            else if (length > 0) {
+        #ifdef WOLFSSL_DTLS_CID
+                rc = DtlsCidImport(ssl, buf + idx, length);
+                if (rc < 0) {
+                    WOLFSSL_MSG("Import CID error");
+                    ret = rc;
+                }
+                else {
+                    idx += length;
+                }
+        #else
+                WOLFSSL_MSG("Can not import a CID session without CID support");
+                ret = NOT_COMPILED_IN;
+        #endif
+            }
+        #ifdef WOLFSSL_DTLS_CID
+            else {
+                /* do not keep a CID the object was created with */
+                DtlsCidClear(ssl);
+            }
+        #endif
+        }
+    }
+
     /* make sure is a valid suite used */
     if (ret == 0 && wolfSSL_get_cipher(ssl) == NULL) {
         WOLFSSL_MSG("Can not match cipher suite imported");
@@ -2256,7 +2387,17 @@ int wolfSSL_session_export_internal(WOLFSSL* ssl, byte* buf, word32* sz,
 {
     int ret = 0;
     word32 idx      = 0;
+
     word32 totalLen = 0;
+#ifdef WOLFSSL_TLS13
+    int tls13       = 0;
+#endif
+#ifdef WOLFSSL_DTLS13
+    int dtls13      = 0;
+#endif
+#ifdef WOLFSSL_DTLS_CID
+    int cid         = 0;
+#endif
 
     WOLFSSL_ENTER("wolfSSL_session_export_internal");
 
@@ -2264,6 +2405,14 @@ int wolfSSL_session_export_internal(WOLFSSL* ssl, byte* buf, word32* sz,
         WOLFSSL_MSG("unexpected null argument");
         ret = BAD_FUNC_ARG;
     }
+
+#ifdef HAVE_WRITE_DUP
+    /* each side of a write dup holds only half of the record layer state */
+    if (ret == 0 && type == WOLFSSL_EXPORT_DTLS && ssl->dupWrite != NULL) {
+        WOLFSSL_MSG("Can not export a DTLS session split by a write dup");
+        ret = BAD_STATE_E;
+    }
+#endif
 
     if (ret == 0) {
         totalLen += WOLFSSL_EXPORT_LEN * 2; /* 2 protocol bytes and 2 length bytes */
@@ -2273,9 +2422,36 @@ int wolfSSL_session_export_internal(WOLFSSL* ssl, byte* buf, word32* sz,
         totalLen += WOLFSSL_EXPORT_LEN + WOLFSSL_EXPORT_SPC_SZ;
         #ifdef WOLFSSL_DTLS
         if (type == WOLFSSL_EXPORT_DTLS) {
-            totalLen += WOLFSSL_EXPORT_LEN + ssl->buffers.dtlsCtx.peer.sz;
+            totalLen += WOLFSSL_EXPORT_LEN + MAX_EXPORT_IP +
+                (3 * WOLFSSL_EXPORT_LEN);
         }
         #endif
+        #ifdef WOLFSSL_TLS13
+        /* TLS 1.3 secrets section, for a stream and a DTLS session alike */
+        if (IsAtLeastTLSv1_3(ssl->version)) {
+            tls13 = 1;
+            totalLen += WOLFSSL_EXPORT_LEN + WOLFSSL_EXPORT_TLS13_SZ;
+        }
+        #endif
+        #ifdef WOLFSSL_DTLS13
+        if (type == WOLFSSL_EXPORT_DTLS && ssl->options.dtls &&
+                ssl->version.major == DTLS_MAJOR &&
+                ssl->version.minor == DTLSv1_3_MINOR) {
+            dtls13 = 1;
+            totalLen += WOLFSSL_EXPORT_LEN + DTLS_EXPORT_DTLS13_SZ;
+        }
+        #endif
+        /* Connection ID section, for DTLS 1.2 and 1.3 alike */
+        if (type == WOLFSSL_EXPORT_DTLS) {
+            totalLen += WOLFSSL_EXPORT_LEN;
+        #ifdef WOLFSSL_DTLS_CID
+            if (ssl->options.dtls && wolfSSL_dtls_cid_is_enabled(ssl)) {
+                cid = 1;
+                /* the actual lengths, not the worst case DTLS_EXPORT_CID_SZ */
+                totalLen += DtlsCidExportSize(ssl);
+            }
+        #endif
+        }
     }
 
     /* check if sz is sufficient for the worst-case scenario computed above,
@@ -2334,6 +2510,10 @@ int wolfSSL_session_export_internal(WOLFSSL* ssl, byte* buf, word32* sz,
     }
 
     /* export of peer information */
+    if (ret == 0 && idx + WOLFSSL_EXPORT_LEN > *sz) {
+        WOLFSSL_MSG("export buffer was too small for the peer info length");
+        ret = BUFFER_E;
+    }
     if (ret == 0) {
         idx += WOLFSSL_EXPORT_LEN;
     #ifdef WOLFSSL_SESSION_EXPORT_NOPEER
@@ -2345,6 +2525,66 @@ int wolfSSL_session_export_internal(WOLFSSL* ssl, byte* buf, word32* sz,
             c16toa(ret, buf + idx - WOLFSSL_EXPORT_LEN);
             idx += ret;
             ret  = 0;
+        }
+    }
+
+#ifdef WOLFSSL_TLS13
+    /* export of the TLS 1.3 secrets, ahead of the DTLS 1.3 epochs whose keys
+     * the importer derives from them */
+    if (ret == 0 && tls13 && idx + WOLFSSL_EXPORT_LEN > *sz) {
+        WOLFSSL_MSG("export buffer was too small for the TLS 1.3 length");
+        ret = BUFFER_E;
+    }
+    if (ret == 0 && tls13) {
+        idx += WOLFSSL_EXPORT_LEN;
+        ret = ExportTls13State(ssl, buf + idx, *sz - idx);
+        if (ret >= 0) {
+            c16toa((word16)ret, buf + idx - WOLFSSL_EXPORT_LEN);
+            idx += ret;
+            ret  = 0;
+        }
+    }
+#endif
+
+#ifdef WOLFSSL_DTLS13
+    /* export of DTLS 1.3 record layer state */
+    if (ret == 0 && dtls13 && idx + WOLFSSL_EXPORT_LEN > *sz) {
+        WOLFSSL_MSG("export buffer was too small for the DTLS 1.3 length");
+        ret = BUFFER_E;
+    }
+    if (ret == 0 && dtls13) {
+        idx += WOLFSSL_EXPORT_LEN;
+        ret = ExportDtls13State(ssl, buf + idx, *sz - idx);
+        if (ret >= 0) {
+            c16toa((word16)ret, buf + idx - WOLFSSL_EXPORT_LEN);
+            idx += ret;
+            ret  = 0;
+        }
+    }
+#endif
+
+    /* export of the negotiated Connection ID, zero length when there is none */
+    if (ret == 0 && type == WOLFSSL_EXPORT_DTLS &&
+            idx + WOLFSSL_EXPORT_LEN > *sz) {
+        WOLFSSL_MSG("export buffer was too small for the CID length");
+        ret = BUFFER_E;
+    }
+    if (ret == 0 && type == WOLFSSL_EXPORT_DTLS) {
+        word16 cidSz = 0;
+
+    #ifdef WOLFSSL_DTLS_CID
+        if (cid) {
+            ret = DtlsCidExport(ssl, buf + idx + WOLFSSL_EXPORT_LEN,
+                    *sz - idx - WOLFSSL_EXPORT_LEN);
+            if (ret >= 0) {
+                cidSz = (word16)ret;
+                ret   = 0;
+            }
+        }
+    #endif
+        if (ret == 0) {
+            c16toa(cidSz, buf + idx); idx += WOLFSSL_EXPORT_LEN;
+            idx += cidSz;
         }
     }
 
@@ -19896,6 +20136,21 @@ int DoFinished(WOLFSSL* ssl, const byte* input, word32* inOutIdx, word32 size,
         if (ConstantCompare(input + *inOutIdx,
                    (const byte*)&ssl->hsHashes->verifyHashes, (int)size) != 0) {
             WOLFSSL_MSG("Verify finished error on hashes");
+#ifdef HAVE_SESSION_TICKET
+            /* Drop the unverified ticket (SetTicket() made the session
+             * unique, so this cannot clear one shared with the app). */
+            if (ssl->options.side == WOLFSSL_CLIENT_END &&
+                    ssl->msgsReceived.got_session_ticket) {
+                ForceZero(ssl->session->ticket, ssl->session->ticketLen);
+                if (ssl->session->ticketLenAlloc > 0) {
+                    XFREE(ssl->session->ticket, ssl->heap,
+                          DYNAMIC_TYPE_SESSION_TICK);
+                    ssl->session->ticket = ssl->session->staticTicket;
+                    ssl->session->ticketLenAlloc = 0;
+                }
+                ssl->session->ticketLen = 0;
+            }
+#endif
             WOLFSSL_ERROR_VERBOSE(VERIFY_FINISHED_ERROR);
             return VERIFY_FINISHED_ERROR;
         }
@@ -19934,6 +20189,21 @@ int DoFinished(WOLFSSL* ssl, const byte* input, word32* inOutIdx, word32 size,
         ssl->cbmode = WOLFSSL_CB_MODE_WRITE;
         ssl->options.clientState = CLIENT_FINISHED_COMPLETE;
 #endif
+        /* The server is authenticated only now, so this is the first point at
+         * which the session may be cached (a full handshake, or a resumption
+         * that renewed the ticket, from RFC 5246 Section 7.2.2). */
+        if (sniff == NO_SNIFF && (!ssl->options.resuming
+#ifdef HAVE_SESSION_TICKET
+                /* A renewal only: an empty ticket clears ticketLen. */
+                || (ssl->msgsReceived.got_session_ticket &&
+                    ssl->session->ticketLen > 0)
+#endif
+                )) {
+            SetupSession(ssl);
+#ifndef NO_SESSION_CACHE
+            AddSession(ssl);
+#endif
+        }
         if (!ssl->options.resuming) {
 #ifdef OPENSSL_EXTRA
             if (ssl->CBIS != NULL) {
@@ -27799,10 +28069,8 @@ int SendFinished(WOLFSSL* ssl)
         return BUILD_MSG_ERROR;
 
     if (!ssl->options.resuming) {
-        SetupSession(ssl);
-#ifndef NO_SESSION_CACHE
-        AddSession(ssl);
-#endif
+        /* Client side is cached by DoFinished(), which is the first point at
+         * which the server Finished has been verified. */
         if (ssl->options.side == WOLFSSL_SERVER_END) {
             /* Mark the handshake done before the info callback so the
              * callback (e.g. on WOLFSSL_CB_HANDSHAKE_DONE) can use APIs that
@@ -27812,6 +28080,10 @@ int SendFinished(WOLFSSL* ssl)
             ssl->options.handShakeDone  = 1;
 #ifdef HAVE_SECURE_RENEGOTIATION
             ssl->options.resumed = ssl->options.resuming;
+#endif
+            SetupSession(ssl);
+#ifndef NO_SESSION_CACHE
+            AddSession(ssl);
 #endif
         #ifdef OPENSSL_EXTRA
             ssl->options.serverState = SERVER_FINISHED_COMPLETE;
@@ -38927,6 +39199,14 @@ int SetTicket(WOLFSSL* ssl, const byte* ticket, word32 length)
         else
 #endif
         {
+            /* A server issuing a ticket sends no session ID, so keep caching
+             * under a generated one rather than under the ticket bytes. */
+            if (!ssl->session->haveAltSessionID &&
+                    ssl->arrays->sessionIDSz == 0 &&
+                    wc_RNG_GenerateBlock(ssl->rng, ssl->session->altSessionID,
+                                         ID_LEN) == 0) {
+                ssl->session->haveAltSessionID = 1;
+            }
             XMEMSET(ssl->arrays->sessionID, 0, ID_LEN);
             XMEMCPY(ssl->arrays->sessionID,
                                  ssl->session->ticket + length - sessIdLen,
@@ -38956,7 +39236,8 @@ static int DoSessionTicket(WOLFSSL* ssl, const byte* input, word32* inOutIdx,
     }
 
     /* A renewed ticket while resuming confirms resumption; check before the
-     * SetupSession() below refreshes the cached suite/EMS and masks a downgrade.
+     * SetupSession() in DoFinished refreshes the cached suite/EMS and masks a
+     * downgrade.
      * (The ChangeCipherSpec check covers the no-renewal case.) */
     if (ssl->options.resuming) {
         ret = CheckResumptionConsistency(ssl);
@@ -38983,11 +39264,10 @@ static int DoSessionTicket(WOLFSSL* ssl, const byte* input, word32* inOutIdx,
         return ret;
     *inOutIdx += length;
     if (length > 0) {
+        /* The session is not cached here, the
+         * server Finished is still unverified.
+         * DoFinished() caches once it verifies. */
         ssl->timeout = lifetime;
-        SetupSession(ssl);
-#ifndef NO_SESSION_CACHE
-        AddSession(ssl);
-#endif
     }
 
     ssl->expect_session_ticket = 0;

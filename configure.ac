@@ -1760,8 +1760,14 @@ then
     if test "$ENABLED_FIPS" = "no" || test "$HAVE_FIPS_VERSION" -ge 7
     then
         test "$enable_eccencrypt" = "" && test "$enable_ecc" != "no" && enable_eccencrypt=yes
-        test "$enable_cshake" = "" && enable_cshake=yes
-        test "$enable_kmac" = "" && enable_kmac=yes
+        # KMAC and cSHAKE (SP 800-185) are outside the FIPS v7 module boundary,
+        # so only non-FIPS and the dev/ready prep builds turn them on here.
+        if test "$ENABLED_FIPS" = "no" || test "$ENABLED_FIPS_DEV" = "yes" \
+            || test "$ENABLED_FIPS_READY" = "yes"
+        then
+            test "$enable_cshake" = "" && enable_cshake=yes
+            test "$enable_kmac" = "" && enable_kmac=yes
+        fi
     fi
 
     AM_CFLAGS="$AM_CFLAGS -DHAVE_AES_DECRYPT -DHAVE_AES_ECB -DWOLFSSL_ALT_NAMES"
@@ -3993,6 +3999,61 @@ then
 fi
 
 
+# Silicon Labs EFR32 Secure Element crypto-callback port.
+#
+# Two profiles, because the port is built two different ways:
+#
+#   host-test (the default for a bare --enable-silabs-cryptocb)
+#       Swaps the SE Manager headers for a shim (WOLFSSL_SILABS_HOST_TEST) so
+#       the cryptocb dispatch and wiring build with no vendor SDK present.
+#       Every shim operation declines, so this compiles the port and exercises
+#       the fall-back paths; it does no crypto and is not a target build.
+#
+#   target
+#       The port itself, with no shim. The Simplicity SDK include path comes
+#       from the application, so pass it in CFLAGS:
+#           ./configure --enable-silabs-cryptocb=target \
+#                       CFLAGS="-I<simplicity-sdk>/platform/security/sl_component/se_manager/inc ..."
+#       This is what a cross build for an EFR32 uses. Building it for the host
+#       will not link, which is the point of the host-test profile.
+#
+# Either way it forces crypto callbacks on (see the cryptocb block).
+# Example: "./configure --enable-silabs-cryptocb"
+ENABLED_SILABS_CRYPTOCB="no"
+AC_ARG_ENABLE([silabs-cryptocb],
+    [AS_HELP_STRING([--enable-silabs-cryptocb@<:@=host-test|target@:>@],
+        [Enable Silicon Labs EFR32 Secure Element crypto-callback port. Default host-test, which builds the port against a shim and needs no vendor SDK.])],
+    [ ENABLED_SILABS_CRYPTOCB=$enableval ],
+    [ ENABLED_SILABS_CRYPTOCB=no ])
+
+if test "x$ENABLED_SILABS_CRYPTOCB" = "xyes"
+then
+    ENABLED_SILABS_CRYPTOCB="host-test"
+fi
+
+if test "x$ENABLED_SILABS_CRYPTOCB" != "xno"
+then
+    # The shim models an EFR32xG25 (Series 2 Config 5) with Secure Vault High.
+    # The port's AES-ECB dispatch is gated on HAVE_AES_ECB and compiles out
+    # without it, so this option does not turn AES-ECB on. To compile-test that
+    # path too, add --enable-aesecb, which enables the (public,
+    # unauthenticated) AES-ECB API through the normal option.
+    AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_SILABS_CRYPTOCB"
+
+    case "$ENABLED_SILABS_CRYPTOCB" in
+        host-test)
+            AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_SILABS_HOST_TEST"
+            ;;
+        target)
+            AC_MSG_NOTICE([silabs-cryptocb=target: the Simplicity SDK include path must be supplied in CFLAGS])
+            ;;
+        *)
+            AC_MSG_ERROR([unknown --enable-silabs-cryptocb value '$ENABLED_SILABS_CRYPTOCB'; use host-test or target])
+            ;;
+    esac
+fi
+
+
 # NXP SE050
 # Example: "./configure --with-se050=/home/pi/simw_top"
 ENABLED_SE050="no"
@@ -4922,6 +4983,40 @@ then
     done
 fi
 
+# NXP QorIQ SEC (the PowerPC T-series security engine, a CAAM derivative).
+# Takes a comma separated list selecting the environment backend, e.g.
+#   --enable-sec-qoriq=baremetal
+# "sim" selects the host-runnable simulated backend used by the in-tree
+# tests; it needs no hardware and runs on any architecture.
+AC_ARG_ENABLE([sec-qoriq],
+    [AS_HELP_STRING([--enable-sec-qoriq],[Enable wolfSSL support for the NXP QorIQ SEC engine, T1040/T2080 (default: disabled)])],
+    [ ENABLED_SEC_QORIQ=$enableval ],
+    [ ENABLED_SEC_QORIQ=no ]
+    )
+
+if test "$ENABLED_SEC_QORIQ" != "no"
+then
+    AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_SEC_QORIQ"
+
+    for v in `echo $ENABLED_SEC_QORIQ | tr "," " "`
+    do
+      case $v in
+        yes | baremetal)
+            AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_SEC_QORIQ_BAREMETAL"
+            ;;
+        linux)
+            AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_SEC_QORIQ_LINUX"
+            ;;
+        sim)
+            AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_SEC_QORIQ_SIM"
+            ;;
+        *)
+            AC_MSG_ERROR([Invalid choice for --enable-sec-qoriq: $v (want baremetal, linux or sim)])
+            ;;
+      esac
+    done
+fi
+
 AC_ARG_ENABLE([caam],
     [AS_HELP_STRING([--enable-caam],[Enable wolfSSL support for CAAM (default: disabled)])],
     [ ENABLED_CAAM=$enableval ],
@@ -5749,10 +5844,35 @@ fi
 
 # KEY GENERATION
 AC_ARG_ENABLE([keygen],
-    [AS_HELP_STRING([--enable-keygen],[Enable key generation (only applies to RSA key generation) (default: disabled)])],
+    [AS_HELP_STRING([--enable-keygen],[Enable key generation. Takes yes, no, or a comma separated list of: all, no-dh-params (drop DH domain parameter generation, keeping DH key generation; protocols use the fixed FFDHE groups) (default: disabled)])],
     [ ENABLED_KEYGEN=$enableval ],
     [ ENABLED_KEYGEN=no ]
     )
+
+# Expand the list form of --enable-keygen into the individual sub-features.
+ENABLED_DH_GEN_PARAMS=yes
+if test "$ENABLED_KEYGEN" != "no" && test "$ENABLED_KEYGEN" != "yes"
+then
+    for kg in `echo $ENABLED_KEYGEN | tr ',' ' '`
+    do
+        case $kg in
+        all)
+            ;;
+        no-dh-params | nodhparams | nodhparamgen)
+            ENABLED_DH_GEN_PARAMS=no
+            ;;
+        *)
+            AC_MSG_ERROR([Invalid choice for --enable-keygen: $kg. Use yes, no, all or no-dh-params.])
+            ;;
+        esac
+    done
+    ENABLED_KEYGEN=yes
+fi
+
+if test "$ENABLED_DH_GEN_PARAMS" = "no"
+then
+    AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_NO_DH_GEN_PARAMS"
+fi
 
 if test "$ENABLED_BIND" = "yes" || test "$ENABLED_NTP" = "yes" || \
    test "$ENABLED_LIBSSH2" = "yes" || test "$ENABLED_OPENRESTY" = "yes" || \
@@ -8484,6 +8604,19 @@ then
     fi
 else
     AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_NO_SHAKE256"
+fi
+
+# An explicit --enable-kmac/--enable-cshake against a validated module version
+# fails here, with the clear configure error this file's convention calls for,
+# rather than building a module that silently excludes them (SP 800-185).
+if test "$ENABLED_FIPS" != "no" && test -n "$HAVE_FIPS_VERSION" \
+    && test "$HAVE_FIPS_VERSION" -ge 7 && test "$ENABLED_FIPS_DEV" != "yes" \
+    && test "$ENABLED_FIPS_READY" != "yes"
+then
+    if test "$ENABLED_CSHAKE" != "no" || test "$ENABLED_KMAC" != "no"
+    then
+        AC_MSG_ERROR([cshake and kmac are not part of the FIPS module boundary for this version])
+    fi
 fi
 
 # Set cSHAKE / KMAC flags. Both are built on SHAKE, so re-check here (after any
@@ -11940,7 +12073,7 @@ then
     fi
 fi
 
-if test "x$ENABLED_PKCS11" = "xyes" || test "x$ENABLED_WOLFTPM" = "xyes" || test "$ENABLED_CAAM" != "no" || test "x$ENABLED_RTL8735B" != "xno" || test "x$ENABLED_VAULTIC" = "xyes"
+if test "x$ENABLED_PKCS11" = "xyes" || test "x$ENABLED_WOLFTPM" = "xyes" || test "$ENABLED_CAAM" != "no" || test "$ENABLED_SEC_QORIQ" != "no" || test "x$ENABLED_RTL8735B" != "xno" || test "x$ENABLED_SILABS_CRYPTOCB" != "xno" || test "x$ENABLED_VAULTIC" = "xyes"
 then
     ENABLED_CRYPTOCB=yes
 fi
@@ -14044,6 +14177,7 @@ AM_CONDITIONAL([BUILD_BENCHMARK],[test "$ENABLED_BENCHMARK" = "yes"])
 AM_CONDITIONAL([BUILD_RC2],[test "x$ENABLED_RC2" = "xyes"])
 AM_CONDITIONAL([BUILD_CUDA],[test "x$ENABLED_CUDA" = "xyes"])
 AM_CONDITIONAL([BUILD_CAAM],[test "x$ENABLED_CAAM" != "xno"])
+AM_CONDITIONAL([BUILD_SEC_QORIQ],[test "x$ENABLED_SEC_QORIQ" != "xno"])
 AM_CONDITIONAL([BUILD_QNXCAAM],[test "x$ENABLED_CAAM_QNX" = "xyes"])
 AM_CONDITIONAL([BUILD_CAAM_LINUX],[test "x$ENABLED_CAAM_LINUX" = "xyes"])
 AM_CONDITIONAL([BUILD_IOTSAFE],[test "x$ENABLED_IOTSAFE" = "xyes"])
@@ -14052,6 +14186,7 @@ AM_CONDITIONAL([BUILD_VAULTIC],[test "x$ENABLED_VAULTIC" = "xyes"])
 AM_CONDITIONAL([BUILD_SE050],[test "x$ENABLED_SE050" = "xyes"])
 AM_CONDITIONAL([BUILD_STSAFE],[test "x$ENABLED_STSAFE" != "xno"])
 AM_CONDITIONAL([BUILD_RTL8735B],[test "x$ENABLED_RTL8735B" != "xno"])
+AM_CONDITIONAL([BUILD_SILABS_CRYPTOCB],[test "x$ENABLED_SILABS_CRYPTOCB" != "xno"])
 AM_CONDITIONAL([BUILD_TROPIC01],[test "x$ENABLED_TROPIC01" = "xyes"])
 AM_CONDITIONAL([BUILD_KDF],[test "x$ENABLED_KDF" = "xyes"])
 AM_CONDITIONAL([BUILD_HMAC],[test "x$ENABLED_HMAC" = "xyes"])
@@ -14469,6 +14604,7 @@ echo "   * BLAKE2S:                    $ENABLED_BLAKE2S"
 echo "   * SipHash:                    $ENABLED_SIPHASH"
 echo "   * CMAC:                       $ENABLED_CMAC"
 echo "   * keygen:                     $ENABLED_KEYGEN"
+echo "   * DH parameter generation:    $ENABLED_DH_GEN_PARAMS"
 echo "   * acert:                      $ENABLED_ACERT"
 echo "   * certgen:                    $ENABLED_CERTGEN"
 echo "   * certreq:                    $ENABLED_CERTREQ"
