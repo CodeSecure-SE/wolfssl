@@ -3019,14 +3019,14 @@ static int cni_buildCert(byte* der, const byte* issuer, int issuerLen,
 
 /* Build a Name of /CN=<cn> followed by one PrintableString attribute of type
  * oidTlv. Pass a NULL oidTlv for a Name with just the commonName. Returns the
- * number of bytes written to out.
+ * number of bytes written to out or -1 if it does not fit.
  *
  * PrintableString rather than UTF8String on purpose: InitDecodedCert() presets
  * the encoding fields of the components stored from the table to CTC_UTF8, so
  * a test that encoded its values as UTF8String could not tell a stored
  * encoding from the preset one. */
-static int cni_buildName(byte* out, const char* cn, const byte* oidTlv,
-    int oidTlvLen, const char* val)
+static int cni_buildName(byte* out, word32 outSz, const char* cn,
+    const byte* oidTlv, int oidTlvLen, const char* val)
 {
     byte rdns[128];
     int  rdnsLen;
@@ -3037,6 +3037,13 @@ static int cni_buildName(byte* out, const char* cn, const byte* oidTlv,
     if (oidTlv != NULL) {
         rdnsLen += dnb_buildRdn(&rdns[rdnsLen], oidTlv, oidTlvLen, 0x13,
             (const byte*)val, (int)XSTRLEN(val));
+    }
+
+    /* What the RDNs came to decides the size of the Name: only write it out
+     * when the SEQUENCE header and the RDNs fit. */
+    if ((rdnsLen > (int)sizeof(rdns)) ||
+            ((word32)(1 + dnb_lenSz(rdnsLen) + rdnsLen) > outSz)) {
+        return -1;
     }
 
     out[idx++] = 0x30;                                  /* SEQUENCE */
@@ -3109,12 +3116,19 @@ int test_ParseCert_nameComponentIds(void)
 
     ExpectNotNull(der = (byte*)XMALLOC(1024, NULL, DYNAMIC_TYPE_TMP_BUFFER));
 
-    issuerLen = cni_buildName(issuer, "Test", NULL, 0, NULL);
+    issuerLen = cni_buildName(issuer, (word32)sizeof(issuer), "Test", NULL, 0,
+        NULL);
+    ExpectIntGT(issuerLen, 0);
 
-    for (c = 0; (der != NULL) && (c < (int)XELEM_CNT(cases)); c++) {
+    for (c = 0; (der != NULL) && (issuerLen > 0) &&
+            (c < (int)XELEM_CNT(cases)); c++) {
         arcOid[4] = cases[c].arc;
-        subjectLen = cni_buildName(subject, "S", arcOid, (int)sizeof(arcOid),
-            attrVal);
+        subjectLen = cni_buildName(subject, (word32)sizeof(subject), "S",
+            arcOid, (int)sizeof(arcOid), attrVal);
+        ExpectIntGT(subjectLen, 0);
+        if (subjectLen < 0) {
+            break;
+        }
         derSz = cni_buildCert(der, issuer, issuerLen, subject, subjectLen);
 
         wc_InitDecodedCert(&cert, der, (word32)derSz, NULL);
@@ -3237,13 +3251,19 @@ int test_ParseCert_issuerNameNoField(void)
 
     ExpectNotNull(der = (byte*)XMALLOC(1024, NULL, DYNAMIC_TYPE_TMP_BUFFER));
 
-    subjectLen = cni_buildName(subject, "S", badPilotOid,
-        (int)sizeof(badPilotOid), "unknown");
+    subjectLen = cni_buildName(subject, (word32)sizeof(subject), "S",
+        badPilotOid, (int)sizeof(badPilotOid), "unknown");
+    ExpectIntGT(subjectLen, 0);
 
-    for (c = 0; (der != NULL) && (c < (int)XELEM_CNT(cases)); c++) {
+    for (c = 0; (der != NULL) && (subjectLen > 0) &&
+            (c < (int)XELEM_CNT(cases)); c++) {
         arcOid[4] = cases[c].arc;
-        issuerLen = cni_buildName(issuer, "I", arcOid, (int)sizeof(arcOid),
-            attrVal);
+        issuerLen = cni_buildName(issuer, (word32)sizeof(issuer), "I", arcOid,
+            (int)sizeof(arcOid), attrVal);
+        ExpectIntGT(issuerLen, 0);
+        if (issuerLen < 0) {
+            break;
+        }
         derSz = cni_buildCert(der, issuer, issuerLen, subject, subjectLen);
 
         wc_InitDecodedCert(&cert, der, (word32)derSz, NULL);
@@ -5070,5 +5090,54 @@ int test_wc_AsnFeatureCoverage(void)
         wc_ecc_free(&ecKey);
     }
 #endif /* !NO_ASN && HAVE_ECC && USE_CERT_BUFFERS_256 && !HAVE_FIPS */
+    return EXPECT_RESULT();
+}
+
+/* AltNameNewEx() stores the name inside the entry's own allocation, so
+ * FreeAltNames() releases both with one free. Check the copy, the length, the
+ * terminator, and that a NULL or empty name still yields a usable entry.
+ */
+int test_wc_AltNameNewEx(void)
+{
+    EXPECT_DECLS;
+#if !defined(NO_ASN) && !defined(NO_CERTS) && \
+    (defined(WOLFSSL_TEST_CERT) || defined(OPENSSL_EXTRA) || \
+     defined(OPENSSL_EXTRA_X509_SMALL) || defined(WOLFSSL_PUBLIC_ASN))
+    const char  name[] = "example.com";
+    DNS_entry*  entry = NULL;
+
+    ExpectNotNull(entry = AltNameNewEx(name, (int)XSTRLEN(name), NULL));
+    if (entry != NULL) {
+        ExpectIntEQ(entry->len, (int)XSTRLEN(name));
+        ExpectNotNull(entry->name);
+        ExpectIntEQ(XMEMCMP(entry->name, name, XSTRLEN(name)), 0);
+        /* The name is NUL terminated and part of the entry's allocation. */
+        ExpectIntEQ(entry->name[XSTRLEN(name)], '\0');
+        ExpectIntEQ(entry->nameStored, 0);
+        /* The name region sits after the struct in the entry's own block,
+         * which is the property that makes one allocation and one free
+         * correct. */
+        ExpectTrue((const char*)entry < entry->name);
+        ExpectTrue(entry->name <
+            (const char*)entry + sizeof(DNS_entry) + XSTRLEN(name) + 1);
+    }
+    FreeAltNames(entry, NULL);
+    entry = NULL;
+
+    /* A length with no name to go with it is rejected rather than leaving
+     * len covering bytes that were never written, and a negative length is
+     * rejected rather than used as a size. */
+    ExpectNull(AltNameNewEx(NULL, 1, NULL));
+    ExpectNull(AltNameNewEx(name, -1, NULL));
+
+    /* An empty name is still a valid entry with a terminated string. */
+    ExpectNotNull(entry = AltNameNewEx(NULL, 0, NULL));
+    if (entry != NULL) {
+        ExpectIntEQ(entry->len, 0);
+        ExpectNotNull(entry->name);
+        ExpectIntEQ(entry->name[0], '\0');
+    }
+    FreeAltNames(entry, NULL);
+#endif
     return EXPECT_RESULT();
 }

@@ -457,6 +457,13 @@
     #include <wolfssl/wolfcrypt/port/silabs/silabs_settings.h>
 #endif
 
+/* Nuvoton NuMicro M2354 port: enable the crypto callback and map WC_USE_DEVID
+ * before the rest of settings.h and before the unmodified test and benchmark
+ * read it. This header is macro only and pulls in no BSP dependencies. */
+#if defined(WOLFSSL_NUVOTON_M2354)
+    #include <wolfssl/wolfcrypt/port/nuvoton/nuvoton_settings.h>
+#endif
+
 /* Forward propagation of the legacy parent gate to the canonical name
  * (HAVE_DILITHIUM -> WOLFSSL_HAVE_MLDSA). Always active: required so that
  * a user_settings.h or build flag using only the legacy spelling still
@@ -5517,9 +5524,8 @@ blinding by defining WC_BLINDING_NO_RNG_ACKNOWLEDGE_WEAKNESS."
         #define WOLF_PRIVATE_KEY_ID
 #endif
 
-/* With titan cache size there is too many sessions to fit with the default
- * multiplier of 8 */
-#if defined(TITAN_SESSION_CACHE) && !defined(NO_SESSION_CACHE_REF)
+/* The wolfSSL_get_session() cache reference is deprecated and opt-in only. */
+#if !defined(WOLFSSL_SESSION_CACHE_REF) && !defined(NO_SESSION_CACHE_REF)
     #define NO_SESSION_CACHE_REF
 #endif
 
@@ -6046,6 +6052,17 @@ blinding by defining WC_BLINDING_NO_RNG_ACKNOWLEDGE_WEAKNESS."
     defined(WOLFSSL_ED25519_STREAMING_VERIFY)
     #error "WOLF_CRYPTO_CB_ONLY_ED25519 with " \
            "WOLFSSL_ED25519_STREAMING_VERIFY is not supported"
+#endif
+#if defined(WOLF_CRYPTO_CB_ONLY_MLKEM) && !defined(WOLF_CRYPTO_CB)
+    #error "WOLF_CRYPTO_CB_ONLY_MLKEM requires WOLF_CRYPTO_CB"
+#endif
+#if defined(WOLF_CRYPTO_CB_ONLY_MLKEM) && !defined(WOLFSSL_HAVE_MLKEM)
+    #error "WOLF_CRYPTO_CB_ONLY_MLKEM requires WOLFSSL_HAVE_MLKEM"
+#endif
+#if defined(WOLF_CRYPTO_CB_ONLY_MLKEM) && defined(HAVE_FIPS)
+    /* Key generation runs a pairwise consistency test that the callback would
+     * have to service; not validated. */
+    #error "WOLF_CRYPTO_CB_ONLY_MLKEM is incompatible with FIPS builds"
 #endif
 #if defined(WOLF_CRYPTO_CB_ONLY_CURVE25519) && !defined(WOLF_CRYPTO_CB)
     #error "WOLF_CRYPTO_CB_ONLY_CURVE25519 requires WOLF_CRYPTO_CB"

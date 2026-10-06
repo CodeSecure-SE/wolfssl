@@ -36,6 +36,32 @@ that can be serialized and deserialized in a cross-platform way.
 
 #include <wolfssl/wolfcrypt/types.h>
 
+/* wc_DataToHexString(): byte array to lowercase hex string. Built for the
+ * custom ECC curve parameter strings, and reused by hardware ports whose
+ * driver takes key material as a hex string. Anything that needs it defines
+ * WOLFSSL_ASN_HEX_STRING; the custom curve code turns it on for itself.
+ *
+ * It converts bytes to characters and touches no ASN.1, so it sits above the
+ * gate below: a port that needs it is buildable with ASN.1 turned off. */
+#if defined(WOLFSSL_ASN_TEMPLATE) && defined(HAVE_ECC) && \
+    defined(WOLFSSL_CUSTOM_CURVES)
+    #undef  WOLFSSL_ASN_HEX_STRING
+    #define WOLFSSL_ASN_HEX_STRING
+#endif
+
+#ifdef WOLFSSL_ASN_HEX_STRING
+#ifdef __cplusplus
+    extern "C" {
+#endif
+/* Convert inSz bytes at input into a NUL terminated lowercase hex string.
+ * out needs room for inSz * 2 + 1 bytes. */
+WOLFSSL_LOCAL void wc_DataToHexString(const byte* input, word32 inSz,
+    char* out);
+#ifdef __cplusplus
+    }
+#endif
+#endif /* WOLFSSL_ASN_HEX_STRING */
+
 #if !defined(NO_ASN) || !defined(NO_PWDBASED)
 /* included openssl/obj_mac.h directly for SN_xxx definitions */
 #if !defined(WOLFSSL_OBJ_MAC_H_)
@@ -1548,8 +1574,12 @@ struct DNS_entry {
     int        type;   /* i.e. ASN_DNS_TYPE */
     int        len;    /* actual DNS len */
     const char*
-               name;   /* actual DNS name; under WC_ASN_NO_HEAP this points into
-                        * the source DER and is NOT NUL-terminated - use len */
+               name;   /* actual DNS name; under WC_ASN_NO_HEAP a parsed entry
+                        * points into the source DER and is NOT NUL-terminated
+                        * - use len */
+    /* 1 = name is its own allocation and FreeAltNames() releases it.
+     * 0 = name is borrowed from the DER, or inside the entry's own
+     * block. Either way, never free it on its own. */
     int        nameStored;
 #ifdef WOLFSSL_IP_ALT_NAME
     char*      ipString; /* human readable form of IP address */
@@ -2438,6 +2468,7 @@ typedef enum MimeStatus
 #ifdef WOLFSSL_API_PREFIX_MAP
     #define FreeAltNames wc_FreeAltNames
     #define AltNameNew wc_AltNameNew
+    #define AltNameNewEx wc_AltNameNewEx
     #define AltNameDup wc_AltNameDup
     #ifndef IGNORE_NAME_CONSTRAINTS
         #define FreeNameSubtrees wc_FreeNameSubtrees
@@ -2498,6 +2529,8 @@ WOLFSSL_LOCAL int StreamOctetString(const byte* inBuf, word32 inBufSz,
 
 WOLFSSL_ASN_API void FreeAltNames(DNS_entry* altNames, void* heap);
 WOLFSSL_ASN_API DNS_entry* AltNameNew(void* heap);
+WOLFSSL_ASN_API DNS_entry* AltNameNewEx(const char* str, int strLen,
+                                        void* heap);
 WOLFSSL_ASN_API DNS_entry* AltNameDup(DNS_entry* from, void* heap);
 #if defined(WOLFSSL_ASN_TEMPLATE) && defined(WOLFSSL_CERT_GEN) && \
     defined(WOLFSSL_ALT_NAMES)

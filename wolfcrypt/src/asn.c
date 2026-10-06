@@ -11094,18 +11094,11 @@ int wc_EncryptPKCS8Key_ex(byte* key, word32 keySz, byte* out, word32* outSz,
         ret = SetShortInt(out, &idx, (word32)itt, *outSz);
         if (ret > 0)
             ret = 0;
-        if (ret == 0 && version == PKCS5v2 && hmacOid > 0) {
-            /* Already guarded where it is set, but repeat it here: the
-             * invariant spans several blocks and -Wnonnull cannot see it. */
-            if (hmacOidBuf == NULL) {
-                ret = ALGO_ID_E;
-            }
-            else {
-                idx += SetSequence(2+hmacOidBufSz, out + idx);
-                idx += (word32)SetObjectId((int)hmacOidBufSz, out + idx);
-                XMEMCPY(out + idx, hmacOidBuf, hmacOidBufSz);
-                idx += (word32)hmacOidBufSz;
-            }
+        if (ret == 0 && version == PKCS5v2 && hmacOidBuf != NULL) {
+            idx += SetSequence(2+hmacOidBufSz, out + idx);
+            idx += (word32)SetObjectId((int)hmacOidBufSz, out + idx);
+            XMEMCPY(out + idx, hmacOidBuf, hmacOidBufSz);
+            idx += (word32)hmacOidBufSz;
         }
     }
     if (ret == 0) {
@@ -13132,6 +13125,43 @@ void FreeAltNames(DNS_entry* altNames, void* heap)
 #endif
         altNames = tmp;
     }
+}
+
+/* Allocate an alt name entry holding a NUL terminated copy of the name in the
+ * same block. nameStored stays 0, so the name is never freed on its own.
+ *
+ * str     Name to store. May be NULL only when strLen is 0.
+ * strLen  Length of the name in bytes, zero or more.
+ * heap    Heap hint for the allocation.
+ * returns the new alt name, or NULL on failure.
+ */
+DNS_entry* AltNameNewEx(const char* str, int strLen, void* heap)
+{
+    DNS_entry* ret;
+    char* name;
+
+    /* len would otherwise cover bytes that were never written. */
+    if ((strLen < 0) || ((str == NULL) && (strLen > 0)))
+        return NULL;
+
+    ret = (DNS_entry*)XMALLOC(sizeof(DNS_entry) + (size_t)strLen + 1, heap,
+                              DYNAMIC_TYPE_ALTNAME);
+    if (ret == NULL)
+        return NULL;
+
+    XMEMSET(ret, 0, sizeof(DNS_entry));
+    name = (char*)ret + sizeof(DNS_entry);
+    if ((str != NULL) && (strLen > 0))
+        XMEMCPY(name, str, (size_t)strLen);
+    name[strLen] = '\0';
+    ret->name = name;
+    ret->len = strLen;
+#ifdef WC_ASN_NO_HEAP
+    ret->entryStored = 1;   /* heap-allocated node; FreeAltNames frees it */
+#endif
+
+    (void)heap;
+    return ret;
 }
 
 /* malloc and initialize a new alt name structure */
@@ -15269,11 +15299,8 @@ static int SetDNSEntry(void* heap, DNS_entry* pool, word32* poolUsed,
                        const char* str, int strLen, int type,
                        DNS_entry** entries)
 {
-    DNS_entry* dnsEntry;
+    DNS_entry* dnsEntry = NULL;
     int ret = 0;
-#ifndef WC_ASN_NO_HEAP
-    char *dnsEntry_name = NULL;
-#endif
 
 #ifdef WC_ASN_NO_HEAP
     /* No heap: borrow a pool slot; name points into the source DER. */
@@ -15309,31 +15336,20 @@ static int SetDNSEntry(void* heap, DNS_entry* pool, word32* poolUsed,
 #else
     (void)pool;
     (void)poolUsed;
-    /* TODO: consider one malloc. */
-    /* Allocate DNS Entry object. */
-    dnsEntry = AltNameNew(heap);
-    if (dnsEntry == NULL) {
-        ret = MEMORY_E;
+    /* Screened here so a NULL from AltNameNewEx() means out of memory and
+     * nothing else. */
+    if ((strLen < 0) || ((str == NULL) && (strLen > 0))) {
+        ret = BAD_FUNC_ARG;
     }
     if (ret == 0) {
-        /* Allocate DNS Entry name - length of string plus 1 for NUL. */
-        dnsEntry->name = dnsEntry_name = (char*)XMALLOC((size_t)strLen + 1,
-                                                    heap, DYNAMIC_TYPE_ALTNAME);
-        if (dnsEntry->name == NULL) {
+        /* Allocate DNS Entry object holding the name. */
+        dnsEntry = AltNameNewEx(str, strLen, heap);
+        if (dnsEntry == NULL) {
             ret = MEMORY_E;
         }
-        else {
-            dnsEntry->nameStored = 1;
-        }
     }
     if (ret == 0) {
-        /* Set tag type, name length, name and NUL terminate name. */
         dnsEntry->type = type;
-        dnsEntry->len = strLen;
-        if (str != NULL && strLen > 0) {
-            XMEMCPY(dnsEntry_name, str, (size_t)strLen);
-        }
-        dnsEntry_name[strLen] = '\0';
 
 #ifdef WOLFSSL_RID_ALT_NAME
         /* store registeredID as a string */
@@ -15348,12 +15364,16 @@ static int SetDNSEntry(void* heap, DNS_entry* pool, word32* poolUsed,
 #endif
     if (ret == 0) {
         ret = AddDNSEntryToList(entries, dnsEntry);
+        /* The list owns it from here. */
+        if (ret == 0)
+            dnsEntry = NULL;
     }
 
-    /* failure cleanup */
+    /* Only reached when the entry was never linked. Clear next so
+     * FreeAltNames() frees this node alone. */
     if (ret != 0 && dnsEntry != NULL) {
-        XFREE(dnsEntry_name, heap, DYNAMIC_TYPE_ALTNAME);
-        XFREE(dnsEntry, heap, DYNAMIC_TYPE_ALTNAME);
+        dnsEntry->next = NULL;
+        FreeAltNames(dnsEntry, heap);
     }
 #endif
 
@@ -34306,29 +34326,6 @@ int DecodeECC_DSA_Sig_Ex(const byte* sig, word32 sigLen, mp_int* r, mp_int* s,
 
 #ifdef WOLFSSL_ASN_TEMPLATE
 #if defined(HAVE_ECC) && defined(WOLFSSL_CUSTOM_CURVES)
-/* Convert data to hex string.
- *
- * Big-endian byte array is converted to big-endian hexadecimal string.
- *
- * @param [in]  input  Buffer containing data.
- * @param [in]  inSz   Size of data in buffer.
- * @param [out] out    Buffer to hold hex string.
- */
-static void DataToHexString(const byte* input, word32 inSz, char* out)
-{
-    static const char hexChar[] = { '0', '1', '2', '3', '4', '5', '6', '7',
-                                    '8', '9', 'a', 'b', 'c', 'd', 'e', 'f' };
-    word32 i;
-
-    /* Converting a byte of data at a time to two hex characters. */
-    for (i = 0; i < inSz; i++) {
-        out[i*2 + 0] = hexChar[input[i] >> 4];
-        out[i*2 + 1] = hexChar[input[i] & 0xf];
-    }
-    /* NUL terminate string. */
-    out[i * 2] = '\0';
-}
-
 #ifndef WOLFSSL_ECC_CURVE_STATIC
 /* Convert data to hex string and place in allocated buffer.
  *
@@ -34355,7 +34352,7 @@ static int DataToHexStringAlloc(const byte* input, word32 inSz, char** out,
     }
     else {
         /* Convert to hex string. */
-        DataToHexString(input, inSz, str);
+        wc_DataToHexString(input, inSz, str);
         *out = str;
     }
 
@@ -34558,23 +34555,23 @@ static int EccSpecifiedECDomainDecode(const byte* input, word32 inSz,
     #else
     if (ret == 0) {
         /* Base X-ordinate */
-        DataToHexString(base + 1, (word32)curve->size, (char *)curve->Gx);
+        wc_DataToHexString(base + 1, (word32)curve->size, (char *)curve->Gx);
         /* Base Y-ordinate */
-        DataToHexString(base + 1 + curve->size, (word32)curve->size, (char *)curve->Gy);
+        wc_DataToHexString(base + 1 + curve->size, (word32)curve->size, (char *)curve->Gy);
         /* Prime */
-        DataToHexString(dataASN[ECCSPECIFIEDASN_IDX_PRIME_P].data.ref.data,
+        wc_DataToHexString(dataASN[ECCSPECIFIEDASN_IDX_PRIME_P].data.ref.data,
                         dataASN[ECCSPECIFIEDASN_IDX_PRIME_P].data.ref.length,
                         (char *)curve->prime);
         /* Parameter A */
-        DataToHexString(dataASN[ECCSPECIFIEDASN_IDX_PARAM_A].data.ref.data,
+        wc_DataToHexString(dataASN[ECCSPECIFIEDASN_IDX_PARAM_A].data.ref.data,
                         dataASN[ECCSPECIFIEDASN_IDX_PARAM_A].data.ref.length,
                         (char *)curve->Af);
         /* Parameter B */
-        DataToHexString(dataASN[ECCSPECIFIEDASN_IDX_PARAM_B].data.ref.data,
+        wc_DataToHexString(dataASN[ECCSPECIFIEDASN_IDX_PARAM_B].data.ref.data,
                         dataASN[ECCSPECIFIEDASN_IDX_PARAM_B].data.ref.length,
                         (char *)curve->Bf);
         /* Order of curve */
-        DataToHexString(dataASN[ECCSPECIFIEDASN_IDX_ORDER].data.ref.data,
+        wc_DataToHexString(dataASN[ECCSPECIFIEDASN_IDX_ORDER].data.ref.data,
                         dataASN[ECCSPECIFIEDASN_IDX_ORDER].data.ref.length,
                         (char *)curve->order);
     }
@@ -41065,6 +41062,44 @@ int wc_Asn1_PrintAll(Asn1* asn1, Asn1PrintOptions* opts, unsigned char* data,
 #endif /* !NO_ASN */
 
 /* Functions that parse, but are not using ASN.1 */
+
+#ifdef WOLFSSL_ASN_HEX_STRING
+/* Outside the gate above on purpose: this converts bytes to characters and
+ * uses no ASN.1, and the hardware ports that reuse it are buildable with
+ * ASN.1 turned off. asn.h is only included above when ASN.1 is on, so pick up
+ * the prototype here. */
+#include <wolfssl/wolfcrypt/asn.h>
+
+/* Convert data to hex string.
+ *
+ * Big-endian byte array is converted to big-endian hexadecimal string.
+ *
+ * Written for the custom ECC curve parameters, which SEC 1 carries as byte
+ * arrays and ecc_set_type holds as strings. Hardware ports whose driver takes
+ * key material the same way reuse it rather than growing their own copy; see
+ * WOLFSSL_ASN_HEX_STRING in asn.h. Base16_Decode() goes the other way and
+ * accepts either case, so the two pair up.
+ *
+ * @param [in]  input  Buffer containing data.
+ * @param [in]  inSz   Size of data in buffer.
+ * @param [out] out    Buffer to hold hex string. Needs inSz * 2 + 1 bytes.
+ */
+void wc_DataToHexString(const byte* input, word32 inSz, char* out)
+{
+    static const char hexChar[] = { '0', '1', '2', '3', '4', '5', '6', '7',
+                                    '8', '9', 'a', 'b', 'c', 'd', 'e', 'f' };
+    word32 i;
+
+    /* Converting a byte of data at a time to two hex characters. */
+    for (i = 0; i < inSz; i++) {
+        out[i*2 + 0] = hexChar[input[i] >> 4];
+        out[i*2 + 1] = hexChar[input[i] & 0xf];
+    }
+    /* NUL terminate string. */
+    out[i * 2] = '\0';
+}
+#endif /* WOLFSSL_ASN_HEX_STRING */
+
 #if !defined(NO_RSA) && (!defined(NO_BIG_INT) || defined(WOLFSSL_SP_MATH))
 /* Software-only import of RSA public key elements (n, e) into RsaKey.
  * This internal helper avoids recursion when called from the SETKEY path. */

@@ -52,6 +52,15 @@
         #error ClientCache is required when not using NO_SESSION_CACHE_REF
     #endif
 
+    #if !defined(NO_SESSION_CACHE_REF) && \
+        !defined(WOLFSSL_SESSION_CACHE_REF_WARNED)
+        #if !defined(_MSC_VER) && !defined(__TASKING__)
+            #warning WOLFSSL_SESSION_CACHE_REF selects the deprecated wolfSSL_get_session() session cache reference, use wolfSSL_get1_session() instead, or define WOLFSSL_SESSION_CACHE_REF_WARNED to silence this
+        #else
+            #pragma message("Warning: WOLFSSL_SESSION_CACHE_REF selects the deprecated wolfSSL_get_session() session cache reference, use wolfSSL_get1_session() instead, or define WOLFSSL_SESSION_CACHE_REF_WARNED to silence this")
+        #endif
+    #endif
+
     #ifndef NO_CLIENT_CACHE
         static WC_THREADSHARED ClientRow ClientCache[CLIENT_SESSION_ROWS];
                                                      /* Client Cache */
@@ -307,6 +316,8 @@ int wolfSSL_memsave_session_cache(void* mem, int sz)
     cache_header.rows      = SESSION_ROWS;
     cache_header.columns   = SESSIONS_PER_ROW;
     cache_header.sessionSz = (int)sizeof(WOLFSSL_SESSION);
+    cache_header.clientRows    = CACHE_HEADER_CLIENT_ROWS;
+    cache_header.clientColumns = CACHE_HEADER_CLIENT_COLUMNS;
     XMEMCPY(mem, &cache_header, sizeof(cache_header));
 
     #ifndef ENABLE_SESSION_CACHE_ROW_LOCK
@@ -528,7 +539,9 @@ int wolfSSL_memrestore_session_cache(const void* mem, int sz)
     if (cache_header.version   != WOLFSSL_CACHE_VERSION ||
         cache_header.rows      != SESSION_ROWS ||
         cache_header.columns   != SESSIONS_PER_ROW ||
-        cache_header.sessionSz != (int)sizeof(WOLFSSL_SESSION)) {
+        cache_header.sessionSz != (int)sizeof(WOLFSSL_SESSION) ||
+        cache_header.clientRows    != CACHE_HEADER_CLIENT_ROWS ||
+        cache_header.clientColumns != CACHE_HEADER_CLIENT_COLUMNS) {
 
         WOLFSSL_MSG("Session cache header match failed");
         return CACHE_MATCH_ERROR;
@@ -616,6 +629,8 @@ int wolfSSL_save_session_cache(const char *fname)
     cache_header.rows      = SESSION_ROWS;
     cache_header.columns   = SESSIONS_PER_ROW;
     cache_header.sessionSz = (int)sizeof(WOLFSSL_SESSION);
+    cache_header.clientRows    = CACHE_HEADER_CLIENT_ROWS;
+    cache_header.clientColumns = CACHE_HEADER_CLIENT_COLUMNS;
 
     /* cache header */
     ret = (int)XFWRITE(&cache_header, sizeof cache_header, 1, file);
@@ -706,7 +721,9 @@ int wolfSSL_restore_session_cache(const char *fname)
     if (cache_header.version   != WOLFSSL_CACHE_VERSION ||
         cache_header.rows      != SESSION_ROWS ||
         cache_header.columns   != SESSIONS_PER_ROW ||
-        cache_header.sessionSz != (int)sizeof(WOLFSSL_SESSION)) {
+        cache_header.sessionSz != (int)sizeof(WOLFSSL_SESSION) ||
+        cache_header.clientRows    != CACHE_HEADER_CLIENT_ROWS ||
+        cache_header.clientColumns != CACHE_HEADER_CLIENT_COLUMNS) {
 
         WOLFSSL_MSG_EX("Session cache header match failed: %s", fname);
         XFCLOSE(file);
@@ -2291,11 +2308,11 @@ void AddSession(WOLFSSL* ssl)
 #else
                 0,
 #endif
-#ifdef NO_SESSION_CACHE_REF
-                NULL
-#else
+#ifndef NO_CLIENT_CACHE
                 (ssl->options.side == WOLFSSL_CLIENT_END) ?
                         &ssl->clientSession : NULL
+#else
+                NULL
 #endif
                         );
     }
@@ -2621,6 +2638,90 @@ WOLFSSL_SESSION* wolfSSL_GetSession(WOLFSSL* ssl, byte* masterSecret,
 }
 
 #endif /* NO_SESSION_CACHE */
+
+#if !defined(NO_TLS) && defined(WOLFSSL_TLS13) && \
+    defined(HAVE_SESSION_TICKET) && !defined(NO_WOLFSSL_SERVER)
+#if defined(HAVE_EX_DATA) && !defined(NO_SESSION_CACHE)
+/* Does freeing a session's ex_data call anything? Only then can two cache
+ * entries holding the same ex_data free it twice. */
+static int SessionExDataHasFree(void)
+{
+#ifdef HAVE_EX_DATA_CLEANUP_HOOKS
+    return 1;
+#elif defined(HAVE_EX_DATA_CRYPTO)
+    const CRYPTO_EX_cb_ctx* cb;
+
+    for (cb = crypto_ex_cb_ctx_session; cb != NULL; cb = cb->next) {
+        if (cb->free_func != NULL)
+            return 1;
+    }
+    return 0;
+#else
+    return 0;
+#endif
+}
+
+/* Move ex_data ownership from the cache entry of ssl->session to the
+ * session. When the entry is gone or no longer owns it, another owner holds
+ * the ex_data, so drop the stale copy and own an empty one. */
+static void SessionTakeExData(WOLFSSL* ssl)
+{
+    WOLFSSL_SESSION* session = ssl->session;
+    WOLFSSL_SESSION* sess = NULL;
+    const byte* id;
+    word32 row = 0;
+    int taken = 0;
+
+    if (session->ownExData || SslSessionCacheOff(ssl, session) ||
+            !SessionExDataHasFree()) {
+        return;
+    }
+#ifdef HAVE_EXT_CACHE
+    if (ssl->options.internalCacheOff)
+        return;
+#endif
+
+    id = session->sessionID;
+    if (session->haveAltSessionID)
+        id = session->altSessionID;
+
+    if (TlsSessionCacheGetAndWrLock(id, &sess, &row, ssl->options.side) == 0 &&
+            sess != NULL) {
+        if (sess->ownExData) {
+            XMEMCPY(&session->ex_data, &sess->ex_data,
+                    sizeof(WOLFSSL_CRYPTO_EX_DATA));
+            XMEMSET(&sess->ex_data, 0, sizeof(WOLFSSL_CRYPTO_EX_DATA));
+            sess->ownExData = 0;
+            taken = 1;
+        }
+        TlsSessionCacheUnlockRow(row);
+    }
+    if (!taken)
+        XMEMSET(&session->ex_data, 0, sizeof(WOLFSSL_CRYPTO_EX_DATA));
+    session->ownExData = 1;
+}
+#endif /* HAVE_EX_DATA && !NO_SESSION_CACHE */
+
+/* Give ssl->session a new random ID to cache it under. The entry for the old
+ * ID may own the ex_data the session holds a copy of. Move it to the session
+ * first so the entry added for the new ID is the only owner. */
+int SessionNewAltId(WOLFSSL* ssl)
+{
+    byte id[ID_LEN];
+    int ret;
+
+    ret = wc_RNG_GenerateBlock(ssl->rng, id, ID_LEN);
+    if (ret != 0)
+        return ret;
+#if defined(HAVE_EX_DATA) && !defined(NO_SESSION_CACHE)
+    SessionTakeExData(ssl);
+#endif
+    XMEMCPY(ssl->session->altSessionID, id, ID_LEN);
+    ssl->session->haveAltSessionID = 1;
+    return 0;
+}
+#endif /* !NO_TLS && WOLFSSL_TLS13 && HAVE_SESSION_TICKET &&
+        * !NO_WOLFSSL_SERVER */
 
 #ifdef OPENSSL_EXTRA
 
@@ -3381,6 +3482,9 @@ static void SESSION_ex_data_cache_update(WOLFSSL_SESSION* session, int idx,
                 && session->side == cacheSession->side
                 && (IsAtLeastTLSv1_3(session->version) ==
                     IsAtLeastTLSv1_3(cacheSession->version))
+                /* An entry that gave its ex_data to a reissued ticket no
+                 * longer holds this session's ex_data. */
+                && cacheSession->ownExData
             ) {
             if (get) {
                 if (getRet) {
