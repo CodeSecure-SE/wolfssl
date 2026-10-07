@@ -82,6 +82,19 @@
  * legacy compatibility shim is dropped. */
 #include <wolfssl/wolfcrypt/dilithium.h>
 
+/* Unconditional so the key layout does not depend on include order. */
+#if (defined(WOLFSSL_MLDSA_SIGN_SMALLEST_MEM) || \
+     defined(WOLFSSL_MLDSA_SIGN_SMALL_MEM_PRECALC) || \
+     defined(WOLFSSL_MLDSA_SIGN_SMALL_MEM_PRECALC_A)) && \
+    !defined(WOLFSSL_MLDSA_SIGN_SMALL_MEM)
+    #define WOLFSSL_MLDSA_SIGN_SMALL_MEM
+#endif
+/* Allocates its buffers unless WOLFSSL_MLDSA_VERIFY_NO_MALLOC is also set. */
+#if defined(WOLFSSL_MLDSA_VERIFY_SMALLEST_MEM) && \
+    !defined(WOLFSSL_MLDSA_VERIFY_SMALL_MEM)
+    #define WOLFSSL_MLDSA_VERIFY_SMALL_MEM
+#endif
+
 #if defined(WOLFSSL_HAVE_MLDSA)
 
 #include <wolfssl/wolfcrypt/sha3.h>
@@ -592,6 +605,8 @@ typedef struct wc_MlDsaParams MlDsaParams;
 #endif
 
 struct wc_MlDsaKey {
+    /* Set when this object holds the public key bytes in p. A key generated
+     * on a crypto-callback device has none here and leaves it clear. */
     byte pubKeySet;
     byte prvKeySet;
     byte level; /* 2,3 or 5 */
@@ -684,7 +699,9 @@ struct wc_MlDsaKey {
 #endif
     sword32 c[MLDSA_N];
     sword32 w[MLDSA_N];
-    sword32 t1[MLDSA_N];
+    /* One t1 polynomial, also used for a polynomial of A. Not named t1 as
+     * WC_MLDSA_CACHE_PUB_VECTORS already has a member of that name. */
+    sword32 vt1[MLDSA_N];
     byte w1e[MLDSA_MAX_W1_ENC_SZ];
 #ifdef WOLFSSL_MLDSA_SMALL_MEM_POLY64
     sword64 t64[MLDSA_N];
@@ -1103,15 +1120,26 @@ WOLFSSL_API int wc_MlDsaKey_GetSigLen(wc_MlDsaKey* key, int* len);
 #if !defined(WOLFSSL_MLDSA_NO_SIGN) || \
     !defined(WOLFSSL_MLDSA_NO_VERIFY)
 #ifndef WOLFSSL_NO_ML_DSA_44
-WOLFSSL_TEST_VIS void wc_mldsa_encode_w1_88(const sword32* w1, byte* w1e);
+WOLFSSL_TEST_VIS int wc_mldsa_encode_w1_88(const sword32* w1, byte* w1e);
 #endif
 #if !defined(WOLFSSL_NO_ML_DSA_65) || !defined(WOLFSSL_NO_ML_DSA_87)
-WOLFSSL_TEST_VIS void wc_mldsa_encode_w1_32(const sword32* w1, byte* w1e);
+WOLFSSL_TEST_VIS int wc_mldsa_encode_w1_32(const sword32* w1, byte* w1e);
 #endif
 #endif
 
 #ifdef __cplusplus
     }    /* extern "C" */
+#endif
+
+/* Native implementation core (internal). The public wc_MlDsaKey_* functions
+ * in wc_mldsa.c wrap it with cryptocb dispatch and argument checking. With
+ * WOLF_CRYPTO_CB_ONLY_MLDSA the native core is not compiled: all operations go
+ * through the crypto callback. */
+#ifndef WOLF_CRYPTO_CB_ONLY_MLDSA
+/* Signals that native key generation, signing and verifying are available.
+ * Tests gate on this rather than on the build switch, so a test says what it
+ * needs rather than which configuration removed it. */
+#define WC_MLDSA_HAVE_NATIVE
 #endif
 
 #endif /* WOLFSSL_HAVE_MLDSA */

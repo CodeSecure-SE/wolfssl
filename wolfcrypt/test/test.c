@@ -65562,6 +65562,7 @@ out:
 #endif /* WOLFSSL_HAVE_FRODOKEM */
 
 #ifdef WOLFSSL_HAVE_MLDSA
+#ifdef WC_MLDSA_HAVE_NATIVE
 #ifndef WOLFSSL_MLDSA_NO_VERIFY
 static wc_test_ret_t mldsa_param_vfy_test(int param, const byte* pubKey,
     word32 pubKeyLen, const byte* sig, word32 sigLen)
@@ -68872,6 +68873,195 @@ out:
 }
 #endif
 
+#if !defined(WOLFSSL_MLDSA_NO_SIGN) && !defined(WOLFSSL_MLDSA_NO_MAKE_KEY)
+/* Seed the key pair is generated from. */
+static const byte mldsa_kat_key_seed[MLDSA_SEED_SZ] = {
+    0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+    0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
+    0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+    0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f
+};
+/* Seed used in place of the per-signature randomness. */
+static const byte mldsa_kat_sig_seed[MLDSA_RND_SZ] = {
+    0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27,
+    0x28, 0x29, 0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f,
+    0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37,
+    0x38, 0x39, 0x3a, 0x3b, 0x3c, 0x3d, 0x3e, 0x3f
+};
+static const byte mldsa_kat_msg[] = {
+    0x77, 0x6f, 0x6c, 0x66, 0x53, 0x53, 0x4c, 0x20,   /* "wolfSSL " */
+    0x4d, 0x4c, 0x2d, 0x44, 0x53, 0x41, 0x20, 0x4b,   /* "ML-DSA K" */
+    0x41, 0x54                                        /* "AT"       */
+};
+
+/* Signers deliberately not FIPS 204 conformant have no known answer. */
+#if !defined(WOLFSSL_MLDSA_FIPS204_DRAFT) && \
+    !defined(WOLFSSL_MLDSA_SIGN_CHECK_Y) && \
+    !defined(WOLFSSL_MLDSA_SIGN_CHECK_W0)
+#define MLDSA_KAT_DIGEST(d) (d)
+/* SHAKE-256 digests of the signature the default signer produces. */
+#ifndef WOLFSSL_NO_ML_DSA_44
+static const byte mldsa_kat_digest_44[32] = {
+    0x17, 0xc1, 0xa1, 0x07, 0x90, 0xe6, 0xce, 0xc3,
+    0x38, 0x17, 0x18, 0x02, 0x41, 0xaf, 0x0a, 0x3f,
+    0xbd, 0x2c, 0xb9, 0x0d, 0xbc, 0x3f, 0x5d, 0x8b,
+    0x07, 0x98, 0xc6, 0xe3, 0x75, 0x66, 0x8b, 0x3c
+};
+#endif
+#ifndef WOLFSSL_NO_ML_DSA_65
+static const byte mldsa_kat_digest_65[32] = {
+    0x10, 0xb5, 0x77, 0xb1, 0x8f, 0xf0, 0x21, 0x0c,
+    0x17, 0x31, 0x54, 0xe9, 0x3e, 0x79, 0xc8, 0x05,
+    0x22, 0xdf, 0x27, 0x03, 0xfb, 0x99, 0xc0, 0x8b,
+    0xf8, 0x25, 0x4c, 0xda, 0x36, 0xf7, 0x6f, 0xb1
+};
+#endif
+#ifndef WOLFSSL_NO_ML_DSA_87
+static const byte mldsa_kat_digest_87[32] = {
+    0xbe, 0xf0, 0xb7, 0xe5, 0x5f, 0x86, 0x4a, 0xdb,
+    0x48, 0xfc, 0x56, 0x80, 0x93, 0x13, 0xdd, 0x96,
+    0x08, 0x2d, 0x0f, 0x86, 0x1b, 0xf1, 0x89, 0x52,
+    0x9f, 0x97, 0xb9, 0xca, 0xd3, 0x8f, 0xc3, 0xbf
+};
+#endif
+#else
+#define MLDSA_KAT_DIGEST(d) NULL
+#endif
+
+/* A key generated into an object that already held a key must sign and verify
+ * exactly like one generated into a fresh object, whatever the key caches. */
+static wc_test_ret_t mldsa_make_key_reuse_test(int param, const byte* expDigest)
+{
+    wc_test_ret_t ret;
+    wc_MlDsaKey* key = NULL;
+    wc_MlDsaKey* freshKey = NULL;
+    byte* sig = NULL;
+    byte* freshSig = NULL;
+    word32 sigLen;
+    word32 freshSigLen;
+    int sigSz = 0;
+    byte digest[32];
+    wc_Shake shake;
+    int keyInit = 0;
+    int freshKeyInit = 0;
+    int shakeInit = 0;
+#ifndef WOLFSSL_MLDSA_NO_VERIFY
+    int res = 0;
+#endif
+
+    key = (wc_MlDsaKey*)XMALLOC(sizeof(wc_MlDsaKey), HEAP_HINT,
+        DYNAMIC_TYPE_TMP_BUFFER);
+    freshKey = (wc_MlDsaKey*)XMALLOC(sizeof(wc_MlDsaKey), HEAP_HINT,
+        DYNAMIC_TYPE_TMP_BUFFER);
+    sig = (byte*)XMALLOC(MLDSA_MAX_SIG_SIZE, HEAP_HINT,
+        DYNAMIC_TYPE_TMP_BUFFER);
+    freshSig = (byte*)XMALLOC(MLDSA_MAX_SIG_SIZE, HEAP_HINT,
+        DYNAMIC_TYPE_TMP_BUFFER);
+    if ((key == NULL) || (freshKey == NULL) || (sig == NULL) ||
+            (freshSig == NULL))
+        ERROR_OUT(WC_TEST_RET_ENC_NC, out);
+
+    ret = wc_MlDsaKey_Init(freshKey, HEAP_HINT, INVALID_DEVID);
+    if (ret != 0)
+        ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
+    freshKeyInit = 1;
+    ret = wc_MlDsaKey_SetParams(freshKey, param);
+    if (ret != 0)
+        ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
+    ret = wc_MlDsaKey_GetSigLen(freshKey, &sigSz);
+    if (ret != 0)
+        ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
+    ret = wc_MlDsaKey_MakeKeyFromSeed(freshKey, mldsa_kat_key_seed);
+    if (ret != 0)
+        ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
+#ifdef WOLFSSL_MLDSA_CHECK_KEY
+    ret = wc_MlDsaKey_CheckKey(freshKey);
+    if (ret != 0)
+        ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
+#endif
+    freshSigLen = (word32)sigSz;
+    ret = wc_MlDsaKey_SignCtxWithSeed(freshKey, NULL, 0, freshSig,
+        &freshSigLen, mldsa_kat_msg, (word32)sizeof(mldsa_kat_msg),
+        mldsa_kat_sig_seed);
+    if (ret != 0)
+        ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
+    if (expDigest != NULL) {
+        ret = wc_InitShake256(&shake, HEAP_HINT, INVALID_DEVID);
+        if (ret != 0)
+            ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
+        shakeInit = 1;
+        ret = wc_Shake256_Update(&shake, freshSig, freshSigLen);
+        if (ret != 0)
+            ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
+        ret = wc_Shake256_Final(&shake, digest, (word32)sizeof(digest));
+        if (ret != 0)
+            ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
+        if (XMEMCMP(digest, expDigest, sizeof(digest)) != 0)
+            ERROR_OUT(WC_TEST_RET_ENC_NC, out);
+    }
+
+    ret = wc_MlDsaKey_Init(key, HEAP_HINT, INVALID_DEVID);
+    if (ret != 0)
+        ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
+    keyInit = 1;
+    ret = wc_MlDsaKey_SetParams(key, param);
+    if (ret != 0)
+        ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
+
+    /* Fill the caches from another key before regenerating. */
+    ret = wc_MlDsaKey_MakeKeyFromSeed(key, mldsa_kat_sig_seed);
+    if (ret != 0)
+        ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
+    sigLen = (word32)sigSz;
+    ret = wc_MlDsaKey_SignCtxWithSeed(key, NULL, 0, sig, &sigLen,
+        mldsa_kat_msg, (word32)sizeof(mldsa_kat_msg), mldsa_kat_sig_seed);
+    if (ret != 0)
+        ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
+#ifndef WOLFSSL_MLDSA_NO_VERIFY
+    ret = wc_MlDsaKey_VerifyCtx(key, sig, sigLen, NULL, 0, mldsa_kat_msg,
+        (word32)sizeof(mldsa_kat_msg), &res);
+    if (ret != 0)
+        ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
+    if (res != 1)
+        ERROR_OUT(WC_TEST_RET_ENC_I(res), out);
+#endif
+
+    ret = wc_MlDsaKey_MakeKeyFromSeed(key, mldsa_kat_key_seed);
+    if (ret != 0)
+        ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
+    sigLen = (word32)sigSz;
+    ret = wc_MlDsaKey_SignCtxWithSeed(key, NULL, 0, sig, &sigLen,
+        mldsa_kat_msg, (word32)sizeof(mldsa_kat_msg), mldsa_kat_sig_seed);
+    if (ret != 0)
+        ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
+    if ((sigLen != freshSigLen) || (XMEMCMP(sig, freshSig, sigLen) != 0))
+        ERROR_OUT(WC_TEST_RET_ENC_NC, out);
+#ifndef WOLFSSL_MLDSA_NO_VERIFY
+    res = 0;
+    ret = wc_MlDsaKey_VerifyCtx(key, freshSig, freshSigLen, NULL, 0,
+        mldsa_kat_msg, (word32)sizeof(mldsa_kat_msg), &res);
+    if (ret != 0)
+        ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
+    if (res != 1)
+        ERROR_OUT(WC_TEST_RET_ENC_I(res), out);
+#endif
+
+    ret = 0;
+out:
+    if (shakeInit)
+        wc_Shake256_Free(&shake);
+    if (keyInit)
+        wc_MlDsaKey_Free(key);
+    if (freshKeyInit)
+        wc_MlDsaKey_Free(freshKey);
+    XFREE(freshSig, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+    XFREE(sig, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+    XFREE(freshKey, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+    XFREE(key, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+    return ret;
+}
+#endif /* !WOLFSSL_MLDSA_NO_SIGN && !WOLFSSL_MLDSA_NO_MAKE_KEY */
+
 #if defined(WC_MLDSA_CACHE_MATRIX_A) && \
     !defined(WC_MLDSA_FIXED_ARRAY) && \
     !defined(WOLFSSL_MLDSA_NO_MAKE_KEY) && \
@@ -68946,13 +69136,17 @@ static wc_test_ret_t mldsa_sign_cache_alloc_test(int param, WC_RNG* rng)
     if (ret != 0)
         ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
 
+#ifndef WOLFSSL_MLDSA_SIGN_SMALL_MEM
     /* With the fix, signing must populate key->a (allocated buffer is owned
      * by the key, not leaked to a local). Without the fix, key->a remains
-     * NULL because the XMALLOC result was assigned to a local variable. */
+     * NULL because the XMALLOC result was assigned to a local variable.
+     * The small memory implementations stream matrix A and never populate
+     * key->a, so only the round trip below applies to them. */
     if (key->a == NULL)
         ERROR_OUT(WC_TEST_RET_ENC_NC, out);
     if (key->aSet != 1)
         ERROR_OUT(WC_TEST_RET_ENC_NC, out);
+#endif
 
     ret = wc_MlDsaKey_VerifyCtx(key, sig, sigLen, NULL, 0, msg,
         (word32)sizeof(msg), &res);
@@ -69256,6 +69450,7 @@ static wc_test_ret_t mldsa_decode_test(void)
 }
 #endif /* (WOLFSSL_MLDSA_PUBLIC_KEY && !WOLFSSL_MLDSA_NO_VERIFY) ||
         * (WOLFSSL_MLDSA_PRIVATE_KEY && !WOLFSSL_MLDSA_NO_SIGN) */
+#endif /* WC_MLDSA_HAVE_NATIVE */
 #endif /* WOLFSSL_HAVE_MLDSA - Falcon test below is independent of ML-DSA */
 
 
@@ -69925,9 +70120,20 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t falcon_test(void)
 
 #if defined(WOLFSSL_HAVE_MLDSA)
 
+/* Any compiled-in level proves the dispatch behaviour; which one is
+ * irrelevant, so pick the first that is actually built. */
+#ifndef WOLFSSL_NO_ML_DSA_44
+    #define MLDSA_CB_ONLY_LEVEL  WC_ML_DSA_44
+#elif !defined(WOLFSSL_NO_ML_DSA_65)
+    #define MLDSA_CB_ONLY_LEVEL  WC_ML_DSA_65
+#elif !defined(WOLFSSL_NO_ML_DSA_87)
+    #define MLDSA_CB_ONLY_LEVEL  WC_ML_DSA_87
+#endif
+
 WOLFSSL_TEST_SUBROUTINE wc_test_ret_t mldsa_test(void)
 {
     wc_test_ret_t ret;
+#ifdef WC_MLDSA_HAVE_NATIVE
     WC_RNG rng;
 
 #ifndef HAVE_FIPS
@@ -69976,6 +70182,27 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t mldsa_test(void)
 #endif
 #endif
 
+#if !defined(WOLFSSL_MLDSA_NO_SIGN) && !defined(WOLFSSL_MLDSA_NO_MAKE_KEY)
+#ifndef WOLFSSL_NO_ML_DSA_44
+    ret = mldsa_make_key_reuse_test(WC_ML_DSA_44,
+        MLDSA_KAT_DIGEST(mldsa_kat_digest_44));
+    if (ret != 0)
+        ERROR_OUT(ret, out);
+#endif
+#ifndef WOLFSSL_NO_ML_DSA_65
+    ret = mldsa_make_key_reuse_test(WC_ML_DSA_65,
+        MLDSA_KAT_DIGEST(mldsa_kat_digest_65));
+    if (ret != 0)
+        ERROR_OUT(ret, out);
+#endif
+#ifndef WOLFSSL_NO_ML_DSA_87
+    ret = mldsa_make_key_reuse_test(WC_ML_DSA_87,
+        MLDSA_KAT_DIGEST(mldsa_kat_digest_87));
+    if (ret != 0)
+        ERROR_OUT(ret, out);
+#endif
+#endif
+
 #if defined(WC_MLDSA_CACHE_MATRIX_A) && \
     !defined(WC_MLDSA_FIXED_ARRAY) && \
     !defined(WOLFSSL_MLDSA_NO_MAKE_KEY) && \
@@ -70017,6 +70244,283 @@ out:
 #endif
     wc_FreeRng(&rng);
     return ret;
+#else /* !WC_MLDSA_HAVE_NATIVE */
+    /* Software ML-DSA is compiled out. Walk the public API with a key that
+     * has no device behind it and confirm every entry point refuses rather
+     * than silently doing nothing: NO_VALID_DEVID where a registered device
+     * could have serviced the call, NOT_COMPILED_IN where the callback
+     * protocol cannot express the operation at all. */
+    ret = 0;
+#ifdef MLDSA_CB_ONLY_LEVEL
+    {
+        /* wc_MlDsaKey embeds the key buffers, so keep it off the stack as the
+         * parameter-set helpers in this file do. */
+        WC_DECLARE_VAR(key, wc_MlDsaKey, 1, HEAP_HINT);
+        int key_inited = 0;
+        int r;
+#if !defined(WOLFSSL_MLDSA_NO_SIGN) && defined(WOLFSSL_MLDSA_PRIVATE_KEY)
+        byte* priv = NULL;
+#endif
+
+        WC_ALLOC_VAR(key, wc_MlDsaKey, 1, HEAP_HINT);
+        if (!WC_VAR_OK(key))
+            ret = WC_TEST_RET_ENC_EC(MEMORY_E);
+        if (ret == 0) {
+            r = wc_MlDsaKey_Init(key, HEAP_HINT, INVALID_DEVID);
+            if (r != 0)
+                ret = WC_TEST_RET_ENC_EC(r);
+            else
+                key_inited = 1;
+        }
+        if (ret == 0) {
+            r = wc_MlDsaKey_SetParams(key, MLDSA_CB_ONLY_LEVEL);
+            if (r != 0)
+                ret = WC_TEST_RET_ENC_EC(r);
+        }
+#ifndef WOLFSSL_MLDSA_NO_MAKE_KEY
+        if (ret == 0) {
+            WC_RNG kgRng;
+
+            r = wc_InitRng_ex(&kgRng, HEAP_HINT, devId);
+            if (r != 0) {
+                ret = WC_TEST_RET_ENC_EC(r);
+            }
+            else {
+                r = wc_MlDsaKey_MakeKey(key, &kgRng);
+                if (r != WC_NO_ERR_TRACE(NO_VALID_DEVID))
+                    ret = WC_TEST_RET_ENC_NC;
+                wc_FreeRng(&kgRng);
+            }
+        }
+        if (ret == 0) {
+            byte seed[MLDSA_SEED_SZ];
+
+            XMEMSET(seed, 0, sizeof(seed));
+            /* The seed goes to a device now, so with none registered this
+             * reports a missing device rather than missing code. */
+            r = wc_MlDsaKey_MakeKeyFromSeed(key, seed);
+            if (r != WC_NO_ERR_TRACE(NO_VALID_DEVID))
+                ret = WC_TEST_RET_ENC_NC;
+        }
+#endif /* !WOLFSSL_MLDSA_NO_MAKE_KEY */
+#ifndef WOLFSSL_MLDSA_NO_SIGN
+        if (ret == 0) {
+            byte sig[4];
+            word32 sigLen = (word32)sizeof(sig);
+
+            /* Argument checks still run ahead of the dispatch report: no
+             * private key is set, so this is refused before the question of
+             * a device even arises. */
+            r = wc_MlDsaKey_SignCtx(key, NULL, 0, sig, &sigLen,
+                    (const byte*)"m", 1, NULL);
+            if (r != WC_NO_ERR_TRACE(BAD_FUNC_ARG))
+                ret = WC_TEST_RET_ENC_NC;
+        }
+#ifdef WOLFSSL_MLDSA_PRIVATE_KEY
+        /* Give the key private material so the refusals below come from the
+         * dispatch rather than from the argument check above. An all-zero
+         * private key imports cleanly: every s1 and s2 coefficient of that
+         * encoding reads as in range. */
+        if (ret == 0) {
+            int privSz = wc_MlDsaKey_Size(key);
+
+            if (privSz <= 0) {
+                ret = WC_TEST_RET_ENC_NC;
+            }
+            else {
+                priv = (byte*)XMALLOC((size_t)privSz, HEAP_HINT,
+                    DYNAMIC_TYPE_TMP_BUFFER);
+                if (priv == NULL)
+                    ret = WC_TEST_RET_ENC_EC(MEMORY_E);
+                else
+                    XMEMSET(priv, 0, (size_t)privSz);
+            }
+            if (ret == 0) {
+                r = wc_MlDsaKey_ImportPrivRaw(key, priv, (word32)privSz);
+                if (r != 0)
+                    ret = WC_TEST_RET_ENC_EC(r);
+            }
+        }
+        if (ret == 0) {
+            byte sig[4];
+            word32 sigLen = (word32)sizeof(sig);
+
+            r = wc_MlDsaKey_SignCtx(key, NULL, 0, sig, &sigLen,
+                    (const byte*)"m", 1, NULL);
+            if (r != WC_NO_ERR_TRACE(NO_VALID_DEVID))
+                ret = WC_TEST_RET_ENC_NC;
+        }
+        if (ret == 0) {
+            byte sig[4];
+            byte hash[32];
+            word32 sigLen = (word32)sizeof(sig);
+
+            XMEMSET(hash, 0, sizeof(hash));
+            r = wc_MlDsaKey_SignCtxHash(key, NULL, 0, sig, &sigLen, hash,
+                    (word32)sizeof(hash), WC_HASH_TYPE_SHA256, NULL);
+            if (r != WC_NO_ERR_TRACE(NO_VALID_DEVID))
+                ret = WC_TEST_RET_ENC_NC;
+        }
+        /* The deterministic entry points take a caller-supplied seed that
+         * the callback has no field for, so they report NOT_COMPILED_IN. */
+        if (ret == 0) {
+            byte sig[4];
+            byte seed[MLDSA_SEED_SZ];
+            word32 sigLen = (word32)sizeof(sig);
+
+            XMEMSET(seed, 0, sizeof(seed));
+            r = wc_MlDsaKey_SignCtxWithSeed(key, NULL, 0, sig, &sigLen,
+                    (const byte*)"m", 1, seed);
+            if (r != WC_NO_ERR_TRACE(NOT_COMPILED_IN))
+                ret = WC_TEST_RET_ENC_NC;
+        }
+        if (ret == 0) {
+            byte sig[4];
+            byte hash[32];
+            byte seed[MLDSA_SEED_SZ];
+            word32 sigLen = (word32)sizeof(sig);
+
+            XMEMSET(hash, 0, sizeof(hash));
+            XMEMSET(seed, 0, sizeof(seed));
+            r = wc_MlDsaKey_SignCtxHashWithSeed(key, NULL, 0, sig, &sigLen,
+                    hash, (word32)sizeof(hash), WC_HASH_TYPE_SHA256, seed);
+            if (r != WC_NO_ERR_TRACE(NOT_COMPILED_IN))
+                ret = WC_TEST_RET_ENC_NC;
+        }
+        if (ret == 0) {
+            byte sig[4];
+            byte mu[MLDSA_MU_SZ];
+            byte seed[MLDSA_SEED_SZ];
+            word32 sigLen = (word32)sizeof(sig);
+
+            XMEMSET(mu, 0, sizeof(mu));
+            XMEMSET(seed, 0, sizeof(seed));
+            r = wc_MlDsaKey_SignMuWithSeed(key, sig, &sigLen, mu,
+                    (word32)sizeof(mu), seed);
+            if (r != WC_NO_ERR_TRACE(NOT_COMPILED_IN))
+                ret = WC_TEST_RET_ENC_NC;
+        }
+#ifdef WOLFSSL_MLDSA_NO_CTX
+        if (ret == 0) {
+            byte sig[4];
+            word32 sigLen = (word32)sizeof(sig);
+
+            r = wc_MlDsaKey_Sign(key, sig, &sigLen, (const byte*)"m", 1, NULL);
+            if (r != WC_NO_ERR_TRACE(NO_VALID_DEVID))
+                ret = WC_TEST_RET_ENC_NC;
+        }
+        if (ret == 0) {
+            byte sig[4];
+            byte seed[MLDSA_SEED_SZ];
+            word32 sigLen = (word32)sizeof(sig);
+
+            XMEMSET(seed, 0, sizeof(seed));
+            r = wc_MlDsaKey_SignWithSeed(key, sig, &sigLen, (const byte*)"m",
+                    1, seed);
+            if (r != WC_NO_ERR_TRACE(NOT_COMPILED_IN))
+                ret = WC_TEST_RET_ENC_NC;
+        }
+#endif /* WOLFSSL_MLDSA_NO_CTX */
+#endif /* WOLFSSL_MLDSA_PRIVATE_KEY */
+#endif /* !WOLFSSL_MLDSA_NO_SIGN */
+#ifndef WOLFSSL_MLDSA_NO_VERIFY
+        if (ret == 0) {
+            byte sig[4];
+            word32 sigLen = (word32)sizeof(sig);
+            int res = 0;
+
+            r = wc_MlDsaKey_VerifyCtx(key, sig, sigLen, NULL, 0,
+                    (const byte*)"m", 1, &res);
+            if (r != WC_NO_ERR_TRACE(NO_VALID_DEVID))
+                ret = WC_TEST_RET_ENC_NC;
+        }
+        if (ret == 0) {
+            byte sig[4];
+            byte hash[32];
+            word32 sigLen = (word32)sizeof(sig);
+            int res = 0;
+
+            XMEMSET(hash, 0, sizeof(hash));
+            r = wc_MlDsaKey_VerifyCtxHash(key, sig, sigLen, NULL, 0, hash,
+                    (word32)sizeof(hash), WC_HASH_TYPE_SHA256, &res);
+            if (r != WC_NO_ERR_TRACE(NO_VALID_DEVID))
+                ret = WC_TEST_RET_ENC_NC;
+        }
+        if (ret == 0) {
+            byte sig[4];
+            byte mu[MLDSA_MU_SZ];
+            word32 sigLen = (word32)sizeof(sig);
+            int res = 0;
+
+            XMEMSET(mu, 0, sizeof(mu));
+            /* The callback has no way to say the input is mu rather than a
+             * message, so no device could take this one either. */
+            r = wc_MlDsaKey_VerifyMu(key, sig, sigLen, mu,
+                    (word32)sizeof(mu), &res);
+            if (r != WC_NO_ERR_TRACE(NOT_COMPILED_IN))
+                ret = WC_TEST_RET_ENC_NC;
+        }
+#ifdef WOLFSSL_MLDSA_NO_CTX
+        if (ret == 0) {
+            byte sig[4];
+            word32 sigLen = (word32)sizeof(sig);
+            int res = 0;
+
+            r = wc_MlDsaKey_Verify(key, sig, sigLen, (const byte*)"m", 1,
+                    &res);
+            if (r != WC_NO_ERR_TRACE(NO_VALID_DEVID))
+                ret = WC_TEST_RET_ENC_NC;
+        }
+#endif /* WOLFSSL_MLDSA_NO_CTX */
+#endif /* !WOLFSSL_MLDSA_NO_VERIFY */
+#ifdef WOLFSSL_MLDSA_CHECK_KEY
+        if (ret == 0) {
+            r = wc_MlDsaKey_CheckKey(key);
+            if (r != WC_NO_ERR_TRACE(NO_VALID_DEVID))
+                ret = WC_TEST_RET_ENC_NC;
+        }
+#endif
+#if !defined(WOLFSSL_MLDSA_NO_ASN1) && defined(WOLFSSL_MLDSA_PRIVATE_KEY) && \
+    !defined(WOLFSSL_NO_ML_DSA_44)
+        if (ret == 0) {
+            /* A OneAsymmetricKey holding only the 32 byte seed for
+             * ML-DSA-44. Decoding it means expanding the seed: a device is
+             * asked to do that, so with none registered the report is a
+             * missing device -- unless key generation is compiled out, when
+             * there is no seed path at all. */
+            static const byte seedOnlyKey[] = {
+                0x30, 0x34, 0x02, 0x01, 0x00, 0x30, 0x0b, 0x06,
+                0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04,
+                0x03, 0x11, 0x04, 0x22, 0x80, 0x20, 0x67, 0x1b,
+                0x9a, 0x54, 0xb4, 0x72, 0x81, 0xbd, 0x1d, 0xb1,
+                0x97, 0xab, 0x6d, 0x64, 0x38, 0x0b, 0x0c, 0x1b,
+                0x17, 0x9d, 0xcb, 0x46, 0x20, 0xc9, 0x46, 0x3d,
+                0xd4, 0x4f, 0x80, 0x87, 0xa2, 0x16
+            };
+            word32 idx = 0;
+
+            r = wc_MlDsaKey_PrivateKeyDecode(key, seedOnlyKey,
+                    (word32)sizeof(seedOnlyKey), &idx);
+#ifndef WOLFSSL_MLDSA_NO_MAKE_KEY
+            if (r != WC_NO_ERR_TRACE(NO_VALID_DEVID))
+#else
+            if (r != WC_NO_ERR_TRACE(NOT_COMPILED_IN))
+#endif
+                ret = WC_TEST_RET_ENC_NC;
+        }
+#endif
+        if (key_inited)
+            wc_MlDsaKey_Free(key);
+#if !defined(WOLFSSL_MLDSA_NO_SIGN) && defined(WOLFSSL_MLDSA_PRIVATE_KEY)
+        /* Freed after the key: WOLFSSL_MLDSA_ASSIGN_KEY builds keep the
+         * pointer instead of copying the bytes. */
+        XFREE(priv, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+#endif
+        WC_FREE_VAR(key, HEAP_HINT);
+    }
+#endif /* MLDSA_CB_ONLY_LEVEL */
+    return ret;
+#endif /* WC_MLDSA_HAVE_NATIVE */
 }
 #endif /* WOLFSSL_HAVE_MLDSA */
 
@@ -82962,7 +83466,8 @@ out_lbl:
 #endif /* !NO_RSA && !NO_SHA256 */
 
 
-#if defined(WOLFSSL_HAVE_MLDSA) && !defined(WOLFSSL_MLDSA_NO_ASN1) && \
+#if defined(WOLFSSL_HAVE_MLDSA) && defined(WC_MLDSA_HAVE_NATIVE) && \
+    !defined(WOLFSSL_MLDSA_NO_ASN1) && \
     !defined(WOLFSSL_MLDSA_NO_SIGN) && !defined(WOLFSSL_MLDSA_NO_VERIFY) && \
     !defined(NO_FILESYSTEM) && !defined(NO_ASN)
 
@@ -83534,7 +84039,8 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t pkcs7signed_test(void)
                             rsaCaCertBuf,     (word32)rsaCaCertBufSz);
 #endif
 
-#if defined(WOLFSSL_HAVE_MLDSA) && !defined(WOLFSSL_MLDSA_NO_ASN1) && \
+#if defined(WOLFSSL_HAVE_MLDSA) && defined(WC_MLDSA_HAVE_NATIVE) && \
+    !defined(WOLFSSL_MLDSA_NO_ASN1) && \
     !defined(WOLFSSL_MLDSA_NO_SIGN) && !defined(WOLFSSL_MLDSA_NO_VERIFY) && \
     !defined(NO_FILESYSTEM) && !defined(NO_ASN)
     if (ret >= 0)
@@ -88835,6 +89341,12 @@ typedef struct {
     int mlkemCount; /* ML-KEM callback invocations */
     int mlkemFail;  /* when set, the ML-KEM handler returns this error */
 #endif
+#if defined(WOLFSSL_HAVE_MLDSA)
+    int mldsaCount;    /* ML-DSA callback invocations */
+    int mldsaFail;     /* when set, the ML-DSA handler returns this error */
+    int mldsaCbActive; /* when clear, the handler declines so a native build
+                        * still runs the real ML-DSA test */
+#endif
 #ifdef HAVE_ECC
     int eccMakePubCount;  /* EC make-pub callback invocations */
     int eccCheckPubCount; /* EC check-pubkey callback invocations */
@@ -89996,6 +90508,37 @@ static int myCryptoCbExportPointX963(const ecc_set_type* dp, ecc_point* pub,
 #endif /* HAVE_ECC && !WOLFSSL_NO_MALLOC && HAVE_ECC_KEY_EXPORT */
 
 /* Example crypto dev callback function that calls software version */
+#if defined(WOLFSSL_HAVE_MLDSA)
+#define MLDSA_CB_SIG_LEN 32
+
+/* Seed the device is asked to generate from, shared with the test below so
+ * the handler can confirm it arrived unchanged. */
+static const byte mldsa_cb_seed[MLDSA_SEED_SZ] = {
+    0xa0, 0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6, 0xa7,
+    0xa8, 0xa9, 0xaa, 0xab, 0xac, 0xad, 0xae, 0xaf,
+    0xb0, 0xb1, 0xb2, 0xb3, 0xb4, 0xb5, 0xb6, 0xb7,
+    0xb8, 0xb9, 0xba, 0xbb, 0xbc, 0xbd, 0xbe, 0xbf
+};
+/* Deterministic stand-in signature for the callback-only ML-DSA device: it
+ * covers the message, the context and the pre-hash selector, so a dispatch
+ * that loses any of them fails the matching verify. */
+static void mldsa_cb_sign(const byte* msg, word32 msgLen, const byte* ctx,
+    byte ctxLen, word32 preHashType, byte* out)
+{
+    word32 i;
+
+    for (i = 0; i < MLDSA_CB_SIG_LEN; i++) {
+        byte b = (byte)(0x5a ^ (byte)i ^ (byte)ctxLen ^ (byte)preHashType);
+
+        if (msgLen > 0)
+            b ^= msg[i % msgLen];
+        if ((ctx != NULL) && (ctxLen > 0))
+            b ^= ctx[i % ctxLen];
+        out[i] = b;
+    }
+}
+#endif
+
 static int myCryptoDevCb(int devIdArg, wc_CryptoInfo* info, void* ctx)
 {
     int ret = WC_NO_ERR_TRACE(NOT_COMPILED_IN); /* return this to bypass HW and
@@ -91169,9 +91712,10 @@ static int myCryptoDevCb(int devIdArg, wc_CryptoInfo* info, void* ctx)
             myCtx->exampleVar++;
         }
     #endif /* HAVE_FALCON && !WOLF_CRYPTO_CB_ONLY_FALCON */
-    #ifdef WOLFSSL_HAVE_MLDSA
+    #if defined(WOLFSSL_HAVE_MLDSA) && defined(WC_MLDSA_HAVE_NATIVE)
     #ifndef WOLFSSL_MLDSA_NO_MAKE_KEY
-        if (info->pk.type == WC_PK_TYPE_PQC_SIG_KEYGEN) {
+        if ((info->pk.type == WC_PK_TYPE_PQC_SIG_KEYGEN) &&
+                !myCtx->mldsaCbActive) {
             if ((info->pk.pqc_sig_kg.type == WC_PQC_SIG_TYPE_MLDSA) &&
                 (info->pk.pqc_sig_kg.key != NULL)) {
                 wc_MlDsaKey* key = (wc_MlDsaKey*)info->pk.pqc_sig_kg.key;
@@ -91193,7 +91737,8 @@ static int myCryptoDevCb(int devIdArg, wc_CryptoInfo* info, void* ctx)
     #if !defined(WOLFSSL_MLDSA_NO_SIGN) && !defined(WOLFSSL_MLDSA_NO_CTX)
         /* WOLFSSL_MLDSA_NO_CTX makes Sign() and SignCtx() with an empty
          * context indistinguishable here, so leave both to software. */
-        if (info->pk.type == WC_PK_TYPE_PQC_SIG_SIGN) {
+        if ((info->pk.type == WC_PK_TYPE_PQC_SIG_SIGN) &&
+                !myCtx->mldsaCbActive) {
             if ((info->pk.pqc_sign.type == WC_PQC_SIG_TYPE_MLDSA) &&
                 (info->pk.pqc_sign.key != NULL)) {
                 wc_MlDsaKey* key = (wc_MlDsaKey*)info->pk.pqc_sign.key;
@@ -91232,7 +91777,8 @@ static int myCryptoDevCb(int devIdArg, wc_CryptoInfo* info, void* ctx)
     #endif
     #if !defined(WOLFSSL_MLDSA_NO_VERIFY) && !defined(WOLFSSL_MLDSA_NO_CTX)
         /* Omitted under WOLFSSL_MLDSA_NO_CTX; see the sign branch. */
-        if (info->pk.type == WC_PK_TYPE_PQC_SIG_VERIFY) {
+        if ((info->pk.type == WC_PK_TYPE_PQC_SIG_VERIFY) &&
+                !myCtx->mldsaCbActive) {
             if ((info->pk.pqc_verify.type == WC_PQC_SIG_TYPE_MLDSA) &&
                 (info->pk.pqc_verify.key != NULL)) {
                 wc_MlDsaKey* key = (wc_MlDsaKey*)info->pk.pqc_verify.key;
@@ -91270,6 +91816,116 @@ static int myCryptoDevCb(int devIdArg, wc_CryptoInfo* info, void* ctx)
             }
         }
     #endif
+    #endif /* WOLFSSL_HAVE_MLDSA && WC_MLDSA_HAVE_NATIVE */
+    #if defined(WOLFSSL_HAVE_MLDSA)
+        /* This device cannot delegate to the public API the way the other
+         * handlers do; it would dispatch straight back here, and under
+         * CB_ONLY there is no software core to reach. It answers with its
+         * own deterministic signature instead, which proves the dispatch
+         * reaches a device for all four ML-DSA operations, that the signature
+         * and the verify result travel back, and that a device error is
+         * reported as-is. The signature covers the message and the context,
+         * so a call site that drops either is caught by the verify step. */
+        if (!myCtx->mldsaCbActive) {
+            /* Leave ret unchanged */
+        }
+        else if (((info->pk.type == WC_PK_TYPE_PQC_SIG_KEYGEN) ||
+             (info->pk.type == WC_PK_TYPE_PQC_SIG_KEYGEN_SEED)) &&
+                (info->pk.pqc_sig_kg.type == WC_PQC_SIG_TYPE_MLDSA)) {
+            myCtx->mldsaCount++;
+            if (myCtx->mldsaFail != 0) {
+                ret = myCtx->mldsaFail;
+            }
+            else if (info->pk.type == WC_PK_TYPE_PQC_SIG_KEYGEN_SEED) {
+                /* Seeded generation: the seed must arrive whole. A real
+                 * device would expand it; this one only checks it. */
+                ret = ((info->pk.pqc_sig_kg.seedSz ==
+                            (word32)sizeof(mldsa_cb_seed)) &&
+                       (XMEMCMP(info->pk.pqc_sig_kg.seed, mldsa_cb_seed,
+                            sizeof(mldsa_cb_seed)) == 0)) ?
+                      0 : WC_NO_ERR_TRACE(BAD_STATE_E);
+            }
+            else {
+                /* The device keeps the key material. The key flags say
+                 * whether this object holds the bytes, and it holds neither,
+                 * so both stay clear. Signing and verifying dispatch before
+                 * those flags are looked at. */
+                /* A plain keygen carrying a seed means a seeded call reached
+                 * the device as a request for an unrelated random key. */
+                ret = (info->pk.pqc_sig_kg.seed == NULL) ? 0 :
+                      WC_NO_ERR_TRACE(BAD_STATE_E);
+            }
+        }
+        else if ((info->pk.type == WC_PK_TYPE_PQC_SIG_SIGN) &&
+                (info->pk.pqc_sign.type == WC_PQC_SIG_TYPE_MLDSA)) {
+            myCtx->mldsaCount++;
+            if (myCtx->mldsaFail != 0) {
+                ret = myCtx->mldsaFail;
+            }
+            else if (*info->pk.pqc_sign.outlen < MLDSA_CB_SIG_LEN) {
+                ret = BUFFER_E;
+            }
+            else {
+                mldsa_cb_sign(info->pk.pqc_sign.in, info->pk.pqc_sign.inlen,
+                    info->pk.pqc_sign.context, info->pk.pqc_sign.contextLen,
+                    info->pk.pqc_sign.preHashType, info->pk.pqc_sign.out);
+                *info->pk.pqc_sign.outlen = MLDSA_CB_SIG_LEN;
+                ret = 0;
+            }
+        }
+        else if ((info->pk.type == WC_PK_TYPE_PQC_SIG_VERIFY) &&
+                (info->pk.pqc_verify.type == WC_PQC_SIG_TYPE_MLDSA)) {
+            myCtx->mldsaCount++;
+            if (myCtx->mldsaFail != 0) {
+                ret = myCtx->mldsaFail;
+            }
+            else {
+                byte expected[MLDSA_CB_SIG_LEN];
+
+                mldsa_cb_sign(info->pk.pqc_verify.msg,
+                    info->pk.pqc_verify.msglen, info->pk.pqc_verify.context,
+                    info->pk.pqc_verify.contextLen,
+                    info->pk.pqc_verify.preHashType, expected);
+                if (info->pk.pqc_verify.res != NULL) {
+                    *info->pk.pqc_verify.res =
+                        ((info->pk.pqc_verify.siglen == MLDSA_CB_SIG_LEN) &&
+                         (XMEMCMP(info->pk.pqc_verify.sig, expected,
+                            MLDSA_CB_SIG_LEN) == 0)) ? 1 : 0;
+                }
+                ret = 0;
+            }
+        }
+    #ifdef WOLFSSL_MLDSA_CHECK_KEY
+        else if ((info->pk.type == WC_PK_TYPE_PQC_SIG_CHECK_PRIV_KEY) &&
+                (info->pk.pqc_sig_check.type == WC_PQC_SIG_TYPE_MLDSA)) {
+            wc_MlDsaKey* ck = (wc_MlDsaKey*)info->pk.pqc_sig_check.key;
+
+            myCtx->mldsaCount++;
+            if (myCtx->mldsaFail != 0) {
+                ret = myCtx->mldsaFail;
+            }
+            else if (ck == NULL) {
+                ret = BAD_FUNC_ARG;
+            }
+            else if (!ck->pubKeySet) {
+                /* No local public key: a real device compares against its own
+                 * copy, so anything sent here would be material the caller
+                 * never had. */
+                ret = ((info->pk.pqc_sig_check.pubKey == NULL) &&
+                       (info->pk.pqc_sig_check.pubKeySz == 0)) ?
+                      0 : WC_NO_ERR_TRACE(BAD_STATE_E);
+            }
+            else {
+                /* Public key present: it must arrive whole. */
+                int ckSz = wc_MlDsaKey_PubSize(ck);
+
+                ret = ((ckSz > 0) &&
+                       (info->pk.pqc_sig_check.pubKey != NULL) &&
+                       (info->pk.pqc_sig_check.pubKeySz == (word32)ckSz)) ?
+                      0 : WC_NO_ERR_TRACE(BAD_STATE_E);
+            }
+        }
+    #endif /* WOLFSSL_MLDSA_CHECK_KEY */
     #endif /* WOLFSSL_HAVE_MLDSA */
     #if defined(WOLFSSL_HAVE_MLKEM) && defined(WC_MLKEM_HAVE_NATIVE)
     #ifndef WOLFSSL_MLKEM_NO_MAKE_KEY
@@ -94026,6 +94682,560 @@ static wc_test_ret_t cryptocb_nested_register_test(void)
 }
 #endif /* NESTED_CB_TEST */
 
+#if defined(WOLFSSL_SHA3) && !defined(WOLFSSL_NOSHA3_256) && \
+    !defined(WOLFSSL_NOSHA3_512) && \
+    (!defined(HAVE_FIPS) || FIPS_VERSION_GE(6, 0)) && \
+    !defined(WC_TEST_NO_CRYPTOCB_SW_TEST)
+#define SHA3_VARIANT_CB_TEST
+#define SHA3_VARIANT_CB_TEST_DEVID 0x53484133 /* 'SHA3' */
+
+/* Records each SHA-3 type it is told, and handles each Final without
+ * resetting the context, as a device does. types[0] is the last Update. */
+static int sha3VariantCb(int devIdArg, wc_CryptoInfo* info, void* ctx)
+{
+    int* types = (int*)ctx;
+
+    (void)devIdArg;
+
+    if (info->algo_type != WC_ALGO_TYPE_HASH)
+        return WC_NO_ERR_TRACE(CRYPTOCB_UNAVAILABLE);
+    if (info->hash.digest == NULL) {
+        types[0] = info->hash.type;
+        return WC_NO_ERR_TRACE(CRYPTOCB_UNAVAILABLE);
+    }
+
+    if (info->hash.type == WC_HASH_TYPE_SHA3_512)
+        XMEMSET(info->hash.digest, 0, WC_SHA3_512_DIGEST_SIZE);
+    else if (info->hash.type == WC_HASH_TYPE_SHA3_256)
+        XMEMSET(info->hash.digest, 0, WC_SHA3_256_DIGEST_SIZE);
+    else
+        return WC_NO_ERR_TRACE(CRYPTOCB_UNAVAILABLE);
+
+    types[1] = info->hash.type;
+    return 0;
+}
+
+/* A context reused for another SHA-3 variant must report the new one. */
+static wc_test_ret_t cryptocb_sha3_variant_test(void)
+{
+    wc_test_ret_t ret;
+    int     types[2] = { WC_HASH_TYPE_NONE, WC_HASH_TYPE_NONE };
+    int     sha3Init = 0;
+    byte    data[32];
+    byte    digest[WC_SHA3_512_DIGEST_SIZE];
+    WC_DECLARE_VAR(sha3, wc_Sha3, 1, HEAP_HINT);
+
+    WC_ALLOC_VAR_EX(sha3, wc_Sha3, 1, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER,
+        return WC_TEST_RET_ENC_EC(MEMORY_E));
+
+    ret = wc_CryptoCb_RegisterDevice(SHA3_VARIANT_CB_TEST_DEVID,
+        sha3VariantCb, types);
+    if (ret != 0) {
+        WC_FREE_VAR_EX(sha3, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+        return WC_TEST_RET_ENC_EC(ret);
+    }
+
+    XMEMSET(data, 0xa5, sizeof(data));
+
+    ret = wc_InitSha3_512(sha3, HEAP_HINT, SHA3_VARIANT_CB_TEST_DEVID);
+    if (ret == 0)
+        sha3Init = 1;
+    if (ret == 0)
+        ret = wc_Sha3_512_Update(sha3, data, sizeof(data));
+    if (ret == 0)
+        ret = wc_Sha3_512_Final(sha3, digest);
+    if (ret != 0)
+        ret = WC_TEST_RET_ENC_EC(ret);
+    else if ((types[0] != WC_HASH_TYPE_SHA3_512) ||
+             (types[1] != WC_HASH_TYPE_SHA3_512))
+        ret = WC_TEST_RET_ENC_NC;
+
+    if (ret == 0) {
+        types[0] = WC_HASH_TYPE_NONE;
+        types[1] = WC_HASH_TYPE_NONE;
+        ret = wc_Sha3_256_Update(sha3, data, sizeof(data));
+        if (ret == 0)
+            ret = wc_Sha3_256_Final(sha3, digest);
+        if (ret != 0)
+            ret = WC_TEST_RET_ENC_EC(ret);
+        else if ((types[0] != WC_HASH_TYPE_SHA3_256) ||
+                 (types[1] != WC_HASH_TYPE_SHA3_256))
+            ret = WC_TEST_RET_ENC_NC;
+    }
+
+    if (sha3Init)
+        wc_Sha3_512_Free(sha3);
+    wc_CryptoCb_UnRegisterDevice(SHA3_VARIANT_CB_TEST_DEVID);
+    WC_FREE_VAR_EX(sha3, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+    return ret;
+}
+#endif /* SHA3_VARIANT_CB_TEST */
+
+#if ((defined(WOLFSSL_HAVE_MLKEM) && !defined(WOLFSSL_NO_ML_KEM) && \
+      !defined(WOLFSSL_MLKEM_NO_MAKE_KEY) && \
+      !defined(WOLFSSL_MLKEM_NO_ENCAPSULATE) && \
+      !defined(WOLFSSL_MLKEM_NO_DECAPSULATE) && \
+      !defined(WOLF_CRYPTO_CB_ONLY_MLKEM)) || \
+     (defined(WOLFSSL_HAVE_MLDSA) && !defined(WOLFSSL_MLDSA_NO_MAKE_KEY) && \
+      !defined(WOLFSSL_MLDSA_NO_SIGN) && \
+      !defined(WOLFSSL_MLDSA_NO_VERIFY) && \
+      defined(WC_MLDSA_HAVE_NATIVE))) && \
+    defined(WOLFSSL_SHAKE256) && !defined(WC_NO_RNG) && \
+    !defined(WC_TEST_NO_CRYPTOCB_SW_TEST)
+#define PQC_SHAKE_CB_TEST
+#define PQC_SHAKE_CB_TEST_DEVID 0x5348414b /* 'SHAK' */
+#define PQC_HASH_DEV_SLOTS      2
+
+/* Emulated hash device keeping its own state per object, as hardware does. */
+typedef struct PqcHashDev {
+    wc_Sha3     state[PQC_HASH_DEV_SLOTS];
+    const void* obj[PQC_HASH_DEV_SLOTS];
+    int         type[PQC_HASH_DEV_SLOTS];
+    int         done;
+#ifdef WOLF_CRYPTO_CB_FREE
+    const void* watch[2];
+    int         watchFreeType[2];
+#endif
+} PqcHashDev;
+
+static int pqcHashDevInit(wc_Sha3* st, int type)
+{
+    switch (type) {
+        case WC_HASH_TYPE_SHAKE256:
+            return wc_InitShake256(st, HEAP_HINT, INVALID_DEVID);
+    #ifndef WOLFSSL_NOSHA3_256
+        case WC_HASH_TYPE_SHA3_256:
+            return wc_InitSha3_256(st, HEAP_HINT, INVALID_DEVID);
+    #endif
+    #ifndef WOLFSSL_NOSHA3_512
+        case WC_HASH_TYPE_SHA3_512:
+            return wc_InitSha3_512(st, HEAP_HINT, INVALID_DEVID);
+    #endif
+        default:
+            return WC_NO_ERR_TRACE(BAD_FUNC_ARG);
+    }
+}
+
+static int pqcHashDevUpdate(wc_Sha3* st, int type, const byte* in,
+    word32 inSz)
+{
+    switch (type) {
+        case WC_HASH_TYPE_SHAKE256:
+            return wc_Shake256_Update(st, in, inSz);
+    #ifndef WOLFSSL_NOSHA3_256
+        case WC_HASH_TYPE_SHA3_256:
+            return wc_Sha3_256_Update(st, in, inSz);
+    #endif
+    #ifndef WOLFSSL_NOSHA3_512
+        case WC_HASH_TYPE_SHA3_512:
+            return wc_Sha3_512_Update(st, in, inSz);
+    #endif
+        default:
+            return WC_NO_ERR_TRACE(BAD_FUNC_ARG);
+    }
+}
+
+static int pqcHashDevFinal(wc_Sha3* st, int type, byte* out, word32 outSz)
+{
+    switch (type) {
+        case WC_HASH_TYPE_SHAKE256:
+            return wc_Shake256_Final(st, out, outSz);
+    #ifndef WOLFSSL_NOSHA3_256
+        case WC_HASH_TYPE_SHA3_256:
+            return wc_Sha3_256_Final(st, out);
+    #endif
+    #ifndef WOLFSSL_NOSHA3_512
+        case WC_HASH_TYPE_SHA3_512:
+            return wc_Sha3_512_Final(st, out);
+    #endif
+        default:
+            return WC_NO_ERR_TRACE(BAD_FUNC_ARG);
+    }
+}
+
+/* Runs one hash call on the device state held for the calling object. */
+static int pqcHashDevOp(PqcHashDev* dev, wc_CryptoInfo* info)
+{
+    int ret = 0;
+    int i;
+    int slot = -1;
+    int type = info->hash.type;
+
+    for (i = 0; (i < PQC_HASH_DEV_SLOTS) && (slot < 0); i++) {
+        if (dev->obj[i] == (const void*)info->hash.sha3)
+            slot = i;
+    }
+    if (slot < 0) {
+        for (i = 0; (i < PQC_HASH_DEV_SLOTS) && (slot < 0); i++) {
+            if (dev->obj[i] == NULL)
+                slot = i;
+        }
+        if (slot < 0)
+            return WC_NO_ERR_TRACE(BAD_STATE_E);
+        ret = pqcHashDevInit(&dev->state[slot], type);
+        if (ret != 0)
+            return ret;
+        dev->obj[slot] = info->hash.sha3;
+        dev->type[slot] = type;
+    }
+    else if (dev->type[slot] != type) {
+        ret = WC_NO_ERR_TRACE(BAD_STATE_E);
+    }
+
+    if ((ret == 0) && (info->hash.in != NULL)) {
+        ret = pqcHashDevUpdate(&dev->state[slot], type, info->hash.in,
+            info->hash.inSz);
+    }
+    if ((ret == 0) && (info->hash.digest != NULL)) {
+        ret = pqcHashDevFinal(&dev->state[slot], type, info->hash.digest,
+            info->hash.outSz);
+        if (ret == 0)
+            dev->done++;
+    }
+    if ((ret != 0) || (info->hash.digest != NULL)) {
+        wc_Shake256_Free(&dev->state[slot]);
+        dev->obj[slot] = NULL;
+    }
+    return ret;
+}
+
+static int pqcHashDevCb(int devIdArg, wc_CryptoInfo* info, void* ctx)
+{
+    PqcHashDev* dev = (PqcHashDev*)ctx;
+
+    (void)devIdArg;
+
+    if (info->algo_type == WC_ALGO_TYPE_HASH) {
+        if ((info->hash.type == WC_HASH_TYPE_SHAKE256) ||
+                (info->hash.type == WC_HASH_TYPE_SHA3_256) ||
+                (info->hash.type == WC_HASH_TYPE_SHA3_512)) {
+            return pqcHashDevOp(dev, info);
+        }
+    }
+#ifdef WOLF_CRYPTO_CB_FREE
+    else if ((info->algo_type == WC_ALGO_TYPE_FREE) &&
+             (info->free.algo == WC_ALGO_TYPE_HASH)) {
+        int i;
+
+        for (i = 0; i < 2; i++) {
+            if ((dev->watch[i] != NULL) && (info->free.obj == dev->watch[i]))
+                dev->watchFreeType[i] = info->free.type;
+        }
+    }
+#endif
+    return WC_NO_ERR_TRACE(CRYPTOCB_UNAVAILABLE);
+}
+
+#if defined(WOLFSSL_HAVE_MLKEM) && !defined(WOLFSSL_NO_ML_KEM) && \
+    !defined(WOLFSSL_MLKEM_NO_MAKE_KEY) && \
+    !defined(WOLFSSL_MLKEM_NO_ENCAPSULATE) && \
+    !defined(WOLFSSL_MLKEM_NO_DECAPSULATE) && \
+    !defined(WOLF_CRYPTO_CB_ONLY_MLKEM)
+/* Encapsulates with the same randomness on both keys and compares. */
+static wc_test_ret_t cryptocb_pqc_mlkem_encap(MlKemKey* sw, MlKemKey* hw,
+    byte* ctSw, byte* ctHw, word32 ctSz)
+{
+    wc_test_ret_t ret;
+    byte ssSw[WC_ML_KEM_SS_SZ];
+    byte ssHw[WC_ML_KEM_SS_SZ];
+    byte rand[WC_ML_KEM_ENC_RAND_SZ];
+
+    XMEMSET(rand, 0x6b, sizeof(rand));
+    ret = wc_MlKemKey_EncapsulateWithRandom(sw, ctSw, ssSw, rand,
+        (int)sizeof(rand));
+    if (ret == 0) {
+        ret = wc_MlKemKey_EncapsulateWithRandom(hw, ctHw, ssHw, rand,
+            (int)sizeof(rand));
+    }
+    if (ret != 0)
+        return WC_TEST_RET_ENC_EC(ret);
+    if ((XMEMCMP(ctSw, ctHw, ctSz) != 0) ||
+            (XMEMCMP(ssSw, ssHw, sizeof(ssSw)) != 0)) {
+        return WC_TEST_RET_ENC_NC;
+    }
+    return 0;
+}
+
+/* Decapsulates on both keys and compares the shared secrets. */
+static wc_test_ret_t cryptocb_pqc_mlkem_decap(MlKemKey* sw, MlKemKey* hw,
+    const byte* ct, word32 ctSz)
+{
+    wc_test_ret_t ret;
+    byte ssSw[WC_ML_KEM_SS_SZ];
+    byte ssHw[WC_ML_KEM_SS_SZ];
+
+    ret = wc_MlKemKey_Decapsulate(sw, ssSw, ct, ctSz);
+    if (ret == 0)
+        ret = wc_MlKemKey_Decapsulate(hw, ssHw, ct, ctSz);
+    if (ret != 0)
+        return WC_TEST_RET_ENC_EC(ret);
+    if (XMEMCMP(ssSw, ssHw, sizeof(ssSw)) != 0)
+        return WC_TEST_RET_ENC_NC;
+    return 0;
+}
+
+static wc_test_ret_t cryptocb_pqc_mlkem_test(PqcHashDev* dev)
+{
+    wc_test_ret_t ret = 0;
+    int    swInit = 0;
+    int    hwInit = 0;
+    word32 ctSz = 0;
+    byte   rand[WC_ML_KEM_MAKEKEY_RAND_SZ];
+#if defined(WOLFSSL_WC_ML_KEM_512)
+    int    level = WC_ML_KEM_512;
+#elif defined(WOLFSSL_WC_ML_KEM_768)
+    int    level = WC_ML_KEM_768;
+#else
+    int    level = WC_ML_KEM_1024;
+#endif
+    WC_DECLARE_VAR(sw, MlKemKey, 1, HEAP_HINT);
+    WC_DECLARE_VAR(hw, MlKemKey, 1, HEAP_HINT);
+    WC_DECLARE_VAR(ctSw, byte, WC_ML_KEM_MAX_CIPHER_TEXT_SIZE, HEAP_HINT);
+    WC_DECLARE_VAR(ctHw, byte, WC_ML_KEM_MAX_CIPHER_TEXT_SIZE, HEAP_HINT);
+
+    WC_ALLOC_VAR_EX(sw, MlKemKey, 1, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER,
+        ret = WC_TEST_RET_ENC_EC(MEMORY_E));
+    if (ret == 0) {
+        WC_ALLOC_VAR_EX(hw, MlKemKey, 1, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER,
+            ret = WC_TEST_RET_ENC_EC(MEMORY_E));
+    }
+    if (ret == 0) {
+        WC_ALLOC_VAR_EX(ctSw, byte, WC_ML_KEM_MAX_CIPHER_TEXT_SIZE,
+            HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER,
+            ret = WC_TEST_RET_ENC_EC(MEMORY_E));
+    }
+    if (ret == 0) {
+        WC_ALLOC_VAR_EX(ctHw, byte, WC_ML_KEM_MAX_CIPHER_TEXT_SIZE,
+            HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER,
+            ret = WC_TEST_RET_ENC_EC(MEMORY_E));
+    }
+
+    XMEMSET(rand, 0x3c, sizeof(rand));
+    dev->done = 0;
+
+    if (ret == 0) {
+        ret = wc_MlKemKey_Init(sw, level, HEAP_HINT, INVALID_DEVID);
+        if (ret == 0)
+            swInit = 1;
+        else
+            ret = WC_TEST_RET_ENC_EC(ret);
+    }
+    if (ret == 0) {
+        ret = wc_MlKemKey_Init(hw, level, HEAP_HINT, PQC_SHAKE_CB_TEST_DEVID);
+        if (ret == 0)
+            hwInit = 1;
+        else
+            ret = WC_TEST_RET_ENC_EC(ret);
+    }
+    if (ret == 0) {
+        ret = wc_MlKemKey_MakeKeyWithRandom(sw, rand, (int)sizeof(rand));
+        if (ret == 0)
+            ret = wc_MlKemKey_MakeKeyWithRandom(hw, rand, (int)sizeof(rand));
+        if (ret == 0)
+            ret = wc_MlKemKey_CipherTextSize(sw, &ctSz);
+        if (ret != 0)
+            ret = WC_TEST_RET_ENC_EC(ret);
+    }
+    if (ret == 0)
+        ret = cryptocb_pqc_mlkem_encap(sw, hw, ctSw, ctHw, ctSz);
+    if (ret == 0)
+        ret = cryptocb_pqc_mlkem_decap(sw, hw, ctSw, ctSz);
+    /* A tampered ciphertext takes the implicit rejection hash. */
+    if (ret == 0) {
+        ctSw[0] ^= 0x01;
+        ret = cryptocb_pqc_mlkem_decap(sw, hw, ctSw, ctSz);
+    }
+    if ((ret == 0) && (dev->done == 0))
+        ret = WC_TEST_RET_ENC_NC;
+
+    if (hwInit) {
+    #ifdef WOLF_CRYPTO_CB_FREE
+        #ifdef WOLFSSL_SHAKE128
+        /* Leave the PRF typed SHAKE-128, as matrix generation does. */
+        (void)wc_Shake128_Reset(&hw->prf);
+        #endif
+        dev->watch[0] = &hw->prf;
+        dev->watch[1] = &hw->hash;
+        dev->watchFreeType[0] = WC_HASH_TYPE_NONE;
+        dev->watchFreeType[1] = WC_HASH_TYPE_NONE;
+    #endif
+        wc_MlKemKey_Free(hw);
+    #ifdef WOLF_CRYPTO_CB_FREE
+        if ((ret == 0) &&
+                ((dev->watchFreeType[0] != WC_HASH_TYPE_SHAKE256) ||
+                 (dev->watchFreeType[1] != WC_HASH_TYPE_SHA3_256))) {
+            ret = WC_TEST_RET_ENC_NC;
+        }
+        dev->watch[0] = NULL;
+        dev->watch[1] = NULL;
+    #endif
+    }
+    if (swInit)
+        wc_MlKemKey_Free(sw);
+    WC_FREE_VAR_EX(ctHw, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+    WC_FREE_VAR_EX(ctSw, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+    WC_FREE_VAR_EX(hw, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+    WC_FREE_VAR_EX(sw, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+    return ret;
+}
+#endif
+
+#if defined(WOLFSSL_HAVE_MLDSA) && !defined(WOLFSSL_MLDSA_NO_MAKE_KEY) && \
+    !defined(WOLFSSL_MLDSA_NO_SIGN) && !defined(WOLFSSL_MLDSA_NO_VERIFY) && \
+    defined(WC_MLDSA_HAVE_NATIVE)
+static wc_test_ret_t cryptocb_pqc_mldsa_test(PqcHashDev* dev)
+{
+    wc_test_ret_t ret = 0;
+    int    swInit = 0;
+    int    hwInit = 0;
+    int    verified = 0;
+    word32 sigSzSw = MLDSA_MAX_SIG_SIZE;
+    word32 sigSzHw = MLDSA_MAX_SIG_SIZE;
+    byte   seed[MLDSA_SEED_SZ];
+    byte   rnd[MLDSA_RND_SZ];
+    byte   msg[32];
+#if !defined(WOLFSSL_NO_ML_DSA_44)
+    int    level = WC_ML_DSA_44;
+#elif !defined(WOLFSSL_NO_ML_DSA_65)
+    int    level = WC_ML_DSA_65;
+#else
+    int    level = WC_ML_DSA_87;
+#endif
+    WC_DECLARE_VAR(sw, wc_MlDsaKey, 1, HEAP_HINT);
+    WC_DECLARE_VAR(hw, wc_MlDsaKey, 1, HEAP_HINT);
+    WC_DECLARE_VAR(sigSw, byte, MLDSA_MAX_SIG_SIZE, HEAP_HINT);
+    WC_DECLARE_VAR(sigHw, byte, MLDSA_MAX_SIG_SIZE, HEAP_HINT);
+
+    WC_ALLOC_VAR_EX(sw, wc_MlDsaKey, 1, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER,
+        ret = WC_TEST_RET_ENC_EC(MEMORY_E));
+    if (ret == 0) {
+        WC_ALLOC_VAR_EX(hw, wc_MlDsaKey, 1, HEAP_HINT,
+            DYNAMIC_TYPE_TMP_BUFFER, ret = WC_TEST_RET_ENC_EC(MEMORY_E));
+    }
+    if (ret == 0) {
+        WC_ALLOC_VAR_EX(sigSw, byte, MLDSA_MAX_SIG_SIZE, HEAP_HINT,
+            DYNAMIC_TYPE_TMP_BUFFER, ret = WC_TEST_RET_ENC_EC(MEMORY_E));
+    }
+    if (ret == 0) {
+        WC_ALLOC_VAR_EX(sigHw, byte, MLDSA_MAX_SIG_SIZE, HEAP_HINT,
+            DYNAMIC_TYPE_TMP_BUFFER, ret = WC_TEST_RET_ENC_EC(MEMORY_E));
+    }
+
+    XMEMSET(seed, 0x17, sizeof(seed));
+    XMEMSET(rnd, 0x29, sizeof(rnd));
+    XMEMSET(msg, 0x5a, sizeof(msg));
+    dev->done = 0;
+
+    if (ret == 0) {
+        ret = wc_MlDsaKey_Init(sw, HEAP_HINT, INVALID_DEVID);
+        if (ret == 0)
+            swInit = 1;
+        else
+            ret = WC_TEST_RET_ENC_EC(ret);
+    }
+    if (ret == 0) {
+        ret = wc_MlDsaKey_Init(hw, HEAP_HINT, PQC_SHAKE_CB_TEST_DEVID);
+        if (ret == 0)
+            hwInit = 1;
+        else
+            ret = WC_TEST_RET_ENC_EC(ret);
+    }
+    if (ret == 0) {
+        ret = wc_MlDsaKey_SetParams(sw, (byte)level);
+        if (ret == 0)
+            ret = wc_MlDsaKey_SetParams(hw, (byte)level);
+        if (ret == 0)
+            ret = wc_MlDsaKey_MakeKeyFromSeed(sw, seed);
+        if (ret == 0)
+            ret = wc_MlDsaKey_MakeKeyFromSeed(hw, seed);
+        if (ret == 0) {
+            ret = wc_MlDsaKey_SignCtxWithSeed(sw, NULL, 0, sigSw, &sigSzSw,
+                msg, sizeof(msg), rnd);
+        }
+        if (ret == 0) {
+            ret = wc_MlDsaKey_SignCtxWithSeed(hw, NULL, 0, sigHw, &sigSzHw,
+                msg, sizeof(msg), rnd);
+        }
+        if (ret == 0) {
+            ret = wc_MlDsaKey_VerifyCtx(hw, sigSw, sigSzSw, NULL, 0, msg,
+                sizeof(msg), &verified);
+        }
+        if (ret != 0)
+            ret = WC_TEST_RET_ENC_EC(ret);
+    }
+    if ((ret == 0) && ((sigSzSw != sigSzHw) ||
+            (XMEMCMP(sigSw, sigHw, sigSzSw) != 0) || (verified != 1) ||
+            (dev->done == 0))) {
+        ret = WC_TEST_RET_ENC_NC;
+    }
+
+    if (hwInit) {
+    #ifdef WOLF_CRYPTO_CB_FREE
+        #ifdef WOLFSSL_SHAKE128
+        /* Leave the object typed SHAKE-128, as sampling A does. */
+        (void)wc_Shake128_Reset(&hw->shake);
+        #endif
+        dev->watch[0] = &hw->shake;
+        dev->watchFreeType[0] = WC_HASH_TYPE_NONE;
+    #endif
+        wc_MlDsaKey_Free(hw);
+    #ifdef WOLF_CRYPTO_CB_FREE
+        if ((ret == 0) && (dev->watchFreeType[0] != WC_HASH_TYPE_SHAKE256))
+            ret = WC_TEST_RET_ENC_NC;
+        dev->watch[0] = NULL;
+    #endif
+    }
+    if (swInit)
+        wc_MlDsaKey_Free(sw);
+    WC_FREE_VAR_EX(sigHw, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+    WC_FREE_VAR_EX(sigSw, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+    WC_FREE_VAR_EX(hw, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+    WC_FREE_VAR_EX(sw, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+    return ret;
+}
+#endif
+
+/* ML-KEM and ML-DSA must give the same results with their hashing on the
+ * key's device as in software. */
+static wc_test_ret_t cryptocb_pqc_shake_test(void)
+{
+    wc_test_ret_t ret;
+    int i;
+    WC_DECLARE_VAR(dev, PqcHashDev, 1, HEAP_HINT);
+
+    WC_CALLOC_VAR_EX(dev, PqcHashDev, 1, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER,
+        return WC_TEST_RET_ENC_EC(MEMORY_E));
+
+    ret = wc_CryptoCb_RegisterDevice(PQC_SHAKE_CB_TEST_DEVID, pqcHashDevCb,
+        dev);
+    if (ret != 0)
+        ret = WC_TEST_RET_ENC_EC(ret);
+
+#if defined(WOLFSSL_HAVE_MLKEM) && !defined(WOLFSSL_NO_ML_KEM) && \
+    !defined(WOLFSSL_MLKEM_NO_MAKE_KEY) && \
+    !defined(WOLFSSL_MLKEM_NO_ENCAPSULATE) && \
+    !defined(WOLFSSL_MLKEM_NO_DECAPSULATE) && \
+    !defined(WOLF_CRYPTO_CB_ONLY_MLKEM)
+    if (ret == 0)
+        ret = cryptocb_pqc_mlkem_test(dev);
+#endif
+#if defined(WOLFSSL_HAVE_MLDSA) && !defined(WOLFSSL_MLDSA_NO_MAKE_KEY) && \
+    !defined(WOLFSSL_MLDSA_NO_SIGN) && !defined(WOLFSSL_MLDSA_NO_VERIFY) && \
+    defined(WC_MLDSA_HAVE_NATIVE)
+    if (ret == 0)
+        ret = cryptocb_pqc_mldsa_test(dev);
+#endif
+
+    wc_CryptoCb_UnRegisterDevice(PQC_SHAKE_CB_TEST_DEVID);
+    for (i = 0; i < PQC_HASH_DEV_SLOTS; i++) {
+        if (dev->obj[i] != NULL)
+            wc_Shake256_Free(&dev->state[i]);
+    }
+    WC_FREE_VAR_EX(dev, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+    return ret;
+}
+#endif /* PQC_SHAKE_CB_TEST */
+
 #if !defined(WC_TEST_NO_CRYPTOCB_SW_TEST)
 #if !defined(NO_DH) && defined(HAVE_FFDHE_2048) && !defined(WC_NO_RNG)
 /* Own buffer size rather than DH_TEST_BUF_SIZE: that macro is defined inside
@@ -94273,6 +95483,11 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t cryptocb_test(void)
 #if defined(WOLFSSL_HAVE_MLKEM) && !defined(WC_MLKEM_HAVE_NATIVE)
     myCtx.mlkemCount = 0;
     myCtx.mlkemFail = 0;
+#endif
+#if defined(WOLFSSL_HAVE_MLDSA)
+    myCtx.mldsaCount = 0;
+    myCtx.mldsaFail = 0;
+    myCtx.mldsaCbActive = 0;
 #endif
 #ifdef HAVE_ECC
     myCtx.eccMakePubCount = 0;
@@ -95043,6 +96258,7 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t cryptocb_test(void)
 
         ret = mldsa_test();
 
+    #ifdef WC_MLDSA_HAVE_NATIVE
     #if !defined(WOLFSSL_MLDSA_NO_MAKE_KEY) && !defined(HAVE_FIPS)
         if ((ret == 0) && (myCtx.mldsaKeyGenCount == 0))
             ret = WC_TEST_RET_ENC_NC;
@@ -95070,7 +96286,165 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t cryptocb_test(void)
         if ((ret == 0) && (myCtx.mldsaVerifyHashCount == 0))
             ret = WC_TEST_RET_ENC_NC;
     #endif
+    #endif /* WC_MLDSA_HAVE_NATIVE */
     }
+#if !defined(WOLFSSL_MLDSA_NO_SIGN) && \
+    !defined(WOLFSSL_MLDSA_NO_VERIFY) && \
+    !defined(WOLFSSL_MLDSA_NO_MAKE_KEY) && \
+    !defined(WC_NO_RNG) && defined(MLDSA_CB_ONLY_LEVEL)
+    /* Drive key generation, seeded generation, signing, verifying and the
+     * private-key check through a registered device and confirm the results
+     * came back. Runs in native builds too, so the seeded dispatch is covered
+     * where a software path exists to hide a regression. */
+    myCtx.mldsaCbActive = 1;
+    if (ret == 0) {
+        WC_DECLARE_VAR(key, wc_MlDsaKey, 1, HEAP_HINT);
+        WC_DECLARE_VAR(mldsaRng, WC_RNG, 1, HEAP_HINT);
+        byte sig[MLDSA_CB_SIG_LEN];
+        word32 sigLen = (word32)sizeof(sig);
+        static const byte msg[] = "wolfSSL ML-DSA callback-only dispatch";
+        static const byte sigCtx[] = { 0x01, 0x02, 0x03 };
+        int key_inited = 0;
+        int rng_inited = 0;
+        int res = 0;
+        int r;
+
+        WC_ALLOC_VAR(key, wc_MlDsaKey, 1, HEAP_HINT);
+        WC_ALLOC_VAR(mldsaRng, WC_RNG, 1, HEAP_HINT);
+        if ((!WC_VAR_OK(key)) || (!WC_VAR_OK(mldsaRng)))
+            ret = WC_TEST_RET_ENC_EC(MEMORY_E);
+        if (ret == 0) {
+            r = wc_InitRng_ex(mldsaRng, HEAP_HINT, devId);
+            if (r != 0)
+                ret = WC_TEST_RET_ENC_EC(r);
+            else
+                rng_inited = 1;
+        }
+        if (ret == 0) {
+            r = wc_MlDsaKey_Init(key, HEAP_HINT, devId);
+            if (r != 0)
+                ret = WC_TEST_RET_ENC_EC(r);
+            else
+                key_inited = 1;
+        }
+        if (ret == 0) {
+            r = wc_MlDsaKey_SetParams(key, MLDSA_CB_ONLY_LEVEL);
+            if (r != 0)
+                ret = WC_TEST_RET_ENC_EC(r);
+        }
+        /* Key generation has a software fallback in native builds, so require
+         * that each call reached the device. */
+        if (ret == 0) {
+            int before = myCtx.mldsaCount;
+
+            r = wc_MlDsaKey_MakeKey(key, mldsaRng);
+            if (r != 0)
+                ret = WC_TEST_RET_ENC_EC(r);
+            else if (myCtx.mldsaCount != before + 1)
+                ret = WC_TEST_RET_ENC_NC;
+        }
+#ifndef WOLFSSL_MLDSA_NO_MAKE_KEY
+        /* Generating from a caller supplied seed is the device's job too:
+         * the handler fails the call if the seed does not arrive whole. */
+        if (ret == 0) {
+            int before = myCtx.mldsaCount;
+
+            r = wc_MlDsaKey_MakeKeyFromSeed(key, mldsa_cb_seed);
+            if (r != 0)
+                ret = WC_TEST_RET_ENC_EC(r);
+            else if (myCtx.mldsaCount != before + 1)
+                ret = WC_TEST_RET_ENC_NC;
+        }
+#endif
+        if (ret == 0) {
+            r = wc_MlDsaKey_SignCtx(key, sigCtx, (byte)sizeof(sigCtx), sig,
+                    &sigLen, msg, (word32)sizeof(msg), mldsaRng);
+            if (r != 0)
+                ret = WC_TEST_RET_ENC_EC(r);
+            else if (sigLen != MLDSA_CB_SIG_LEN)
+                ret = WC_TEST_RET_ENC_NC;
+        }
+        if (ret == 0) {
+            r = wc_MlDsaKey_VerifyCtx(key, sig, sigLen, sigCtx,
+                    (byte)sizeof(sigCtx), msg, (word32)sizeof(msg), &res);
+            if (r != 0)
+                ret = WC_TEST_RET_ENC_EC(r);
+            else if (res != 1)
+                ret = WC_TEST_RET_ENC_NC;
+        }
+        /* A different context must not verify: proves the context reached the
+         * device rather than being dropped on the way. */
+        if (ret == 0) {
+            static const byte otherCtx[] = { 0x09, 0x09, 0x09 };
+
+            res = 1;
+            r = wc_MlDsaKey_VerifyCtx(key, sig, sigLen, otherCtx,
+                    (byte)sizeof(otherCtx), msg, (word32)sizeof(msg), &res);
+            if (r != 0)
+                ret = WC_TEST_RET_ENC_EC(r);
+            else if (res != 0)
+                ret = WC_TEST_RET_ENC_NC;
+        }
+#ifdef WOLFSSL_MLDSA_CHECK_KEY
+        /* This is the operation a no-device test cannot cover: before the key
+         * check dispatched, it could only ever fail. The handler asserts that
+         * a key generated on the device sends no public key with it. */
+        if (ret == 0) {
+            r = wc_MlDsaKey_CheckKey(key);
+            if (r != 0)
+                ret = WC_TEST_RET_ENC_EC(r);
+        }
+#ifdef WOLFSSL_MLDSA_PUBLIC_KEY
+        /* Import a public key and check again: now the bytes are local, so
+         * the handler asserts they arrive whole. */
+        if (ret == 0) {
+            int pubSz = wc_MlDsaKey_PubSize(key);
+            byte* pubRaw = NULL;
+
+            if (pubSz <= 0) {
+                ret = WC_TEST_RET_ENC_NC;
+            }
+            else {
+                pubRaw = (byte*)XMALLOC((word32)pubSz, HEAP_HINT,
+                        DYNAMIC_TYPE_TMP_BUFFER);
+                if (pubRaw == NULL)
+                    ret = WC_TEST_RET_ENC_EC(MEMORY_E);
+                else
+                    XMEMSET(pubRaw, 0x5a, (word32)pubSz);
+            }
+            if (ret == 0) {
+                r = wc_MlDsaKey_ImportPubRaw(key, pubRaw, (word32)pubSz);
+                if (r != 0)
+                    ret = WC_TEST_RET_ENC_EC(r);
+            }
+            if (ret == 0) {
+                r = wc_MlDsaKey_CheckKey(key);
+                if (r != 0)
+                    ret = WC_TEST_RET_ENC_EC(r);
+            }
+            XFREE(pubRaw, HEAP_HINT, DYNAMIC_TYPE_TMP_BUFFER);
+        }
+#endif /* WOLFSSL_MLDSA_PUBLIC_KEY */
+#endif
+        /* A device error must reach the caller unchanged. */
+        if (ret == 0) {
+            myCtx.mldsaFail = WC_NO_ERR_TRACE(WC_HW_E);
+            sigLen = (word32)sizeof(sig);
+            r = wc_MlDsaKey_SignCtx(key, sigCtx, (byte)sizeof(sigCtx), sig,
+                    &sigLen, msg, (word32)sizeof(msg), mldsaRng);
+            myCtx.mldsaFail = 0;
+            if (r != WC_NO_ERR_TRACE(WC_HW_E))
+                ret = WC_TEST_RET_ENC_NC;
+        }
+        if (key_inited)
+            wc_MlDsaKey_Free(key);
+        if (rng_inited)
+            wc_FreeRng(mldsaRng);
+        WC_FREE_VAR(mldsaRng, HEAP_HINT);
+        WC_FREE_VAR(key, HEAP_HINT);
+    }
+    myCtx.mldsaCbActive = 0;
+#endif /* sign && verify && make key && !WC_NO_RNG */
 #endif
 #ifdef WOLFSSL_HAVE_SLHDSA
     if (ret == 0) {
@@ -95800,6 +97174,14 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t cryptocb_test(void)
 #ifdef NESTED_CB_TEST
     if (ret == 0)
         ret = cryptocb_nested_register_test();
+#endif
+#ifdef PQC_SHAKE_CB_TEST
+    if (ret == 0)
+        ret = cryptocb_pqc_shake_test();
+#endif
+#ifdef SHA3_VARIANT_CB_TEST
+    if (ret == 0)
+        ret = cryptocb_sha3_variant_test();
 #endif
 
     wc_CryptoCb_UnRegisterDevice(devId);

@@ -760,7 +760,8 @@ int wc_linuxkm_GenerateSeed_IntelRD(struct OS_Seed* os, byte* output, word32 sz)
 
 #if defined(WOLFSSL_USE_SAVE_VECTOR_REGISTERS) && defined(CONFIG_X86)
     #include "linuxkm/x86_vector_register_glue.c"
-#elif defined(WOLFSSL_USE_SAVE_VECTOR_REGISTERS) && defined(CONFIG_ARM64)
+#elif defined(WOLFSSL_USE_SAVE_VECTOR_REGISTERS) && \
+      (defined(CONFIG_ARM64) || defined(CONFIG_ARM))
     #include "linuxkm/arm64_vector_register_glue.c"
 #endif
 
@@ -1262,61 +1263,13 @@ static int wolfssl_init(void)
 #ifdef WC_LINUXKM_SVR_DYNAMIC_AUDITING
     {
         long long unsigned int svr_disallowed_count = wc_svr_disallowed_count_current();
-        long long unsigned int svr_disallowed_snapshot;
         if (svr_disallowed_count > 0) {
             pr_err("ERROR: wc_svr_disallowed_count_current() returned %llu after wc_RunAllCast_fips().\n", svr_disallowed_count);
             (void)libwolfssl_cleanup();
             return -ECANCELED;
         }
-
-    #ifdef WC_LINUXKM_HAVE_STACK_DEBUG
-    {
-        unsigned long stack_usage;
-        wc_linuxkm_stack_hwm_prepare(0xee);
-    #endif
-
-        ret = DISABLE_VECTOR_REGISTERS();
-        if (ret != 0) {
-            pr_err("ERROR: DISABLE_VECTOR_REGISTERS() for wc_RunAllCast_fips() returned %d.\n", ret);
-            (void)libwolfssl_cleanup();
-            return -ECANCELED;
-        }
-
-        /* See the snapshot rationale in the wolfCrypt_IntegrityTest_fips()
-         * block above. */
-        svr_disallowed_snapshot = wc_svr_disallowed_count_current();
-
-        ret = wc_RunAllCast_fips();
-
-        REENABLE_VECTOR_REGISTERS();
-
-    #ifdef WC_LINUXKM_HAVE_STACK_DEBUG
-        stack_usage = wc_linuxkm_stack_hwm_measure_rel(0xee);
-        pr_info("STACK INFO: rel usage by wc_RunAllCast_fips() with DISABLE_VECTOR_REGISTERS(): %lu\n", stack_usage);
-        /* shush up false stack HWM reading by kernel: */
-        wc_linuxkm_stack_hwm_prepare(0);
-    }
-    #endif
-
-        svr_disallowed_count = wc_svr_disallowed_count_current();
-        if (svr_disallowed_count <= svr_disallowed_snapshot) {
-            pr_err("ERROR: wc_svr_disallowed_count_current() returned %llu after wc_RunAllCast_fips() with DISABLE_VECTOR_REGISTERS() (snapshot %llu): inhibited-save instrumentation was not exercised.\n", svr_disallowed_count, svr_disallowed_snapshot);
-            (void)libwolfssl_cleanup();
-            return -ECANCELED;
-        }
-
-        if (ret != 0) {
-            pr_err("ERROR: wc_RunAllCast_fips() with DISABLE_VECTOR_REGISTERS() returned %d.\n", ret);
-            (void)libwolfssl_cleanup();
-            return -ECANCELED;
-        }
-
-        ret = wolfCrypt_GetStatus_fips();
-        if (ret != 0) {
-            pr_err("ERROR: wolfCrypt_GetStatus_fips() failed with code %d: %s\n", ret, wc_GetErrorString(ret));
-            (void)libwolfssl_cleanup();
-            return -ECANCELED;
-        }
+        /* The CASTs are not re-run with the registers disabled: CPUID picks
+         * one lane per algorithm, so a refused save is an error there. */
     }
 
 #endif /* WC_LINUXKM_SVR_DYNAMIC_AUDITING */
@@ -1808,6 +1761,9 @@ static int set_up_wolfssl_linuxkm_pie_redirect_table(void) {
 #ifndef __ARCH_MEMCMP_NO_REDIRECT
     wolfssl_linuxkm_pie_redirect_table.memcmp = memcmp;
 #endif
+#ifdef CONFIG_ARM
+    wolfssl_linuxkm_pie_redirect_table.__div0 = __div0;
+#endif
 #ifndef CONFIG_FORTIFY_SOURCE
 #ifndef __ARCH_MEMCPY_NO_REDIRECT
 #ifdef CONFIG_ARM64
@@ -1954,7 +1910,7 @@ static int set_up_wolfssl_linuxkm_pie_redirect_table(void) {
     wolfssl_linuxkm_pie_redirect_table.get_current = my_get_current_thread;
 
 #if defined(WOLFSSL_USE_SAVE_VECTOR_REGISTERS) && \
-    (defined(CONFIG_X86) || defined(CONFIG_ARM64))
+    (defined(CONFIG_X86) || defined(CONFIG_ARM64) || defined(CONFIG_ARM))
     wolfssl_linuxkm_pie_redirect_table.wc_linuxkm_allocate_svr_states = wc_linuxkm_allocate_svr_states;
     wolfssl_linuxkm_pie_redirect_table.wc_can_save_vector_registers_x86 = wc_can_save_vector_registers_x86;
     wolfssl_linuxkm_pie_redirect_table.wc_linuxkm_free_svr_states = wc_linuxkm_free_svr_states;

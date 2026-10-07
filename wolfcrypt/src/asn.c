@@ -4659,7 +4659,8 @@ static int DecodeSubtree(const byte* input, word32 sz, Base_entry** head,
 static int DecodeNameConstraints(const byte* input, word32 sz, DecodedCert* cert);
 #endif
 #if defined(WOLFSSL_SEP) || defined(WOLFSSL_CERT_EXT)
-static int DecodeCertPolicy(const byte* input, word32 sz, DecodedCert* cert);
+static int DecodeCertPolicy(const byte* input, word32 sz, DecodedCert* cert,
+                            int critical);
 #endif
 #ifdef WOLFSSL_SUBJ_DIR_ATTR
 static int DecodeSubjDirAttr(const byte* input, word32 sz, DecodedCert* cert);
@@ -9040,11 +9041,8 @@ static int _RsaPrivateKeyDecode(const byte* input, word32* inOutIdx,
         ret = GetASN_Items(rsaKeyASN, dataASN, rsaKeyASN_Length,
             RSA_ASN_COMPLETE, input, inOutIdx, inSz);
     }
-    /* Check version: 0 - two prime, 1 - multi-prime
-     * Multi-prime has optional sequence after coefficient for extra primes.
-     * If extra primes, parsing will fail as not all the buffer was used.
-     */
-    if ((ret == 0) && (version > PKCS1v1)) {
+    /* Only two-prime (version 0) keys are supported. */
+    if ((ret == 0) && (version != PKCS1v0)) {
         ret = ASN_PARSE_E;
     }
     if ((ret == 0) && (key != NULL)) {
@@ -9993,9 +9991,16 @@ int wc_CheckPrivateKey(const byte* privKey, word32 privKeySz,
             keyIdx = 0;
             if ((ret = wc_MlDsaKey_ImportPubRaw(key_pair, pubKey,
                                                pubKeySz)) == 0) {
+            #ifdef WOLFSSL_MLDSA_CHECK_KEY
                 /* Public and private extracted successfully. Sanity check. */
                 if ((ret = wc_MlDsaKey_CheckKey(key_pair)) == 0)
                     ret = 1;
+            #else
+                /* Without the key check the pair cannot be confirmed to
+                 * match, so do not claim that it does. */
+                ret = NOT_COMPILED_IN;
+                WOLFSSL_ERROR_VERBOSE(ret);
+            #endif
             }
         }
         wc_MlDsaKey_Free(key_pair);
@@ -17687,9 +17692,9 @@ static int HashForSignature(const byte* buf, word32 bufSz, word32 sigOID,
 #endif /* !NO_ASN_CRYPT && !NO_HASH_WRAPPER */
 
 #if !defined(NO_DSA) && !defined(HAVE_SELFTEST)
-/* Try to parse as ASN.1 bitstring */
+/* Parse as an ASN.1 bitstring into sigCpy as r||s, each zero padded to qSz. */
 static int DecodeDsaAsn1Sig(const byte* sig, word32 sigSz, byte* sigCpy,
-    void* heap)
+    int qSz, void* heap)
 {
     int ret = 0;
     int rSz = 0, sSz = 0, mpinit = 0;
@@ -17722,14 +17727,14 @@ static int DecodeDsaAsn1Sig(const byte* sig, word32 sigSz, byte* sigCpy,
     if (ret == 0) {
         rSz = mp_unsigned_bin_size(r);
         sSz = mp_unsigned_bin_size(s);
-        if (rSz + sSz > (int)sigSz) {
+        if (rSz > qSz || sSz > qSz) {
             WOLFSSL_MSG("DSA sig size invalid");
             ret = ASN_SIG_CONFIRM_E;
         }
     }
     if (ret == 0) {
-        if (mp_to_unsigned_bin(r, sigCpy) != MP_OKAY ||
-            mp_to_unsigned_bin(s, sigCpy + rSz) != MP_OKAY) {
+        if (mp_to_unsigned_bin_len(r, sigCpy, qSz) != MP_OKAY ||
+            mp_to_unsigned_bin_len(s, sigCpy + qSz, qSz) != MP_OKAY) {
             WOLFSSL_MSG("DSA sig to unsigned bin failed!");
             ret = ASN_SIG_CONFIRM_E;
         }
@@ -18050,6 +18055,7 @@ int ConfirmSignature(SignatureCtx* sigCtx,
                 case DSAk:
                 {
                     word32 idx = 0;
+                    int qSz;
 
                     if (sigSz < DSA_MIN_SIG_SIZE) {
                         WOLFSSL_MSG("Verify Signature is too small");
@@ -18070,26 +18076,33 @@ int ConfirmSignature(SignatureCtx* sigCtx,
                         WOLFSSL_MSG("wc_InitDsaKey_h error");
                         goto exit_cs;
                     }
-                #ifndef WOLFSSL_NO_MALLOC
-                    sigCtx->sigCpy = (byte*)XMALLOC(sigSz,
-                                         sigCtx->heap, DYNAMIC_TYPE_SIGNATURE);
-                    if (sigCtx->sigCpy == NULL) {
-                        ERROR_OUT(MEMORY_E, exit_cs);
-                    }
-                #endif
                     if ((ret = wc_DsaPublicKeyDecode(key, &idx, sigCtx->key.dsa,
                                                                  keySz)) != 0) {
                         WOLFSSL_MSG("ASN Key decode error DSA");
                         WOLFSSL_ERROR_VERBOSE(ret);
                         goto exit_cs;
                     }
-                    if (sigSz != DSA_160_SIG_SIZE &&
-                        sigSz != DSA_256_SIG_SIZE) {
-                        ret = DecodeDsaAsn1Sig(sig, sigSz, sigCtx->sigCpy,
-                            sigCtx->heap);
+                    /* wc_DsaVerify() reads 2 * |q| bytes from sigCpy, so size
+                     * the copy from the key and reject any |q| the DSA code
+                     * cannot produce a signature for. */
+                    qSz = mp_unsigned_bin_size(&sigCtx->key.dsa->q);
+                    if (qSz < DSA_MIN_HALF_SIZE || qSz > DSA_MAX_HALF_SIZE) {
+                        WOLFSSL_MSG("Verify DSA key q size invalid");
+                        ERROR_OUT(ASN_SIG_CONFIRM_E, exit_cs);
+                    }
+                #ifndef WOLFSSL_NO_MALLOC
+                    sigCtx->sigCpy = (byte*)XMALLOC((word32)(2 * qSz),
+                                         sigCtx->heap, DYNAMIC_TYPE_SIGNATURE);
+                    if (sigCtx->sigCpy == NULL) {
+                        ERROR_OUT(MEMORY_E, exit_cs);
+                    }
+                #endif
+                    if (sigSz == (word32)(2 * qSz)) {
+                        XMEMCPY(sigCtx->sigCpy, sig, sigSz);
                     }
                     else {
-                        XMEMCPY(sigCtx->sigCpy, sig, sigSz);
+                        ret = DecodeDsaAsn1Sig(sig, sigSz, sigCtx->sigCpy, qSz,
+                            sigCtx->heap);
                     }
                     break;
                 }
@@ -22418,7 +22431,8 @@ exit:
 
 /* Reference: https://tools.ietf.org/html/rfc5280#section-4.2.1.4 */
 #ifdef WOLFSSL_ASN_TEMPLATE
-static int DecodeCertPolicy(const byte* input, word32 sz, DecodedCert* cert)
+static int DecodeCertPolicy(const byte* input, word32 sz, DecodedCert* cert,
+                            int critical)
 {
     word32 idx = 0;
     word32 seqEnd = 0;
@@ -22429,6 +22443,10 @@ static int DecodeCertPolicy(const byte* input, word32 sz, DecodedCert* cert)
 #endif
 
     WOLFSSL_ENTER("DecodeCertPolicy");
+
+#if !defined(WOLFSSL_CERT_EXT) || defined(WOLFSSL_NO_ASN_STRICT)
+    (void)critical;
+#endif
 
     /* Check if cert is null before dereferencing below */
     if (cert == NULL) {
@@ -22528,7 +22546,25 @@ static int DecodeCertPolicy(const byte* input, word32 sz, DecodedCert* cert)
     #endif /* WOLFSSL_CERT_EXT */
     }
 
-    WOLFSSL_LEAVE("DecodeCertPolicy", 0);
+#if defined(WOLFSSL_CERT_EXT) && !defined(WOLFSSL_NO_ASN_STRICT)
+    /* RFC 5280 4.2: reject a critical extension whose information cannot be
+     * fully processed. The loop above stops once the fixed-size store fills
+     * (MAX_CERTPOL_NB); if policies remain (idx has not reached the end of the
+     * SEQUENCE), a critical certificatePolicies cannot be honoured. Report it
+     * as an unsupported critical extension (ASN_CRIT_EXT_E) - the same code
+     * the "policy support not compiled" case returns for identical input -
+     * so DecodeCertExtensions defers it like every other such extension
+     * instead of aborting the parse immediately. A non-critical one may be
+     * left partially processed (relying parties may ignore it), so it is
+     * still accepted. */
+    if ((ret == 0) && critical && (idx < seqEnd)) {
+        WOLFSSL_MSG("Cannot fully process critical certificatePolicies");
+        WOLFSSL_ERROR_VERBOSE(ASN_CRIT_EXT_E);
+        ret = ASN_CRIT_EXT_E;
+    }
+#endif /* WOLFSSL_CERT_EXT && !WOLFSSL_NO_ASN_STRICT */
+
+    WOLFSSL_LEAVE("DecodeCertPolicy", ret);
     return ret;
 }
 #endif /* WOLFSSL_ASN_TEMPLATE */
@@ -23039,7 +23075,11 @@ WOLFSSL_TEST_VIS int DecodeExtensionType(const byte* input, word32 length,
         #ifdef WOLFSSL_SEP
             cert->extCertPolicyCrit = critical ? 1 : 0;
         #endif
-            if (DecodeCertPolicy(input, length, cert) < 0) {
+            ret = DecodeCertPolicy(input, length, cert, critical);
+            /* Preserve ASN_CRIT_EXT_E so it is deferred like the other
+             * unsupported-critical-extension paths; map any other failure to
+             * ASN_PARSE_E. */
+            if ((ret != 0) && (ret != WC_NO_ERR_TRACE(ASN_CRIT_EXT_E))) {
                 ret = ASN_PARSE_E;
             }
         #else

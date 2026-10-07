@@ -484,8 +484,19 @@ static int VerifyCRLE(const WOLFSSL_CRL* crl, CRL_Entry* crle,
 #ifndef NO_SKID
     if (crle->extAuthKeyIdSet)
         ca = GetCA(cm, crle->extAuthKeyId);
-    if (ca == NULL)
+    /* The AKID only picks out a key. Without a matching name the CRL belongs
+     * to another issuer and this CA cannot speak for it. */
+    if ((ca != NULL) && (XMEMCMP(crle->issuerHash, ca->subjectNameHash,
+            CRL_DIGEST_SIZE) != 0)) {
+        ca = NULL;
+    }
+    if (ca == NULL) {
         ca = GetCAByName(cm, crle->issuerHash);
+        if ((ca != NULL) && crle->extAuthKeyIdSet) {
+            WOLFSSL_MSG("CA SKID doesn't match AKID");
+            ca = NULL;
+        }
+    }
 #else /* NO_SKID */
     ca = GetCA(cm, crle->issuerHash);
 #endif /* NO_SKID */
@@ -836,6 +847,9 @@ static int AddCRL(WOLFSSL_CRL* crl, DecodedCRL* dcrl, CRL_Entry* crle,
 {
     CRL_Entry* curr = NULL;
     CRL_Entry* prev = NULL;
+#if defined(OPENSSL_EXTRA)
+    CRL_Entry* oldHead;
+#endif
 #ifdef HAVE_CRL_UPDATE_CB
     CrlInfo old;
     CrlInfo cnew;
@@ -856,6 +870,10 @@ static int AddCRL(WOLFSSL_CRL* crl, DecodedCRL* dcrl, CRL_Entry* crle,
         WOLFSSL_MSG("wc_LockRwLock_Wr failed");
         return BAD_MUTEX_E;
     }
+
+#if defined(OPENSSL_EXTRA)
+    oldHead = crl->crlList;
+#endif
 
     for (curr = crl->crlList; curr != NULL; curr = curr->next) {
         if (XMEMCMP(curr->issuerHash, crle->issuerHash, CRL_DIGEST_SIZE) == 0) {
@@ -903,6 +921,14 @@ static int AddCRL(WOLFSSL_CRL* crl, DecodedCRL* dcrl, CRL_Entry* crle,
         crle->next = crl->crlList;
         crl->crlList = crle;
     }
+
+#if defined(OPENSSL_EXTRA)
+    /* Cached STACK_OF(X509_REVOKED) is built from the head entry only */
+    if ((crl->crlList != oldHead) && (crl->revokedStack != NULL)) {
+        wolfSSL_sk_pop_free(crl->revokedStack, NULL);
+        crl->revokedStack = NULL;
+    }
+#endif
 
     wc_UnLockRwLock(&crl->crlLock);
     return 0;
@@ -1663,6 +1689,11 @@ int wolfSSL_X509_STORE_add_crl(WOLFSSL_X509_STORE *store, WOLFSSL_X509_CRL *newc
         toAdd = DupCRL_list(newcrl->crlList, crl->heap);
         if (crl != newcrl)
             wc_UnLockRwLock(&newcrl->crlLock);
+        if (toAdd == NULL) {
+            WOLFSSL_MSG("DupCRL_list failed");
+            wc_UnLockRwLock(&crl->crlLock);
+            return WOLFSSL_FAILURE;
+        }
 
         tail = &crl->crlList;
         while (*tail != NULL)
@@ -1754,6 +1785,14 @@ static int SwapLists(WOLFSSL_CRL* crl)
     /* swap lists */
     tmp->crlList  = crl->crlList;
     crl->crlList = newList;
+
+#if defined(OPENSSL_EXTRA)
+    /* Head entry changed, cached STACK_OF(X509_REVOKED) is stale */
+    if (crl->revokedStack != NULL) {
+        wolfSSL_sk_pop_free(crl->revokedStack, NULL);
+        crl->revokedStack = NULL;
+    }
+#endif
 
     wc_UnLockRwLock(&crl->crlLock);
 

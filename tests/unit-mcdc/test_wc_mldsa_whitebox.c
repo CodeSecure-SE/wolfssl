@@ -47,9 +47,9 @@
  * the binary always returns 0 so the harness keeps the variant.
  */
 
-/* SAVE_VECTOR_REGISTERS2() gates every SIMD dispatch in this file. In a
- * userspace build types.h resolves it to the literal 0, so "(0 == 0)" is
- * structurally true and that operand has no false side at all -- it is real
+/* SAVE_VECTOR_REGISTERS2() is taken by every SIMD lane in this file, and a
+ * refusal is returned as an error. In a userspace build types.h resolves it
+ * to the literal 0, so the refusal branch is unreachable -- it is real
  * only where the save can be refused (the kernel-module build, where it
  * becomes WC_CHECK_FOR_INTR_SIGNALS()). That is the #ifndef extension point
  * types.h offers, so defining it here -- BEFORE any wolfSSL header is reached
@@ -251,6 +251,12 @@ static void wb_check_low(void)
         WB_NOTE("mldsa_check_low(>=hi) expected 0");
     }
 
+#if (!defined(WOLFSSL_MLDSA_NO_VERIFY) && \
+     !defined(WOLFSSL_MLDSA_VERIFY_SMALLEST_MEM)) || \
+    (!defined(WOLFSSL_MLDSA_NO_SIGN) && \
+     (!defined(WOLFSSL_MLDSA_SIGN_SMALL_MEM) || \
+      (defined(WOLFSSL_MLDSA_SIGN_CHECK_Y) && \
+       !defined(WOLFSSL_MLDSA_SIGN_SMALLEST_MEM))))
     /* Vector level: two polynomials, both in range -> (ret==1)&&(i<l) walks
      * both, returns 1; then a first-poly-out-of-range -> early ret 0. */
     for (j = 0; j < 2 * MLDSA_N; j++) {
@@ -265,9 +271,149 @@ static void wb_check_low(void)
     if (ret != 0) {
         WB_NOTE("mldsa_vec_check_low_c(out) expected 0");
     }
+#endif
     WB_OK("mldsa_check_low / vec_check_low_c operand pairs exercised");
 }
 #endif
+
+#if !defined(WOLFSSL_MLDSA_NO_SIGN) || !defined(WOLFSSL_MLDSA_NO_VERIFY)
+/* ------------------------------------------------------------------ *
+ * mldsa_check_low / mldsa_vec_check_low_c boundaries: drive the four
+ * boundary values and confirm no early exit hides a later failure.
+ * ------------------------------------------------------------------ */
+static void wb_check_low_bounds(void)
+{
+    sword32 a[2 * MLDSA_N];
+    sword32 hi = 1 << 17;
+    unsigned int j;
+
+    for (j = 0; j < 2 * MLDSA_N; j++) {
+        a[j] = 0;
+    }
+
+    /* Boundaries: hi-1 and -hi+1 are in range, hi and -hi are not. */
+    a[0] = hi - 1;
+    if (mldsa_check_low(a, hi) != 1) {
+        WB_NOTE("mldsa_check_low(hi-1) expected 1");
+    }
+    a[0] = -hi + 1;
+    if (mldsa_check_low(a, hi) != 1) {
+        WB_NOTE("mldsa_check_low(-hi+1) expected 1");
+    }
+    a[0] = hi;
+    if (mldsa_check_low(a, hi) != 0) {
+        WB_NOTE("mldsa_check_low(hi) expected 0");
+    }
+    a[0] = -hi;
+    if (mldsa_check_low(a, hi) != 0) {
+        WB_NOTE("mldsa_check_low(-hi) expected 0");
+    }
+
+    /* The last coefficient must count: an early exit would miss it. */
+    a[0] = 0;
+    a[MLDSA_N - 1] = hi;
+    if (mldsa_check_low(a, hi) != 0) {
+        WB_NOTE("mldsa_check_low(last coeff) expected 0");
+    }
+    a[MLDSA_N - 1] = 0;
+
+#if (!defined(WOLFSSL_MLDSA_NO_VERIFY) && \
+     !defined(WOLFSSL_MLDSA_VERIFY_SMALLEST_MEM)) || \
+    (!defined(WOLFSSL_MLDSA_NO_SIGN) && \
+     (!defined(WOLFSSL_MLDSA_SIGN_SMALL_MEM) || \
+      (defined(WOLFSSL_MLDSA_SIGN_CHECK_Y) && \
+       !defined(WOLFSSL_MLDSA_SIGN_SMALLEST_MEM))))
+    /* Vector form must fail on a bad coefficient in the LAST polynomial,
+     * which only holds because it does not exit early. */
+    if (mldsa_vec_check_low_c(a, 2, hi) != 1) {
+        WB_NOTE("mldsa_vec_check_low_c(in-range,l=2) expected 1");
+    }
+    a[2 * MLDSA_N - 1] = hi;
+    if (mldsa_vec_check_low_c(a, 2, hi) != 0) {
+        WB_NOTE("mldsa_vec_check_low_c(last poly) expected 0");
+    }
+#endif
+
+    WB_OK("mldsa_check_low / vec_check_low_c boundaries exercised");
+}
+#endif
+
+#if !defined(WOLFSSL_MLDSA_NO_SIGN) && \
+    defined(WOLFSSL_MLDSA_SIGN_SMALLEST_MEM)
+/* ------------------------------------------------------------------ *
+ * mldsa_poly_checksum: the smallest memory signer binds the polynomial of y
+ * it regenerates for z to the one it used for w, raising BAD_COND_E when they
+ * differ. That branch needs a fault to reach, so the property is tested
+ * directly: any single changed coefficient must change the checksum.
+ * ------------------------------------------------------------------ */
+static void wb_poly_checksum(void)
+{
+    sword32 a[MLDSA_N];
+    word64 base;
+    unsigned int j;
+    unsigned int pos[4];
+    unsigned int p;
+
+    for (j = 0; j < MLDSA_N; j++) {
+        a[j] = (sword32)(j * 7);
+    }
+    base = mldsa_poly_checksum(a);
+
+    /* Same input, same checksum: the comparison in the signer only fires
+     * on a real difference. */
+    if (mldsa_poly_checksum(a) != base) {
+        WB_NOTE("mldsa_poly_checksum is not deterministic");
+    }
+
+    /* First, last and two interior coefficients. */
+    pos[0] = 0;
+    pos[1] = 1;
+    pos[2] = MLDSA_N / 2;
+    pos[3] = MLDSA_N - 1;
+    for (p = 0; p < 4; p++) {
+        sword32 keep = a[pos[p]];
+
+        a[pos[p]] = keep ^ 1;
+        if (mldsa_poly_checksum(a) == base) {
+            WB_NOTE("mldsa_poly_checksum missed a changed coefficient");
+        }
+        a[pos[p]] = keep;
+    }
+
+    /* Two coefficients swapped: same multiset, different polynomial. */
+    if (MLDSA_N >= 2) {
+        sword32 k0 = a[0];
+
+        a[0] = a[1];
+        a[1] = k0;
+        if (mldsa_poly_checksum(a) == base) {
+            WB_NOTE("mldsa_poly_checksum missed a reordering");
+        }
+        a[1] = a[0];
+        a[0] = k0;
+    }
+
+    /* Equal deltas 32 apart cancel in a rotating exclusive-or checksum. */
+    a[0] += 1;
+    a[32] += 1;
+    if (mldsa_poly_checksum(a) == base) {
+        WB_NOTE("mldsa_poly_checksum missed equal changes 32 apart");
+    }
+    a[0] -= 1;
+    a[32] -= 1;
+
+    /* Opposite deltas cancel in a plain sum. */
+    a[MLDSA_N - 2] += 5;
+    a[MLDSA_N - 1] -= 5;
+    if (mldsa_poly_checksum(a) == base) {
+        WB_NOTE("mldsa_poly_checksum missed opposite changes");
+    }
+    a[MLDSA_N - 2] -= 5;
+    a[MLDSA_N - 1] += 5;
+
+    WB_OK("mldsa_poly_checksum change detection exercised");
+}
+#endif /* WOLFSSL_MLDSA_SIGN_SMALLEST_MEM */
 
 /* ------------------------------------------------------------------ *
  * mldsa_check_hint: two inner loop decisions that the 3-outcome test
@@ -331,7 +477,8 @@ static void wb_check_hint_inner_loops(void)
 /* ------------------------------------------------------------------ *
  * mldsa_make_hint_88 / _32 / mldsa_make_hint: the 3-way compound
  *   (s>LOW) || (s<-LOW) || ((s==-LOW) && (w1!=0))
- * and the too-many-hints guard (idx>OMEGA -> -1), plus mldsa_make_hint's
+ * and the too-many-hints guard (idx>OMEGA -> *valid = 0), plus
+ * mldsa_make_hint's
  * gamma2 dispatch (88 arm / 32 arm / neither).
  * ------------------------------------------------------------------ */
 #ifndef WOLFSSL_MLDSA_NO_SIGN
@@ -342,6 +489,7 @@ static void wb_make_hint_88(void)
     sword32 w1[MLDSA_N];
     byte    h[256];
     byte    idx;
+    int     valid;
     unsigned int j;
     int ret;
     const sword32 low = (sword32)MLDSA_Q_LOW_88;
@@ -353,7 +501,7 @@ static void wb_make_hint_88(void)
 
     /* All three operands FALSE for every coefficient -> no hint, idx stays 0. */
     idx = 0;
-    ret = mldsa_make_hint_88(s, w1, h, &idx);
+    ret = mldsa_make_hint_88(s, w1, h, &idx, &valid);
     if ((ret != 0) || (idx != 0)) {
         WB_NOTE("mldsa_make_hint_88(no-hint) unexpected");
     }
@@ -361,7 +509,7 @@ static void wb_make_hint_88(void)
     /* First operand TRUE (s > LOW). */
     idx = 0;
     s[1] = low + 1;
-    ret = mldsa_make_hint_88(s, w1, h, &idx);
+    ret = mldsa_make_hint_88(s, w1, h, &idx, &valid);
     if ((ret != 0) || (idx != 1)) {
         WB_NOTE("mldsa_make_hint_88(s>LOW) unexpected");
     }
@@ -370,7 +518,7 @@ static void wb_make_hint_88(void)
     idx = 0;
     s[1] = 0;
     s[2] = -low - 1;
-    ret = mldsa_make_hint_88(s, w1, h, &idx);
+    ret = mldsa_make_hint_88(s, w1, h, &idx, &valid);
     if ((ret != 0) || (idx != 1)) {
         WB_NOTE("mldsa_make_hint_88(s<-LOW) unexpected");
     }
@@ -380,7 +528,7 @@ static void wb_make_hint_88(void)
     s[2] = 0;
     s[3] = -low;
     w1[3] = 1;
-    ret = mldsa_make_hint_88(s, w1, h, &idx);
+    ret = mldsa_make_hint_88(s, w1, h, &idx, &valid);
     if ((ret != 0) || (idx != 1)) {
         WB_NOTE("mldsa_make_hint_88(s==-LOW,w1!=0) unexpected");
     }
@@ -389,7 +537,7 @@ static void wb_make_hint_88(void)
      * (independence of the w1!=0 operand). */
     idx = 0;
     w1[3] = 0;
-    ret = mldsa_make_hint_88(s, w1, h, &idx);
+    ret = mldsa_make_hint_88(s, w1, h, &idx, &valid);
     if ((ret != 0) || (idx != 0)) {
         WB_NOTE("mldsa_make_hint_88(s==-LOW,w1==0) unexpected");
     }
@@ -400,9 +548,9 @@ static void wb_make_hint_88(void)
         s[j] = low + 1;
         w1[j] = 0;
     }
-    ret = mldsa_make_hint_88(s, w1, h, &idx);
-    if (ret != -1) {
-        WB_NOTE("mldsa_make_hint_88(too-many) expected -1");
+    ret = mldsa_make_hint_88(s, w1, h, &idx, &valid);
+    if ((ret != 0) || (valid != 0)) {
+        WB_NOTE("mldsa_make_hint_88(too-many) expected valid = 0");
     }
     WB_OK("mldsa_make_hint_88 operand + overflow pairs exercised");
 }
@@ -415,6 +563,7 @@ static void wb_make_hint_32(void)
     sword32 w1[MLDSA_N];
     byte    h[256];
     byte    idx;
+    int     valid;
     unsigned int j;
     int ret;
     const sword32 low = (sword32)MLDSA_Q_LOW_32;
@@ -427,7 +576,7 @@ static void wb_make_hint_32(void)
 
     /* No hint. */
     idx = 0;
-    ret = mldsa_make_hint_32(s, w1, omega, h, &idx);
+    ret = mldsa_make_hint_32(s, w1, omega, h, &idx, &valid);
     if ((ret != 0) || (idx != 0)) {
         WB_NOTE("mldsa_make_hint_32(no-hint) unexpected");
     }
@@ -435,7 +584,7 @@ static void wb_make_hint_32(void)
     /* s > LOW. */
     idx = 0;
     s[1] = low + 1;
-    ret = mldsa_make_hint_32(s, w1, omega, h, &idx);
+    ret = mldsa_make_hint_32(s, w1, omega, h, &idx, &valid);
     if ((ret != 0) || (idx != 1)) {
         WB_NOTE("mldsa_make_hint_32(s>LOW) unexpected");
     }
@@ -444,7 +593,7 @@ static void wb_make_hint_32(void)
     idx = 0;
     s[1] = 0;
     s[2] = -low - 1;
-    ret = mldsa_make_hint_32(s, w1, omega, h, &idx);
+    ret = mldsa_make_hint_32(s, w1, omega, h, &idx, &valid);
     if ((ret != 0) || (idx != 1)) {
         WB_NOTE("mldsa_make_hint_32(s<-LOW) unexpected");
     }
@@ -454,7 +603,7 @@ static void wb_make_hint_32(void)
     s[2] = 0;
     s[3] = -low;
     w1[3] = 1;
-    ret = mldsa_make_hint_32(s, w1, omega, h, &idx);
+    ret = mldsa_make_hint_32(s, w1, omega, h, &idx, &valid);
     if ((ret != 0) || (idx != 1)) {
         WB_NOTE("mldsa_make_hint_32(s==-LOW,w1!=0) unexpected");
     }
@@ -462,7 +611,7 @@ static void wb_make_hint_32(void)
     /* (s == -LOW) && (w1 == 0) -> no hint. */
     idx = 0;
     w1[3] = 0;
-    ret = mldsa_make_hint_32(s, w1, omega, h, &idx);
+    ret = mldsa_make_hint_32(s, w1, omega, h, &idx, &valid);
     if ((ret != 0) || (idx != 0)) {
         WB_NOTE("mldsa_make_hint_32(s==-LOW,w1==0) unexpected");
     }
@@ -472,9 +621,9 @@ static void wb_make_hint_32(void)
     for (j = 0; j < MLDSA_N; j++) {
         s[j] = low + 1;
     }
-    ret = mldsa_make_hint_32(s, w1, omega, h, &idx);
-    if (ret != -1) {
-        WB_NOTE("mldsa_make_hint_32(too-many) expected -1");
+    ret = mldsa_make_hint_32(s, w1, omega, h, &idx, &valid);
+    if ((ret != 0) || (valid != 0)) {
+        WB_NOTE("mldsa_make_hint_32(too-many) expected valid = 0");
     }
     WB_OK("mldsa_make_hint_32 operand + overflow pairs exercised");
 }
@@ -488,6 +637,7 @@ static void wb_make_hint_dispatch(void)
     byte    h[512];
     unsigned int j;
     int ret;
+    int valid;
 
     for (j = 0; j < PARAMS_ML_DSA_44_K * MLDSA_N; j++) {
         s[j] = 0;
@@ -498,16 +648,16 @@ static void wb_make_hint_dispatch(void)
 #ifndef WOLFSSL_NO_ML_DSA_44
     /* gamma2 == MLDSA_Q_LOW_88 arm. */
     ret = mldsa_make_hint(s, w1, PARAMS_ML_DSA_44_K, MLDSA_Q_LOW_88,
-        PARAMS_ML_DSA_44_OMEGA, h);
-    if (ret < 0) {
+        PARAMS_ML_DSA_44_OMEGA, h, &valid);
+    if ((ret != 0) || (valid != 1)) {
         WB_NOTE("mldsa_make_hint(88 arm) unexpected");
     }
 #endif
 #if !defined(WOLFSSL_NO_ML_DSA_65) || !defined(WOLFSSL_NO_ML_DSA_87)
     /* gamma2 == MLDSA_Q_LOW_32 arm. */
     XMEMSET(h, 0, sizeof(h));
-    ret = mldsa_make_hint(s, w1, 4, MLDSA_Q_LOW_32, 55, h);
-    if (ret < 0) {
+    ret = mldsa_make_hint(s, w1, 4, MLDSA_Q_LOW_32, 55, h, &valid);
+    if ((ret != 0) || (valid != 1)) {
         WB_NOTE("mldsa_make_hint(32 arm) unexpected");
     }
 #endif
@@ -515,8 +665,8 @@ static void wb_make_hint_dispatch(void)
      * small omega so the trailing XMEMSET(h+idx, 0, omega-idx) stays in
      * bounds (idx==0 here). */
     XMEMSET(h, 0, sizeof(h));
-    ret = mldsa_make_hint(s, w1, 1, 12345, 1, h);
-    if (ret != 0) {
+    ret = mldsa_make_hint(s, w1, 1, 12345, 1, h, &valid);
+    if ((ret != 0) || (valid != 1)) {
         WB_NOTE("mldsa_make_hint(neither arm) expected 0");
     }
     WB_OK("mldsa_make_hint gamma2 dispatch arms exercised");
@@ -939,7 +1089,7 @@ static void wb_dispatch_rows(void)
         { CPUID_INTEL, CPUID_AVX512_BW,            0 },  /* F set, BW clear  */
         { CPUID_INTEL, CPUID_AVX512_BW,            1 },  /* BW clear, refuse */
         /* The AVX512 matrix/mask dispatches read
-         *   USE_INTEL_AVX512(f) && IS_INTEL_BMI2(f) && (save == 0)
+         *   USE_INTEL_AVX512(f) && IS_INTEL_BMI2(f)
          * so their BMI2 operand only takes its false side on a row that keeps
          * AVX512 and drops BMI2 -- dropping both together (further down)
          * never evaluates it. */
@@ -1422,6 +1572,11 @@ int main(void)
     wb_get_params();
 #if !defined(WOLFSSL_MLDSA_NO_SIGN) || !defined(WOLFSSL_MLDSA_NO_VERIFY)
     wb_check_low();
+    wb_check_low_bounds();
+#endif
+#if !defined(WOLFSSL_MLDSA_NO_SIGN) && \
+    defined(WOLFSSL_MLDSA_SIGN_SMALLEST_MEM)
+    wb_poly_checksum();
 #endif
 #ifndef WOLFSSL_MLDSA_NO_SIGN
 #ifndef WOLFSSL_NO_ML_DSA_44

@@ -3416,14 +3416,6 @@
     #define WOLFSSL_CRYPT_HW_MUTEX 1
 #endif
 
-/* SE05x operations share one session and transport. Enable the wolfCrypt
- * hardware mutex by default so the public SE05x lock API and the port's
- * internal serialization are effective in normal threaded builds. */
-#if defined(WOLFSSL_SE050) && !defined(SINGLE_THREADED) && \
-    !defined(WOLFSSL_CRYPT_HW_MUTEX)
-    #define WOLFSSL_CRYPT_HW_MUTEX 1
-#endif
-
 #if !defined(XMALLOC_USER) && !defined(MICRIUM_MALLOC) && \
     !defined(WOLFSSL_LEANPSK) && !defined(NO_WOLFSSL_MEMORY) && \
     !defined(XMALLOC_OVERRIDE)
@@ -3892,7 +3884,7 @@
      (defined(HAVE_CURVE25519) && defined(HAVE_CURVE25519_KEY_EXPORT)) || \
      (defined(HAVE_ED448)      && defined(HAVE_ED448_KEY_EXPORT)) || \
      (defined(HAVE_CURVE448)   && defined(HAVE_CURVE448_KEY_EXPORT)) || \
-      defined(HAVE_FALCON) || defined(HAVE_DILITHIUM) || \
+      defined(HAVE_FALCON) || defined(WOLFSSL_HAVE_MLDSA) || \
       defined(WOLFSSL_HAVE_FRODOKEM) || \
      (defined(WOLFSSL_HAVE_MLKEM) && !defined(WOLFSSL_MLKEM_NO_ASN1)) || \
       defined(WOLFSSL_HAVE_SLHDSA) || \
@@ -3906,7 +3898,7 @@
      (defined(HAVE_CURVE25519) && defined(HAVE_CURVE25519_KEY_IMPORT)) || \
      (defined(HAVE_ED448)      && defined(HAVE_ED448_KEY_IMPORT)) || \
      (defined(HAVE_CURVE448)   && defined(HAVE_CURVE448_KEY_IMPORT)) || \
-      defined(HAVE_FALCON) || defined(HAVE_DILITHIUM) || \
+      defined(HAVE_FALCON) || defined(WOLFSSL_HAVE_MLDSA) || \
       defined(WOLFSSL_HAVE_FRODOKEM) || \
      (defined(WOLFSSL_HAVE_MLKEM) && !defined(WOLFSSL_MLKEM_NO_ASN1)) || \
       defined(WOLFSSL_HAVE_SLHDSA) || \
@@ -4842,6 +4834,19 @@
     #undef DEBUG_VECTOR_REGISTER_ACCESS_FUZZING
 #endif
 
+/* CPUID pins the lane in these files, so a refused save is an error and
+ * never a switch to the C code kept for CPUs without the feature. */
+#if (defined(_WC_BUILDING_SP_X86_64_C) || \
+     defined(_WC_BUILDING_WC_MLKEM_POLY_C) || \
+     defined(_WC_BUILDING_WC_MLDSA_C) || \
+     defined(_WC_BUILDING_WC_SLHDSA_C) || \
+     defined(_WC_BUILDING_WC_LMS_IMPL_C) || \
+     defined(_WC_BUILDING_WC_XMSS_IMPL_C)) && \
+    defined(DEBUG_VECTOR_REGISTER_ACCESS_FUZZING) && \
+    !defined(DEBUG_FORCE_VECTOR_REGISTER_ACCESS_FUZZING)
+    #undef DEBUG_VECTOR_REGISTER_ACCESS_FUZZING
+#endif
+
 /* Make sure setting OPENSSL_ALL also sets OPENSSL_EXTRA. */
 #if defined(OPENSSL_ALL) && !defined(OPENSSL_EXTRA)
     #define OPENSSL_EXTRA
@@ -4930,6 +4935,41 @@
     !defined(WOLFSSL_CURVE25519_BLINDING) && !defined(NO_CURVE25519_BLINDING) \
     && !defined(WC_NO_RNG)
     #define WOLFSSL_CURVE25519_BLINDING
+#endif
+
+#if ((defined(HAVE_FIPS) && FIPS_VERSION3_GE(7,0,0)) || \
+     defined(WOLFSSL_FIPS_READY) || defined(WOLFSSL_FIPS_DEV)) && \
+    defined(WOLFSSL_ARMASM) && !defined(__aarch64__) && \
+    !defined(WOLFSSL_ARMASM_THUMB2)
+    /* One AES and one SHA-256 per build, nothing picked at run time; the asm
+     * files still keep the body a no-crypto or no-NEON build needs. */
+    #ifndef WOLFSSL_ARMASM_NO_BASE_IMPL
+        #define WOLFSSL_ARMASM_NO_BASE_IMPL
+    #endif
+    #if !defined(WOLFSSL_ARMASM_NO_HW_CRYPTO) && \
+        !defined(WOLFSSL_ARMASM_NO_NEON_IMPL)
+        #define WOLFSSL_ARMASM_NO_NEON_IMPL
+    #endif
+    /* The kernel module's DRBG runs SHA-512, and reseeds through wolfEntropy's
+     * SHA-3, from hardirq, where NEON is never usable. */
+    #ifdef WOLFSSL_LINUXKM
+        #ifndef WOLFSSL_ARMASM_SHA512_NO_NEON
+            #define WOLFSSL_ARMASM_SHA512_NO_NEON
+        #endif
+        #ifndef WOLFSSL_ARMASM_SHA3_NO_NEON
+            #define WOLFSSL_ARMASM_SHA3_NO_NEON
+        #endif
+    #endif
+#endif
+
+/* WOLFSSL_ARMASM_NO_NEON drops every NEON body, SHA-512's and SHA-3's too. */
+#ifdef WOLFSSL_ARMASM_NO_NEON
+    #ifndef WOLFSSL_ARMASM_SHA512_NO_NEON
+        #define WOLFSSL_ARMASM_SHA512_NO_NEON
+    #endif
+    #ifndef WOLFSSL_ARMASM_SHA3_NO_NEON
+        #define WOLFSSL_ARMASM_SHA3_NO_NEON
+    #endif
 #endif
 
 /* curve25519/ed25519 implementation selection.
@@ -5482,10 +5522,17 @@ blinding by defining WC_BLINDING_NO_RNG_ACKNOWLEDGE_WEAKNESS."
     #error Experimental settings without WOLFSSL_EXPERIMENTAL_SETTINGS
 #endif
 
-/* If no malloc then make sure the valid Dilithium settings are used */
-#if defined(HAVE_DILITHIUM) && defined(WOLFSSL_NO_MALLOC)
-    #undef  WOLFSSL_DILITHIUM_VERIFY_NO_MALLOC
-    #define WOLFSSL_DILITHIUM_VERIFY_NO_MALLOC
+/* If no malloc then make sure the valid ML-DSA settings are used */
+#if defined(WOLFSSL_HAVE_MLDSA) && defined(WOLFSSL_NO_MALLOC)
+    #undef  WOLFSSL_MLDSA_VERIFY_NO_MALLOC
+    #define WOLFSSL_MLDSA_VERIFY_NO_MALLOC
+    /* The pinned buffers only exist under the small memory verify; without it
+     * every verification fails with MEMORY_E. */
+    #if !defined(WOLFSSL_MLDSA_NO_VERIFY) && \
+        !defined(WOLFSSL_MLDSA_VERIFY_ALLOW_MALLOC)
+        #undef  WOLFSSL_MLDSA_VERIFY_SMALL_MEM
+        #define WOLFSSL_MLDSA_VERIFY_SMALL_MEM
+    #endif
 #endif
 
 #if defined(WOLFSSL_HAVE_MLKEM) && \
@@ -6064,6 +6111,17 @@ blinding by defining WC_BLINDING_NO_RNG_ACKNOWLEDGE_WEAKNESS."
      * have to service; not validated. */
     #error "WOLF_CRYPTO_CB_ONLY_MLKEM is incompatible with FIPS builds"
 #endif
+#if defined(WOLF_CRYPTO_CB_ONLY_MLDSA) && !defined(WOLF_CRYPTO_CB)
+    #error "WOLF_CRYPTO_CB_ONLY_MLDSA requires WOLF_CRYPTO_CB"
+#endif
+#if defined(WOLF_CRYPTO_CB_ONLY_MLDSA) && !defined(WOLFSSL_HAVE_MLDSA)
+    #error "WOLF_CRYPTO_CB_ONLY_MLDSA requires WOLFSSL_HAVE_MLDSA"
+#endif
+#if defined(WOLF_CRYPTO_CB_ONLY_MLDSA) && defined(HAVE_FIPS)
+    /* Key generation runs a pairwise consistency test that the callback would
+     * have to service; not validated. */
+    #error "WOLF_CRYPTO_CB_ONLY_MLDSA is incompatible with FIPS builds"
+#endif
 #if defined(WOLF_CRYPTO_CB_ONLY_CURVE25519) && !defined(WOLF_CRYPTO_CB)
     #error "WOLF_CRYPTO_CB_ONLY_CURVE25519 requires WOLF_CRYPTO_CB"
 #endif
@@ -6192,6 +6250,12 @@ blinding by defining WC_BLINDING_NO_RNG_ACKNOWLEDGE_WEAKNESS."
     !defined(WOLFSSL_FIPS_READY)
     #undef WOLFSSL_KMAC
     #undef WOLFSSL_CSHAKE
+#endif
+
+#if defined(WC_C_DYNAMIC_FALLBACK) && defined(HAVE_FIPS) && \
+    FIPS_VERSION3_GE(7,0,0) && !defined(WOLFSSL_FIPS_DEV) && \
+    !defined(WOLFSSL_FIPS_DEV_NO_POST)
+    #error WC_C_DYNAMIC_FALLBACK needs --enable-fips=dev or dev-no-post
 #endif
 
 /* setup for opt-in DH in FIPS v7+ */

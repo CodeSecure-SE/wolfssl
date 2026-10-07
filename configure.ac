@@ -2465,6 +2465,19 @@ then
     ENABLED_MLDSA87=yes
 fi
 
+# Likewise, naming only a parameter set, for example --enable-mldsa=44,
+# selects no operation, which would disable everything. verify-only names an
+# operation, so it is unaffected.
+if test "$ENABLED_MLDSA" != "no" && \
+   test "$ENABLED_MLDSA_MAKE_KEY" = "no" && \
+   test "$ENABLED_MLDSA_SIGN" = "no" && \
+   test "$ENABLED_MLDSA_VERIFY" = "no"
+then
+    ENABLED_MLDSA_MAKE_KEY=yes
+    ENABLED_MLDSA_SIGN=yes
+    ENABLED_MLDSA_VERIFY=yes
+fi
+
 # XMSS
 AC_ARG_ENABLE([xmss],
     [AS_HELP_STRING([--enable-xmss],[Enable stateful XMSS/XMSS^MT signatures (default: disabled)])],
@@ -4242,6 +4255,12 @@ then
     ENABLED_AESSIV=yes
 fi
 
+if test "$ENABLED_FIPS" != "no" && test "$HAVE_FIPS_VERSION" -ge 7 && \
+   { test "$ENABLED_AESSIV" = "yes" || test "$ENABLED_AESEAX" = "yes"; }
+then
+    AC_MSG_ERROR([AES-SIV and AES-EAX are not in the FIPS module boundary: drop --enable-aessiv, --enable-aeseax, --enable-chrony or --enable-all-nonfips-crypto from a FIPS v7 build.])
+fi
+
 # AES-GCM-SIV (RFC 8452)
 AC_ARG_ENABLE([aesgcm-siv],
     [AS_HELP_STRING([--enable-aesgcm-siv],[Enable AES-GCM-SIV (RFC 8452) (default: disabled)])],
@@ -5111,7 +5130,13 @@ then
         AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_AESNI"
         if test "$KERNEL_MODE_DEFAULTS" = "yes"
         then
-                AM_CFLAGS="$AM_CFLAGS -DWC_C_DYNAMIC_FALLBACK"
+            # FIPS v7 and later pin one lane at build time; dev builds may
+            # still switch.  Older validated modules keep what they were
+            # validated with.  Tested numerically, and on the same condition
+            # settings.h uses, so a new v7.x or lean-* string cannot slip past.
+            AS_IF([test "${HAVE_FIPS_VERSION_MAJOR:-0}" -ge 7 && \
+                   test "x$ENABLED_FIPS_DEV" != "xyes"],[],
+                [AM_CFLAGS="$AM_CFLAGS -DWC_C_DYNAMIC_FALLBACK"])
         fi
         if test "$CC" != "icc"
         then
@@ -12121,6 +12146,9 @@ then
     if test "$ENABLED_MLKEM" != "no"; then
         AM_CFLAGS="$AM_CFLAGS -DWOLF_CRYPTO_CB_ONLY_MLKEM"
     fi
+    if test "$ENABLED_MLDSA" != "no"; then
+        AM_CFLAGS="$AM_CFLAGS -DWOLF_CRYPTO_CB_ONLY_MLDSA"
+    fi
 fi
 
 if test "$ENABLED_CRYPTOCB_SW_TEST" = "no"
@@ -12640,6 +12668,13 @@ yes) AM_CFLAGS="$AM_CFLAGS -DHAVE_EX_DATA"
 *) AC_MSG_ERROR([Invalid argument to --enable-context-extra-user-data -- must be yes, no, or a number from 1 to 9999 (note: each index reserves one pointer per object, so large values increase memory use)])
    ;;
 esac
+
+# nginx 1.31 and the OpenResty Lua modules need six ex_data slots per object.
+if test "$ENABLED_NGINX" = "yes" && \
+   (test "$ENABLED_EX_DATA" = "no" || test "$ENABLED_EX_DATA" = "yes")
+then
+    AM_CFLAGS="$AM_CFLAGS -DMAX_EX_DATA=10"
+fi
 
 # IoT-Safe support
 AC_ARG_ENABLE([iotsafe],
@@ -13887,12 +13922,19 @@ fi
 # our use of enum constructs to define fungible constants.
 if test "$KERNEL_MODE_DEFAULTS" != "yes"
 then
-    # Probe with ac_c_werror_flag (fail on any stderr output), not -Werror:
-    # ccache reorders -Werror after the -Wno- option, so gcc accepts it with
-    # only a warning.
+    # Probe the positive form. GCC reports an unknown -Wno- option only when
+    # some other diagnostic is also present, so an empty conftest accepts
+    # -Wno-deprecated-enum-enum-conversion on compilers that do not know it
+    # (pre-GCC-11). The positive -W form is rejected immediately when unknown.
+    #
+    # Keep ac_c_werror_flag. AX_CHECK_COMPILE_FLAG ignores warnings, and on
+    # GCC 11+ as C this option warns that it is valid for C++/ObjC++ but not
+    # for C. Passing -Werror on the command line does not catch that under
+    # ccache, which reorders -Werror after the warning option.
+    # ac_c_werror_flag fails the test on any stderr, independent of order.
     ax_save_c_werror_flag=$ac_c_werror_flag
     ac_c_werror_flag=yes
-    AX_CHECK_COMPILE_FLAG([-Wno-deprecated-enum-enum-conversion],
+    AX_CHECK_COMPILE_FLAG([-Wdeprecated-enum-enum-conversion],
       [AX_APPEND_FLAG([-Wno-deprecated-enum-enum-conversion], [AM_CFLAGS])])
     ac_c_werror_flag=$ax_save_c_werror_flag
 fi
@@ -14253,6 +14295,14 @@ AM_CPPFLAGS="$AM_CPPFLAGS $EXTRA_CPPFLAGS"
 AM_CFLAGS="$AM_CFLAGS $EXTRA_CFLAGS"
 AM_CCASFLAGS="$AM_CCASFLAGS $EXTRA_CCASFLAGS"
 AM_LDFLAGS="$AM_LDFLAGS $EXTRA_LDFLAGS"
+
+# FIPS v7 and later never switch lanes at run time, however the define
+# arrives.  Same condition as the auto-add above and as settings.h.
+AS_IF([test "${HAVE_FIPS_VERSION_MAJOR:-0}" -ge 7 && \
+       test "x$ENABLED_FIPS_DEV" != "xyes"],
+    [AS_CASE([" $AM_CPPFLAGS $AM_CFLAGS $CPPFLAGS $CFLAGS "],
+        [*-DWC_C_DYNAMIC_FALLBACK*],
+        [AC_MSG_ERROR([WC_C_DYNAMIC_FALLBACK is not allowed with --enable-fips=$FIPS_VERSION; use --enable-fips=dev or --enable-fips=dev-no-post])])])
 
 CREATE_HEX_VERSION
 AC_SUBST([AM_CPPFLAGS])

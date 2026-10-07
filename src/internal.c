@@ -10173,6 +10173,10 @@ void wolfSSL_ResourceFree(WOLFSSL* ssl)
     ForceZero(&ssl->clientSecret, sizeof(ssl->clientSecret));
     ForceZero(&ssl->serverSecret, sizeof(ssl->serverSecret));
 
+    XFREE(ssl->certHashSigAlgo, ssl->heap, DYNAMIC_TYPE_TLSX);
+    ssl->certHashSigAlgo = NULL;
+    ssl->certHashSigAlgoSz = 0;
+
 #if defined(HAVE_ECH)
     if (ssl->echConfigs != NULL) {
         FreeEchConfigs(ssl->echConfigs, ssl->heap);
@@ -21507,7 +21511,13 @@ static int _DtlsCheckWindow(WOLFSSL* ssl)
     }
     else {
         curLT = cur_hi < next_hi;
-        diff = curLT ? cur_lo - next_lo : next_lo - cur_lo;
+        /* only a low word crossing the 2^32 boundary can be inside window */
+        if (curLT) {
+            diff = (cur_lo > next_lo) ? next_lo - cur_lo : 0xFFFFFFFFU;
+        }
+        else {
+            diff = (next_lo > cur_lo) ? cur_lo - next_lo : 0xFFFFFFFFU;
+        }
     }
 
     /* Check to see that the next value is greater than the number of messages
@@ -25858,9 +25868,7 @@ static int DoProcessReplyEx(WOLFSSL* ssl, int allowSocketErr)
     if (ssl->error != 0 &&
         ssl->error != WC_NO_ERR_TRACE(WANT_READ) &&
         ssl->error != WC_NO_ERR_TRACE(WANT_WRITE)
-    #if defined(HAVE_SECURE_RENEGOTIATION) || defined(WOLFSSL_DTLS13)
         && ssl->error != WC_NO_ERR_TRACE(APP_DATA_READY)
-    #endif
     #ifdef WOLFSSL_ASYNC_CRYPT
         && ssl->error != WC_NO_ERR_TRACE(WC_PENDING_E)
     #endif
@@ -25872,6 +25880,12 @@ static int DoProcessReplyEx(WOLFSSL* ssl, int allowSocketErr)
     ) {
         WOLFSSL_MSG("ProcessReply retry in error state, not allowed");
         return ssl->error;
+    }
+
+    if (ssl->buffers.clearOutputBuffer.length > 0) {
+        WOLFSSL_MSG("Application data pending, read it before processing "
+                    "more records");
+        return APP_DATA_READY;
     }
 
 #if defined(WOLFSSL_TLS13) && defined(WOLFSSL_ASYNC_CRYPT)
@@ -26773,16 +26787,16 @@ static int DoProcessReplyEx(WOLFSSL* ssl, int allowSocketErr)
                                 SERVER_FINISHED_COMPLETE &&
                             ssl->options.handShakeState != HANDSHAKE_DONE)))
 #endif
-#ifdef WOLFSSL_TLS_READ_AHEAD
-                    /* With read-ahead, more than one record may be buffered. If
-                     * application data was just decrypted, return it now so it
-                     * is delivered to the caller before any following buffered
-                     * record (e.g. a close_notify alert) is processed, which
-                     * would otherwise discard the pending app data. The
-                     * remaining records stay buffered for the next call. */
+                    /* If application data was just decrypted, return it now so
+                     * it is delivered to the caller before any following
+                     * buffered record is processed. clearOutputBuffer points
+                     * into inputBuffer, so reading the rest of a partial record
+                     * could compact or reallocate it and leave the pending data
+                     * overwritten or freed. A following record such as a
+                     * close_notify alert would also discard the pending data.
+                     * The remaining records stay buffered for the next call. */
                     || (ssl->curRL.type == application_data &&
                         ssl->buffers.clearOutputBuffer.length > 0)
-#endif
                     ) {
                     /* Shrink input buffer when we successfully finish record
                      * processing */
@@ -26830,9 +26844,13 @@ int ProcessReply(WOLFSSL* ssl)
 int ProcessReplyEx(WOLFSSL* ssl, int allowSocketErr)
 {
     int ret;
-#if defined(WOLFSSL_DTLS) && defined(WOLFSSL_DTLS_CID) && \
-    defined(WOLFSSL_RW_THREADED)
+#if defined(WOLFSSL_DTLS) && defined(WOLFSSL_DTLS_CID)
+    /* With application data pending, APP_DATA_READY means DoProcessReplyEx()
+     * returned before reading any record. */
+    int appDataPending = (ssl->buffers.clearOutputBuffer.length > 0);
+#ifdef WOLFSSL_RW_THREADED
     int locked;
+#endif
 #endif
 
     ret = DoProcessReplyEx(ssl, allowSocketErr);
@@ -26840,11 +26858,13 @@ int ProcessReplyEx(WOLFSSL* ssl, int allowSocketErr)
 #if defined(WOLFSSL_DTLS) && defined(WOLFSSL_DTLS_CID)
     if (ssl->options.dtls) {
         /* Don't clear pending peer if we are going to re-enter
-         * DoProcessReplyEx */
+         * DoProcessReplyEx or no record was processed. */
         if (ret != WC_NO_ERR_TRACE(WANT_READ)
 #ifdef WOLFSSL_ASYNC_CRYPT
                 && ret != WC_NO_ERR_TRACE(WC_PENDING_E)
 #endif
+                && !(appDataPending &&
+                     ret == WC_NO_ERR_TRACE(APP_DATA_READY))
             ) {
         #ifdef WOLFSSL_RW_THREADED
             /* Drop the pending peer even when the lock cannot be taken, as
@@ -30230,9 +30250,7 @@ int ReceiveData(WOLFSSL* ssl, byte* output, size_t sz, int peek)
 #ifdef WOLFSSL_ASYNC_CRYPT
             && error != WC_NO_ERR_TRACE(WC_PENDING_E)
 #endif
-#if defined(HAVE_SECURE_RENEGOTIATION) || defined(WOLFSSL_DTLS13)
             && error != WC_NO_ERR_TRACE(APP_DATA_READY)
-#endif
     ) {
         WOLFSSL_MSG("User calling wolfSSL_read in error state, not allowed");
         return error;
@@ -44221,9 +44239,18 @@ static int AddPSKtoPreMasterSecret(WOLFSSL* ssl)
             ssl->options.ticketCacheHit = 1;
 #endif
         }
-#ifdef WOLFSSL_TICKET_HAVE_ID
+#if defined(WOLFSSL_TICKET_HAVE_ID) && !defined(NO_SESSION_CACHE)
         else {
-            if (wolfSSL_GetSession(ssl, NULL, 1) != NULL) {
+            int found;
+            /* The external cache takes part in the 0-RTT anti-replay
+             * eviction, so it is only skipped when early data is off. */
+#ifdef WOLFSSL_EARLY_DATA
+            if (ssl->options.maxEarlyDataSz > 0)
+                found = wolfSSL_GetSessionFromCache(ssl, ssl->session);
+            else
+#endif
+                found = wolfSSL_GetSessionFromInternalCache(ssl, ssl->session);
+            if (found == WOLFSSL_SUCCESS) {
                 WOLFSSL_MSG("Found session matching the session id"
                             " found in the ticket");
 #if defined(WOLFSSL_TLS13) && defined(WOLFSSL_EARLY_DATA) && \
@@ -47611,11 +47638,9 @@ void wolfssl_local_MaybeCheckAlertOnErr(WOLFSSL* ssl, int err)
         return;
     }
 #endif
-#if defined(WOLFSSL_EARLY_DATA)
     if (err == WC_NO_ERR_TRACE(APP_DATA_READY)) {
         return;
     }
-#endif
     if (err == WC_NO_ERR_TRACE(WANT_WRITE) ||
             err == WC_NO_ERR_TRACE(WANT_READ)) {
         return;
