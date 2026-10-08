@@ -15231,16 +15231,40 @@ int CheckIPAddr(DecodedCert* dCert, const char* ipasc, size_t ipascLen)
 WC_MAYBE_UNUSED static void AddSessionCertToChain(WOLFSSL_X509_CHAIN* chain,
     byte* certBuf, word32 certSz)
 {
-   if (chain->count < MAX_CHAIN_DEPTH &&
-                               certSz < MAX_X509_SIZE) {
+    if (chain->count >= MAX_CHAIN_DEPTH) {
+        WOLFSSL_MSG("Couldn't store chain cert for session");
+    }
+    else if (certSz >= MAX_X509_SIZE) {
+        /* Take the slot without filling it: the chain is read positionally,
+         * with index 0 the peer's own certificate, so an issuer must not be
+         * able to slide into the place of a certificate left out here. */
+        WOLFSSL_MSG("Chain cert too big for session, leaving its slot empty");
+        chain->certs[chain->count].length = 0;
+        chain->count++;
+    }
+    else {
         chain->certs[chain->count].length = (int)certSz;
         XMEMCPY(chain->certs[chain->count].buffer, certBuf, certSz);
         chain->count++;
     }
-    else {
-        WOLFSSL_MSG("Couldn't store chain cert for session");
-    }
 }
+
+#ifdef SESSION_CERTS
+/* Empty the session chain and drop the compatibility views built from it. */
+WC_MAYBE_UNUSED static void ResetSessionCertChain(WOLFSSL* ssl)
+{
+    ssl->session->chain.count = 0;
+#ifdef WOLFSSL_ALT_CERT_CHAINS
+    ssl->session->altChain.count = 0;
+#endif
+#ifdef OPENSSL_EXTRA
+    wolfSSL_X509_free(ssl->session->peer);
+    ssl->session->peer = NULL;
+    wolfSSL_sk_X509_pop_free(ssl->peerCertChain, NULL);
+    ssl->peerCertChain = NULL;
+#endif
+}
+#endif
 
 #if defined(KEEP_PEER_CERT) || defined(SESSION_CERTS) || \
     defined(OPENSSL_EXTRA) || defined(OPENSSL_EXTRA_X509_SMALL) || \
@@ -18572,6 +18596,14 @@ int ProcessPeerCerts(WOLFSSL* ssl, byte* input, word32* inOutIdx,
                 ERROR_OUT(BUFFER_ERROR, exit_ppc);
             }
 
+        #ifdef SESSION_CERTS
+            /* Replace any earlier or resumed chain; an empty post-handshake
+             * answer keeps the one the handshake verified. */
+            if (listSz > 0) {
+                ResetSessionCertChain(ssl);
+            }
+        #endif
+
             WOLFSSL_MSG("Loading peer's cert chain");
             /* first put cert chain into buffer so can verify top down
                we're sent bottom up */
@@ -19862,10 +19894,7 @@ static int DoCertificate(WOLFSSL* ssl, byte* input, word32* inOutIdx,
         ssl->error != WC_NO_ERR_TRACE(WC_PENDING_E))
 #endif
     {
-        ssl->session->chain.count = 0;
-#ifdef WOLFSSL_ALT_CERT_CHAINS
-        ssl->session->altChain.count = 0;
-#endif
+        ResetSessionCertChain(ssl);
     }
 #endif /* SESSION_CERTS */
 
@@ -25703,7 +25732,25 @@ static int DoChangeCipherSpecTls12(WOLFSSL* ssl)
             WOLFSSL_DTLS_PEERSEQ* peerSeq = ssl->keys.peerSeq;
 #ifdef WOLFSSL_MULTICAST
             if (ssl->options.haveMcast) {
-                peerSeq += ssl->keys.curPeerId;
+                WOLFSSL_DTLS_PEERSEQ* p;
+                int i;
+
+                peerSeq = NULL;
+                for (i = 0, p = ssl->keys.peerSeq;
+                     i < WOLFSSL_DTLS_PEERSEQ_SZ;
+                     i++, p++) {
+
+                    if (p->peerId == ssl->keys.curPeerId) {
+                        peerSeq = p;
+                        break;
+                    }
+                }
+
+                if (peerSeq == NULL) {
+                    WOLFSSL_MSG("Could not find peer sequence");
+                    return SEQUENCE_ERROR;
+                }
+
                 peerSeq->highwaterMark = UpdateHighwaterMark(0,
                         ssl->ctx->mcastFirstSeq,
                         ssl->ctx->mcastSecondSeq,
@@ -26765,6 +26812,14 @@ static int DoProcessReplyEx(WOLFSSL* ssl, int allowSocketErr)
                 ssl->options.processReply = runProcessingOneMessage;
             }
             else {
+                /* a handler consumed more than the record held */
+                if ((ssl->buffers.inputBuffer.idx - ssl->curStartIdx)
+                        > ssl->curSize) {
+                    WOLFSSL_MSG("Record over consumed");
+                    WOLFSSL_ERROR_VERBOSE(BUFFER_ERROR);
+                    return BUFFER_ERROR;
+                }
+
                 /* Done with this record. Advance past padding/MAC. */
                 if (IsEncryptionOn(ssl, 0))
                     ssl->buffers.inputBuffer.idx += ssl->keys.padSz;

@@ -13,18 +13,33 @@ Breaking changes:
   the library.  As a consequence RNG no longer implements the infallible
   rand_core::Rng and rand_core::CryptoRng traits; wrap it in
   rand_core::UnwrapErr to keep the previous panic-on-failure behavior
+- Ed25519 and Ed448 no longer implement the signature crate's Keypair trait;
+  use the new SigningKey types instead
+- MlDsa::LEVEL_44, MlDsa::LEVEL_65 and MlDsa::LEVEL_87 are now gated on the
+  mldsa_level2, mldsa_level3 and mldsa_level5 cfgs, so selecting a parameter
+  set the library was not built with is a compile error instead of a runtime
+  NOT_COMPILED_IN
 
 New features:
 
 - Add Curve25519Key::generate_shared_rng() to generate a key from an RNG shared
   between keys via Rc (requires the alloc feature)
 - Add HMAC::copy(), a fallible equivalent of HMAC::clone()
+- Add ed25519::SigningKey and ed448::SigningKey, which always carry a public
+  key and so implement Keypair::verifying_key() without it being able to fail
 
 Fixes and improvements:
 
 - Fix undefined behavior in HMAC::clone(): wc_HmacCopy() takes its source by
   non-const pointer and may write through it, but the pointer was cast from a
   shared reference. The wolfSSL context is now held in an UnsafeCell
+- Fix a panic in Keypair::verifying_key() for Ed25519 and Ed448 keys with no
+  public key, such as after new() or import_private_only()
+- Validate PBKDF2 and scrypt password hash output length against the PHC
+  minimum before running the KDF
+- Fix detection of the built-in ML-DSA parameter sets: the mldsa_level2,
+  mldsa_level3 and mldsa_level5 cfgs probed the WC_MLDSA_NN_KEY_SIZE macros,
+  which wc_mldsa.h defines unconditionally, so all three were always enabled
 
 ## v2.2.0
 
