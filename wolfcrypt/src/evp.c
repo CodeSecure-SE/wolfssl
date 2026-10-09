@@ -1191,6 +1191,17 @@ int wolfSSL_EVP_CipherUpdate(WOLFSSL_EVP_CIPHER_CTX *ctx,
     if (inl == 0) {
         return WOLFSSL_SUCCESS;
     }
+
+    /* More input has arrived so a stored block is not the last one. Output it
+     * here: it must never coexist with a partial block in buf. */
+    if ((ctx->enc == 0) && (ctx->lastUsed == 1)) {
+        PRINT_BUF(ctx->lastBlock, ctx->block_size);
+        XMEMCPY(out, ctx->lastBlock, (size_t)ctx->block_size);
+        *outl += ctx->block_size;
+        out += ctx->block_size;
+        ctx->lastUsed = 0;
+    }
+
     if (ctx->bufUsed > 0) { /* concatenate them if there is anything */
         int fill = fillBuff(ctx, in, inl);
         inl -= fill;
@@ -1201,14 +1212,10 @@ int wolfSSL_EVP_CipherUpdate(WOLFSSL_EVP_CIPHER_CTX *ctx,
     if (ctx->bufUsed == ctx->block_size) {
         byte* output = out;
 
-        /* During decryption we save the last block to check padding on Final.
-         * Update the last block stored if one has already been stored */
-        if (ctx->enc == 0) {
-            if (ctx->lastUsed == 1) {
-                XMEMCPY(out, ctx->lastBlock, (size_t)ctx->block_size);
-                *outl+= ctx->block_size;
-                out  += ctx->block_size;
-            }
+        /* Store the block for the padding check in Final only when it can
+         * still be the last one and Final would look at it. */
+        if ((ctx->enc == 0) && (inl == 0) && (ctx->block_size != 1) &&
+                !(ctx->flags & WOLFSSL_EVP_CIPH_NO_PADDING)) {
             output = ctx->lastBlock; /* redirect output to last block buffer */
             ctx->lastUsed = 1;
         }
@@ -1217,12 +1224,11 @@ int wolfSSL_EVP_CipherUpdate(WOLFSSL_EVP_CIPHER_CTX *ctx,
         if (evpCipherBlock(ctx, output, ctx->buf, ctx->block_size) == 0) {
             return WOLFSSL_FAILURE;
         }
-        PRINT_BUF(out, ctx->block_size);
+        PRINT_BUF(output, ctx->block_size);
         ctx->bufUsed = 0;
 
-        /* if doing encryption update the new output block, decryption will
-         * always have the last block saved for when Final is called */
-        if ((ctx->enc != 0)) {
+        /* nothing to report when the block was stored for Final */
+        if (output == out) {
             *outl+= ctx->block_size;
             out  += ctx->block_size;
         }
@@ -1230,16 +1236,6 @@ int wolfSSL_EVP_CipherUpdate(WOLFSSL_EVP_CIPHER_CTX *ctx,
 
     blocks = inl / ctx->block_size;
     if (blocks > 0) {
-        /* During decryption we save the last block to check padding on Final.
-         * Update the last block stored if one has already been stored */
-        if ((ctx->enc == 0) && (ctx->lastUsed == 1)) {
-            PRINT_BUF(ctx->lastBlock, ctx->block_size);
-            XMEMCPY(out, ctx->lastBlock, (size_t)ctx->block_size);
-            *outl += ctx->block_size;
-            out += ctx->block_size;
-            ctx->lastUsed = 0;
-        }
-
         /* process blocks */
         if (evpCipherBlock(ctx, out, in, blocks * ctx->block_size) == 0) {
             return WOLFSSL_FAILURE;
@@ -1673,6 +1669,13 @@ int wolfSSL_EVP_CipherFinal(WOLFSSL_EVP_CIPHER_CTX *ctx, unsigned char *out,
             if (ctx->flags & WOLFSSL_EVP_CIPH_NO_PADDING) {
                 if (ctx->bufUsed != 0) return WOLFSSL_FAILURE;
                 *outl = 0;
+                /* padding may have been turned off after Update stored a
+                 * block; with no pad to strip it is all plaintext */
+                if ((ctx->enc == 0) && (ctx->lastUsed == 1)) {
+                    XMEMCPY(out, ctx->lastBlock, (size_t)ctx->block_size);
+                    *outl = ctx->block_size;
+                    ctx->lastUsed = 0;
+                }
             }
             else if (ctx->enc) {
                 if (ctx->block_size == 1) {
@@ -13558,9 +13561,87 @@ static int PrintPubKeyDH(WOLFSSL_BIO* out, const byte* pkey, int pkeySz,
 }
 #endif /* WOLFSSL_DH_EXTRA */
 
+#if defined(WOLFSSL_HAVE_MLDSA) && defined(WOLFSSL_MLDSA_PUBLIC_KEY) && \
+    !defined(WOLFSSL_MLDSA_NO_ASN1) && defined(WC_ENABLE_ASYM_KEY_EXPORT) && \
+    defined(WC_ENABLE_ASYM_KEY_IMPORT)
+/* PrintPubKeyMlDsa is a helper function for wolfSSL_EVP_PKEY_print_public
+ * to parse a DER format ML-DSA public key specified in the second parameter.
+ * Parameters:
+ * out     bio to output dump data
+ * pkey    buffer holding public key data
+ * pkeySz  public key data size
+ * indent  the number of spaces for indent
+ * pctx    context(not used)
+ * Returns 1 on success, 0 on failure.
+*/
+static int PrintPubKeyMlDsa(WOLFSSL_BIO* out, const byte* pkey, int pkeySz,
+    int indent, WOLFSSL_ASN1_PCTX* pctx)
+{
+    const byte* pub = NULL;
+    const char* nameStr = NULL;
+    word32  pubSz = 0;
+    word32  inOutIdx = 0;
+    int     keyType = ANONk;
+    int     res = WOLFSSL_SUCCESS;
+    char    line[32] = { 0 };
+    (void)pctx;
+
+    if (out == NULL || pkey == NULL || pkeySz <= 0) {
+        return WOLFSSL_FAILURE;
+    }
+
+    /* the cached key is a SubjectPublicKeyInfo, its OID gives the level */
+    if (DecodeAsymKeyPublic_Assign(pkey, &inOutIdx, (word32)pkeySz, &pub,
+            &pubSz, &keyType) != 0) {
+        res = WOLFSSL_FAILURE;
+    }
+    if (res == WOLFSSL_SUCCESS) {
+        res = keyType == ML_DSA_44k ||
+              keyType == ML_DSA_65k ||
+              keyType == ML_DSA_87k
+        #ifdef WOLFSSL_MLDSA_FIPS204_DRAFT
+              || keyType == DILITHIUM_LEVEL2k
+              || keyType == DILITHIUM_LEVEL3k
+              || keyType == DILITHIUM_LEVEL5k
+        #endif
+              ;
+    }
+    if (res == WOLFSSL_SUCCESS) {
+        nameStr = wolfSSL_OBJ_nid2ln(oid2nid((word32)keyType, oidKeyType));
+        res = nameStr != NULL;
+    }
+    if (res == WOLFSSL_SUCCESS) {
+        res = Indent(out, indent) >= 0;
+    }
+    if (res == WOLFSSL_SUCCESS) {
+        res = wolfSSL_BIO_write(out, nameStr, (int)XSTRLEN(nameStr)) > 0;
+    }
+    if (res == WOLFSSL_SUCCESS) {
+        XSTRNCPY(line, " Public-Key:\n", sizeof(line));
+        res = wolfSSL_BIO_write(out, line, (int)XSTRLEN(line)) > 0;
+    }
+    if (res == WOLFSSL_SUCCESS) {
+        res = Indent(out, indent) >= 0;
+    }
+    if (res == WOLFSSL_SUCCESS) {
+        /* print pub element */
+        XSTRNCPY(line, "pub:\n", sizeof(line));
+        res = wolfSSL_BIO_write(out, line, (int)XSTRLEN(line)) > 0;
+    }
+    if (res == WOLFSSL_SUCCESS) {
+        /* upper case */
+        res = PrintHexWithColon(out, pub, (int)pubSz, indent + 4, 0);
+    }
+
+    return res;
+}
+#endif /* WOLFSSL_HAVE_MLDSA && WOLFSSL_MLDSA_PUBLIC_KEY &&
+        * !WOLFSSL_MLDSA_NO_ASN1 && WC_ENABLE_ASYM_KEY_EXPORT &&
+        * WC_ENABLE_ASYM_KEY_IMPORT */
+
 /* wolfSSL_EVP_PKEY_print_public parses the specified key then
  * outputs public key info in human readable format to the specified BIO.
- * White spaces of the same number which 'indent" gives, will be added to
+ * White spaces of the same number which 'indent' gives, will be added to
  * each line to output and ignores pctx parameter.
  * Parameters:
  * out     bio to output dump data
@@ -13569,7 +13650,7 @@ static int PrintPubKeyDH(WOLFSSL_BIO* out, const byte* pkey, int pkeySz,
  * pctx    context(not used)
  * Returns 1 on success, 0 or negative on error, -2 means specified key
  * algo is not supported.
- * Can handle RSA, ECC, DSA and DH public keys.
+ * Can handle RSA, ECC, DSA, DH and ML-DSA public keys.
  */
 int wolfSSL_EVP_PKEY_print_public(WOLFSSL_BIO* out,
     const WOLFSSL_EVP_PKEY* pkey, int indent, WOLFSSL_ASN1_PCTX* pctx)
@@ -13586,7 +13667,10 @@ int wolfSSL_EVP_PKEY_print_public(WOLFSSL_BIO* out,
         return 0;
     }
 #if !defined(NO_RSA) || defined(HAVE_ECC) || !defined(NO_DSA) || \
-    defined(WOLFSSL_DH_EXTRA)
+    defined(WOLFSSL_DH_EXTRA) || \
+    (defined(WOLFSSL_HAVE_MLDSA) && defined(WOLFSSL_MLDSA_PUBLIC_KEY) && \
+     !defined(WOLFSSL_MLDSA_NO_ASN1) && defined(WC_ENABLE_ASYM_KEY_EXPORT) && \
+     defined(WC_ENABLE_ASYM_KEY_IMPORT))
     if (indent < 0) {
         indent = 0;
     }
@@ -13654,6 +13738,22 @@ int wolfSSL_EVP_PKEY_print_public(WOLFSSL_BIO* out,
                         pkey->pkey_sz,            /* raw pkey size */
                         indent,                   /* indent size */
                         keybits,                  /* bit length of the key */
+                        pctx);                    /* not used */
+#else
+            res = WOLFSSL_UNKNOWN;       /* not supported algo */
+#endif
+            break;
+
+        case WC_EVP_PKEY_DILITHIUM:
+
+#if defined(WOLFSSL_HAVE_MLDSA) && defined(WOLFSSL_MLDSA_PUBLIC_KEY) && \
+    !defined(WOLFSSL_MLDSA_NO_ASN1) && defined(WC_ENABLE_ASYM_KEY_EXPORT) && \
+    defined(WC_ENABLE_ASYM_KEY_IMPORT)
+            res     = PrintPubKeyMlDsa(
+                        out,
+                        (byte*)(pkey->pkey.ptr),  /* buffer for pkey raw data */
+                        pkey->pkey_sz,            /* raw pkey size */
+                        indent,                   /* indent size */
                         pctx);                    /* not used */
 #else
             res = WOLFSSL_UNKNOWN;       /* not supported algo */

@@ -1056,6 +1056,19 @@ extern const WOLFSSL_ObjectInfo wolfssl_object_info[];
 #define WC_NID_name_constraints NAME_CONS_OID  /* 2.5.29.30 */
 #define WC_NID_crl_distribution_points CRL_DIST_OID  /* 2.5.29.31 */
 #define WC_NID_certificate_policies CERT_POLICY_OID
+/* Under WOLFSSL_OLD_OID_SUM, SUBJ_ALT_PUB_KEY_INFO_OID and ALT_SIG_VAL_OID
+ * collide with ECC_SECP256K1_OID and dhSinglePass_stdDH_sha224kdf_scheme, so
+ * OID sum to NID lookups without a group resolve to the dual-alg NIDs. */
+#define WC_NID_subject_alt_public_key_info \
+                                       SUBJ_ALT_PUB_KEY_INFO_OID /* 2.5.29.72 */
+#define WC_NID_alt_signature_algorithm ALT_SIG_ALG_OID  /* 2.5.29.73 */
+#ifdef WOLFSSL_OLD_OID_SUM
+#define WC_NID_alt_signature_value 1300 /* 2.5.29.74, changed to not conflict
+                                         * with the NID of
+                                         * dhSinglePass_stdDH_sha224kdf_scheme*/
+#else
+#define WC_NID_alt_signature_value ALT_SIG_VAL_OID  /* 2.5.29.74 */
+#endif
 #define WC_NID_policy_mappings POLICY_MAP_OID
 #define WC_NID_policy_constraints POLICY_CONST_OID
 #define WC_NID_inhibit_any_policy INHIBIT_ANY_OID       /* 2.5.29.54 */
@@ -1195,6 +1208,9 @@ extern const WOLFSSL_ObjectInfo wolfssl_object_info[];
 #define NID_info_access WC_NID_info_access
 #define NID_sinfo_access WC_NID_sinfo_access
 #define NID_name_constraints WC_NID_name_constraints
+#define NID_subject_alt_public_key_info WC_NID_subject_alt_public_key_info
+#define NID_alt_signature_algorithm WC_NID_alt_signature_algorithm
+#define NID_alt_signature_value WC_NID_alt_signature_value
 #define NID_crl_distribution_points WC_NID_crl_distribution_points
 #define NID_certificate_policies WC_NID_certificate_policies
 #define NID_policy_mappings WC_NID_policy_mappings
@@ -2496,8 +2512,8 @@ typedef enum MimeStatus
     #endif
     #if defined(WOLFSSL_AKID_NAME) && !defined(GetCAByAKID)
         /* GetCAByAKID() has two implementations, a full implementation in
-         * src/ssl.c, and a dummy implementation in wolfcrypt/src/asn.c for
-         * WOLFCRYPT_ONLY builds.
+         * src/ssl_certman.c, and a dummy implementation in
+         * wolfcrypt/src/asn.c for WOLFCRYPT_ONLY builds.
          */
         #define GetCAByAKID wolfSSL_GetCAByAKID
     #endif
@@ -2543,7 +2559,7 @@ WOLFSSL_LOCAL void InitDecodedCert_ex(DecodedCert* cert, const byte* source,
                                      word32 inSz, void* heap, int devId);
 WOLFSSL_ASN_API void FreeDecodedCert(DecodedCert* cert);
 WOLFSSL_ASN_API int  ParseCert(DecodedCert* cert, int type, int verify,
-                               void* cm);
+                               WOLFSSL_CERT_MANAGER* cm);
 
 #ifdef WC_ASN_UNKNOWN_EXT_CB
 WOLFSSL_API int wc_SetUnknownExtCallback(DecodedCert* cert,
@@ -2564,7 +2580,8 @@ WOLFSSL_LOCAL int CheckCertSignaturePubKey(const byte* cert, word32 certSz,
         void* heap, const byte* pubKey, word32 pubKeySz, int pubKeyOID);
 #if defined(OPENSSL_EXTRA) || defined(WOLFSSL_SMALL_CERT_VERIFY)
     WOLFSSL_API int wc_CheckCertSignature(const byte* cert, word32 certSz,
-                                          void* heap, void* cm);
+                                          void* heap,
+                                          WOLFSSL_CERT_MANAGER* cm);
     /* Deprecated public API name kept for backwards build compatibility */
     #define CheckCertSignature(cert, certSz, heap, cm) \
         wc_CheckCertSignature(cert, certSz, heap, cm)
@@ -2592,7 +2609,8 @@ WOLFSSL_LOCAL int CheckCSRSignaturePubKey(const byte* cert, word32 certSz,
 WOLFSSL_ASN_API int AddSignature(byte* buf, int bodySz, const byte* sig, int sigSz,
                         int sigAlgoType);
 WOLFSSL_LOCAL int ParseCertRelative(DecodedCert* cert, int type, int verify,
-                                    void* cm, Signer *extraCa);
+                                    WOLFSSL_CERT_MANAGER* cm,
+                                    Signer *extraCa);
 WOLFSSL_LOCAL int DecodeToKey(DecodedCert* cert, int verify);
 #ifdef WOLFSSL_ASN_TEMPLATE
 WOLFSSL_LOCAL int DecodeCert(DecodedCert* cert, int verify, int* criticalExt);
@@ -3142,7 +3160,8 @@ WOLFSSL_LOCAL void InitOcspResponse(OcspResponse* resp, OcspEntry* single,
 WOLFSSL_LOCAL void FreeOcspResponse(OcspResponse* resp);
 WOLFSSL_LOCAL int OcspResponseEncode(OcspResponse* resp, byte* out, word32* outSz,
         RsaKey* rsaKey, ecc_key* eccKey, WC_RNG* rng);
-WOLFSSL_LOCAL int OcspResponseDecode(OcspResponse* resp, void* cm, void* heap,
+WOLFSSL_LOCAL int OcspResponseDecode(OcspResponse* resp,
+                                     WOLFSSL_CERT_MANAGER* cm, void* heap,
                                      int noVerifyCert, int noVerifySignature);
 
 WOLFSSL_LOCAL int    InitOcspRequest(OcspRequest* req, DecodedCert* cert,
@@ -3303,7 +3322,8 @@ WOLFSSL_LOCAL int VerifyCRL_Signature(SignatureCtx* sigCtx,
                                       word32 signatureOID, const byte* sigParams,
                                       int sigParamsSz, Signer *ca, void* heap);
 WOLFSSL_LOCAL int ParseCRL(RevokedCert* rcert, DecodedCRL* dcrl,
-                           const byte* buff, word32 sz, int verify, void* cm);
+                           const byte* buff, word32 sz, int verify,
+                           WOLFSSL_CERT_MANAGER* cm);
 WOLFSSL_LOCAL void FreeDecodedCRL(DecodedCRL* dcrl);
 
 #endif /* HAVE_CRL */
