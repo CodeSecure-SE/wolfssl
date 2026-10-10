@@ -65820,7 +65820,7 @@ static wc_test_ret_t mldsa_param_vfy_test(int param, const byte* pubKey,
     }
 
     if (lenExported <= 0 || lenExported != pubKeyLen) {
-        ERROR_OUT(WC_TEST_RET_ENC_EC(lenExported), out);
+        ERROR_OUT(WC_TEST_RET_ENC_I(lenExported), out);
     }
 
     n_diff = XMEMCMP(pubExported, pubKey, pubKeyLen);
@@ -69007,25 +69007,27 @@ static wc_test_ret_t mldsa_param_test(int param, WC_RNG* rng)
     if (res != 1)
         ERROR_OUT(WC_TEST_RET_ENC_I(res), out);
 
-#ifndef NO_SHA256
+#ifdef WOLFSSL_SHAKE256
     /* HashML-DSA: the pre-hash APIs take a digest plus its hash type, and
-     * reach a crypto callback with a preHashType other than NONE. */
+     * reach a crypto callback with a preHashType other than NONE.  SHAKE256
+     * is strong enough for every parameter set, FIPS 204 sec 5.4. */
     {
-        byte digest[WC_SHA256_DIGEST_SIZE];
+        byte digest[WC_SHA3_512_DIGEST_SIZE];
 
-        ret = wc_Sha256Hash(msg, (word32)sizeof(msg), digest);
+        ret = wc_Shake256Hash(msg, (word32)sizeof(msg), digest,
+            (word32)sizeof(digest));
         if (ret != 0)
             ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
 
         sigLen = wc_MlDsaKey_SigSize(key);
         ret = wc_MlDsaKey_SignCtxHash(key, NULL, 0, sig, &sigLen, digest,
-            (word32)sizeof(digest), WC_HASH_TYPE_SHA256, rng);
+            (word32)sizeof(digest), WC_HASH_TYPE_SHAKE256, rng);
         if (ret != 0)
             ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
 
         res = 0;
         ret = wc_MlDsaKey_VerifyCtxHash(key, sig, sigLen, NULL, 0, digest,
-            (word32)sizeof(digest), WC_HASH_TYPE_SHA256, &res);
+            (word32)sizeof(digest), WC_HASH_TYPE_SHAKE256, &res);
         if (ret != 0)
             ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
         if (res != 1)
@@ -71552,7 +71554,7 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t xmss_test_verify_only(void)
     if (ret != 0) { return WC_TEST_RET_ENC_EC(ret); }
 
     if (pkSz != XMSS_SHA256_PUBLEN) {
-        return WC_TEST_RET_ENC_EC(pkSz);
+        return WC_TEST_RET_ENC_I(pkSz);
     }
 
     ret = wc_XmssKey_GetSigLen(&verifyKey, &sigSz);
@@ -71565,7 +71567,7 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t xmss_test_verify_only(void)
 #endif
 
     if (sigSz != sizeof(xmss_sig)) {
-        return WC_TEST_RET_ENC_EC(sigSz);
+        return WC_TEST_RET_ENC_I(sigSz);
     }
 
     ret = wc_XmssKey_ImportPubRaw(&verifyKey, xmss_pub, XMSS_SHA256_PUBLEN);
@@ -71588,7 +71590,7 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t xmss_test_verify_only(void)
     if (pub_len != XMSS_SHA256_PUBLEN) {
         printf("error: xmss pub len %u, expected %d\n", pub_len,
                XMSS_SHA256_PUBLEN);
-        return WC_TEST_RET_ENC_EC(pub_len);
+        return WC_TEST_RET_ENC_I(pub_len);
     }
 
     n_diff = XMEMCMP(pub_raw, xmss_pub, sizeof(xmss_pub));
@@ -72184,7 +72186,7 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t lms_test_verify_only(void)
 
     if (pubSz != HSS_MAX_PUBLIC_KEY_LEN) {
         printf("error: got %u, expected %d\n", pubSz, HSS_MAX_PUBLIC_KEY_LEN);
-        return WC_TEST_RET_ENC_EC(pubSz);
+        return WC_TEST_RET_ENC_I(pubSz);
     }
 
     ret = wc_LmsKey_GetSigLen(&verifyKey, &sigSz);
@@ -72192,7 +72194,7 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t lms_test_verify_only(void)
 
     if (sigSz != LMS_L1H10W8_SIGLEN) {
         printf("error: got %u, expected %d\n", sigSz, LMS_L1H10W8_SIGLEN);
-        return WC_TEST_RET_ENC_EC(sigSz);
+        return WC_TEST_RET_ENC_I(sigSz);
     }
 
     ret = wc_LmsKey_Verify(&verifyKey, lms_L1H10W8_sig, LMS_L1H10W8_SIGLEN,
@@ -72212,7 +72214,7 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t lms_test_verify_only(void)
     if (pub_len != HSS_MAX_PUBLIC_KEY_LEN) {
         printf("error: LMS pub len %u, expected %d\n", pub_len,
                HSS_MAX_PUBLIC_KEY_LEN);
-        return WC_TEST_RET_ENC_EC(pub_len);
+        return WC_TEST_RET_ENC_I(pub_len);
     }
 
     n_diff = XMEMCMP(pub_raw, lms_L1H10W8_pub, sizeof(lms_L1H10W8_pub));
@@ -86934,6 +86936,13 @@ static wc_test_ret_t mp_test_prime(mp_int* a, WC_RNG* rng)
     ret = mp_prime_is_prime(a, 257, &res);
     if (ret != WC_NO_ERR_TRACE(MP_VAL))
         return WC_TEST_RET_ENC_EC(ret);
+    /* An error return must not leave a primality claim behind. */
+    res = MP_YES;
+    ret = mp_prime_is_prime_ex(a, 0, &res, rng);
+    if (ret != WC_NO_ERR_TRACE(MP_VAL))
+        return WC_TEST_RET_ENC_EC(ret);
+    if (res != MP_NO)
+        return WC_TEST_RET_ENC_I(res);
 
     mp_set(a, 1);
     ret = mp_prime_is_prime(a, 1, &res);
@@ -95666,6 +95675,313 @@ exit_dh_cb:
 }
 #endif /* !NO_DH && HAVE_FFDHE_2048 && !WC_NO_RNG */
 
+#if defined(WOLFSSL_SILABS_CRYPTOCB) && \
+    defined(WOLFSSL_SILABS_CRYPTOCB_ECC) && defined(HAVE_ECC) && \
+    defined(HAVE_ECC_SIGN) && defined(HAVE_ECC_VERIFY) && \
+    defined(HAVE_ECC_KEY_IMPORT) && defined(HAVE_ECC_KEY_EXPORT) && \
+    (!defined(NO_ECC256) || defined(HAVE_ALL_CURVES)) && \
+    ECC_MIN_KEY_SZ <= 256 && !defined(NO_ECC_SECP) && !defined(WC_NO_RNG) && \
+    (!defined(WOLF_CRYPTO_CB_ONLY_ECC) || defined(WOLFSSL_SWDEV)) && \
+    defined(_SILICON_LABS_SECURITY_FEATURE) && \
+    (_SILICON_LABS_SECURITY_FEATURE == _SILICON_LABS_SECURITY_FEATURE_VAULT)
+#define SILABS_SE_P256_SZ 32
+
+static const byte silabsSeHash[SILABS_SE_P256_SZ] = {
+    0x11,0x12,0x13,0x14,0x15,0x16,0x17,0x18,
+    0x19,0x1a,0x1b,0x1c,0x1d,0x1e,0x1f,0x20,
+    0x21,0x22,0x23,0x24,0x25,0x26,0x27,0x28,
+    0x29,0x2a,0x2b,0x2c,0x2d,0x2e,0x2f,0x30
+};
+
+/* Verify an SE signature over silabsSeHash in software, against the public
+ * point in X9.63 form. */
+static wc_test_ret_t silabs_sw_verify(const byte* x963, word32 x963Sz,
+    const byte* sig, word32 sigSz)
+{
+    ecc_key swKey;
+    int     verified = 0;
+    wc_test_ret_t ret = 0;
+
+    if (wc_ecc_init_ex(&swKey, HEAP_HINT, INVALID_DEVID) != 0)
+        return WC_TEST_RET_ENC_NC;
+    if (wc_ecc_import_x963(x963, x963Sz, &swKey) != 0)
+        ret = WC_TEST_RET_ENC_NC;
+    if (ret == 0 && (wc_ecc_verify_hash(sig, sigSz, silabsSeHash,
+            sizeof(silabsSeHash), &verified, &swKey) != 0 || !verified))
+        ret = WC_TEST_RET_ENC_NC;
+    wc_ecc_free(&swKey);
+    return ret;
+}
+
+#if defined(WOLFSSL_SILABS_WRAPPED_KEYS_API) && defined(HAVE_ECC_DHE)
+#define SILABS_RESIDENT_ECC_TEST
+/* The SE fixes a wrapped ECC key's use when it is generated: a signing-only
+ * key signs, any other key only does ECDH, and a bind with flags other than
+ * the ones the key was made with is refused. */
+static wc_test_ret_t silabs_wrapped_ecc_test(void)
+{
+    const word32 signFlags = SL_SE_KEY_FLAG_NON_EXPORTABLE |
+                             SL_SE_KEY_FLAG_ASYMMETRIC_SIGNING_ONLY;
+    const word32 agreeFlags = SL_SE_KEY_FLAG_NON_EXPORTABLE;
+    ecc_key seKey;
+    ecc_key swKey;
+    WC_RNG  rng;
+    word32  wrapped[32];
+    word32  wrappedSz = (word32)sizeof(wrapped);
+    byte    x963[1 + 2 * SILABS_SE_P256_SZ];
+    word32  x963Sz = (word32)sizeof(x963);
+    byte    pub[2 * SILABS_SE_P256_SZ];
+    word32  pubSz = (word32)sizeof(pub);
+    byte    sig[ECC_MAX_SIG_SIZE];
+    word32  sigSz = (word32)sizeof(sig);
+    byte    secretA[SILABS_SE_P256_SZ];
+    byte    secretB[SILABS_SE_P256_SZ];
+    word32  secretASz = (word32)sizeof(secretA);
+    word32  secretBSz = (word32)sizeof(secretB);
+    int     haveSe = 0;
+    int     haveSw = 0;
+    int     bindRet;
+    wc_test_ret_t ret = 0;
+
+    /* Argument checks run before the SE is consulted. */
+    if (wc_SilabsSe_EccGetWrappedKeySize(ECC_SECP256R1, signFlags, NULL) !=
+            WC_NO_ERR_TRACE(BAD_FUNC_ARG))
+        return WC_TEST_RET_ENC_NC;
+    if (wc_SilabsSe_EccGetWrappedKeySize(-1, signFlags, &wrappedSz) == 0)
+        return WC_TEST_RET_ENC_NC;
+    if (wc_SilabsSe_EccUseWrappedKey(NULL, (byte*)wrapped, wrappedSz,
+            ECC_SECP256R1, signFlags) != WC_NO_ERR_TRACE(BAD_FUNC_ARG))
+        return WC_TEST_RET_ENC_NC;
+
+#ifdef WOLFSSL_SILABS_HOST_TEST
+    /* Compiled on the host for coverage; the shim declines every SE command,
+     * so the checks below need real silicon. */
+    return 0;
+#endif
+
+    if (wc_InitRng_ex(&rng, HEAP_HINT, INVALID_DEVID) != 0)
+        return WC_TEST_RET_ENC_NC;
+
+    /* Signing-only key: sign on the SE, verify in software. */
+    if (wc_SilabsSe_EccGenerateWrappedKey(ECC_SECP256R1, signFlags,
+            (byte*)wrapped, &wrappedSz, pub, &pubSz) != 0)
+        ret = WC_TEST_RET_ENC_NC;
+    if (ret == 0) {
+        if (wc_ecc_init_ex(&seKey, HEAP_HINT, WOLFSSL_SILABS_DEVID) != 0)
+            ret = WC_TEST_RET_ENC_NC;
+        else
+            haveSe = 1;
+    }
+    if (ret == 0 && wc_SilabsSe_EccUseWrappedKey(&seKey, (byte*)wrapped,
+            wrappedSz, ECC_SECP256R1, signFlags) != 0)
+        ret = WC_TEST_RET_ENC_NC;
+    if (ret == 0 && wc_ecc_sign_hash(silabsSeHash, sizeof(silabsSeHash), sig,
+            &sigSz, &rng, &seKey) != 0)
+        ret = WC_TEST_RET_ENC_NC;
+    if (ret == 0 && wc_ecc_export_x963(&seKey, x963, &x963Sz) != 0)
+        ret = WC_TEST_RET_ENC_NC;
+    /* The point returned at generate time is the bound key's public key. */
+    if (ret == 0 && (pubSz != sizeof(pub) || x963Sz != sizeof(x963) ||
+            XMEMCMP(pub, x963 + 1, sizeof(pub)) != 0))
+        ret = WC_TEST_RET_ENC_NC;
+    if (haveSe) {
+        wc_ecc_free(&seKey);
+        haveSe = 0;
+    }
+    if (ret == 0)
+        ret = silabs_sw_verify(x963, x963Sz, sig, sigSz);
+
+    /* The same blob described as a key-agreement key: the SE must refuse it,
+     * not the port's length check. */
+    if (ret == 0) {
+        if (wc_ecc_init_ex(&seKey, HEAP_HINT, WOLFSSL_SILABS_DEVID) != 0)
+            ret = WC_TEST_RET_ENC_NC;
+        else
+            haveSe = 1;
+    }
+    if (ret == 0) {
+        bindRet = wc_SilabsSe_EccUseWrappedKey(&seKey, (byte*)wrapped,
+            wrappedSz, ECC_SECP256R1, agreeFlags);
+        if (bindRet == 0 || bindRet == WC_NO_ERR_TRACE(BAD_LENGTH_E))
+            ret = WC_TEST_RET_ENC_NC;
+    }
+    if (haveSe) {
+        wc_ecc_free(&seKey);
+        haveSe = 0;
+    }
+
+    /* Key-agreement key: ECDH on the SE must match ECDH in software. */
+    wrappedSz = (word32)sizeof(wrapped);
+    x963Sz = (word32)sizeof(x963);
+    if (ret == 0 && wc_SilabsSe_EccGenerateWrappedKey(ECC_SECP256R1,
+            agreeFlags, (byte*)wrapped, &wrappedSz, NULL, NULL) != 0)
+        ret = WC_TEST_RET_ENC_NC;
+    if (ret == 0) {
+        if (wc_ecc_init_ex(&seKey, HEAP_HINT, WOLFSSL_SILABS_DEVID) != 0)
+            ret = WC_TEST_RET_ENC_NC;
+        else
+            haveSe = 1;
+    }
+    if (ret == 0) {
+        if (wc_ecc_init_ex(&swKey, HEAP_HINT, INVALID_DEVID) != 0)
+            ret = WC_TEST_RET_ENC_NC;
+        else
+            haveSw = 1;
+    }
+    if (ret == 0 && wc_SilabsSe_EccUseWrappedKey(&seKey, (byte*)wrapped,
+            wrappedSz, ECC_SECP256R1, agreeFlags) != 0)
+        ret = WC_TEST_RET_ENC_NC;
+    if (ret == 0 && wc_ecc_make_key(&rng, SILABS_SE_P256_SZ, &swKey) != 0)
+        ret = WC_TEST_RET_ENC_NC;
+#ifdef ECC_TIMING_RESISTANT
+    if (ret == 0 && wc_ecc_set_rng(&swKey, &rng) != 0)
+        ret = WC_TEST_RET_ENC_NC;
+#endif
+    if (ret == 0 && wc_ecc_shared_secret(&seKey, &swKey, secretA,
+            &secretASz) != 0)
+        ret = WC_TEST_RET_ENC_NC;
+    /* ...and cannot sign. */
+    sigSz = (word32)sizeof(sig);
+    if (ret == 0 && wc_ecc_sign_hash(silabsSeHash, sizeof(silabsSeHash), sig,
+            &sigSz, &rng, &seKey) == 0)
+        ret = WC_TEST_RET_ENC_NC;
+    if (ret == 0 && wc_ecc_export_x963(&seKey, x963, &x963Sz) != 0)
+        ret = WC_TEST_RET_ENC_NC;
+    if (haveSe) {
+        wc_ecc_free(&seKey);
+        haveSe = 0;
+    }
+    /* Software side: the SE key's public point only. */
+    if (ret == 0) {
+        if (wc_ecc_init_ex(&seKey, HEAP_HINT, INVALID_DEVID) != 0)
+            ret = WC_TEST_RET_ENC_NC;
+        else
+            haveSe = 1;
+    }
+    if (ret == 0 && wc_ecc_import_x963(x963, x963Sz, &seKey) != 0)
+        ret = WC_TEST_RET_ENC_NC;
+    if (ret == 0 && wc_ecc_shared_secret(&swKey, &seKey, secretB,
+            &secretBSz) != 0)
+        ret = WC_TEST_RET_ENC_NC;
+    if (ret == 0 && (secretASz != secretBSz ||
+            XMEMCMP(secretA, secretB, secretASz) != 0))
+        ret = WC_TEST_RET_ENC_NC;
+
+    if (haveSe)
+        wc_ecc_free(&seKey);
+    if (haveSw)
+        wc_ecc_free(&swKey);
+    wc_FreeRng(&rng);
+    ForceZero(secretA, sizeof(secretA));
+    ForceZero(secretB, sizeof(secretB));
+    return ret;
+}
+#endif /* WOLFSSL_SILABS_WRAPPED_KEYS_API && HAVE_ECC_DHE */
+
+#define SILABS_ATTESTATION_TEST
+/* The built-in application attestation key (Secure Vault) signs. */
+static wc_test_ret_t silabs_attestation_test(void)
+{
+    ecc_key seKey;
+    WC_RNG  rng;
+    byte    x963[1 + 2 * SILABS_SE_P256_SZ];
+    word32  x963Sz = (word32)sizeof(x963);
+    byte    sig[ECC_MAX_SIG_SIZE];
+    word32  sigSz = (word32)sizeof(sig);
+    wc_test_ret_t ret = 0;
+
+    if (wc_SilabsSe_EccUseBuiltInKey(NULL,
+            SL_SE_KEY_SLOT_APPLICATION_ATTESTATION_KEY, ECC_SECP256R1) !=
+            WC_NO_ERR_TRACE(BAD_FUNC_ARG))
+        return WC_TEST_RET_ENC_NC;
+
+#ifdef WOLFSSL_SILABS_HOST_TEST
+    return 0;
+#endif
+
+    if (wc_InitRng_ex(&rng, HEAP_HINT, INVALID_DEVID) != 0)
+        return WC_TEST_RET_ENC_NC;
+    if (wc_ecc_init_ex(&seKey, HEAP_HINT, WOLFSSL_SILABS_DEVID) != 0) {
+        wc_FreeRng(&rng);
+        return WC_TEST_RET_ENC_NC;
+    }
+    if (wc_SilabsSe_EccUseBuiltInKey(&seKey,
+            SL_SE_KEY_SLOT_APPLICATION_ATTESTATION_KEY, ECC_SECP256R1) != 0)
+        ret = WC_TEST_RET_ENC_NC;
+    if (ret == 0 && wc_ecc_sign_hash(silabsSeHash, sizeof(silabsSeHash), sig,
+            &sigSz, &rng, &seKey) != 0)
+        ret = WC_TEST_RET_ENC_NC;
+    if (ret == 0 && wc_ecc_export_x963(&seKey, x963, &x963Sz) != 0)
+        ret = WC_TEST_RET_ENC_NC;
+    wc_ecc_free(&seKey);
+    wc_FreeRng(&rng);
+    if (ret == 0)
+        ret = silabs_sw_verify(x963, x963Sz, sig, sigSz);
+    return ret;
+}
+#endif /* WOLFSSL_SILABS_CRYPTOCB && HAVE_ECC && Secure Vault */
+
+#if defined(WOLFSSL_SILABS_CRYPTOCB) && \
+    defined(WOLFSSL_SILABS_WRAPPED_KEYS_API) && \
+    defined(WOLFSSL_SILABS_CRYPTOCB_CIPHER) && !defined(NO_AES) && \
+    defined(HAVE_AES_ECB) && defined(HAVE_AES_DECRYPT)
+#define SILABS_WRAPPED_AES_TEST
+/* Wrapped AES keys with and without NON_EXPORTABLE round trip on the SE when
+ * bound with the flags they were made with, and not otherwise. */
+static wc_test_ret_t silabs_wrapped_aes_test(void)
+{
+    WOLFSSL_SMALL_STACK_STATIC const byte pt[WC_AES_BLOCK_SIZE] = {
+        0x00,0x11,0x22,0x33,0x44,0x55,0x66,0x77,
+        0x88,0x99,0xaa,0xbb,0xcc,0xdd,0xee,0xff
+    };
+    const word32 aesFlags[2] = { 0, SL_SE_KEY_FLAG_NON_EXPORTABLE };
+    Aes    aes;
+    word32 blob[16];
+    word32 blobSz;
+    byte   ct[WC_AES_BLOCK_SIZE];
+    byte   dec[WC_AES_BLOCK_SIZE];
+    int    i;
+    wc_test_ret_t ret = 0;
+
+    blobSz = (word32)sizeof(blob);
+    if (wc_SilabsSe_AesGenerateWrappedKey(128, 0, NULL, &blobSz) !=
+            WC_NO_ERR_TRACE(BAD_FUNC_ARG))
+        return WC_TEST_RET_ENC_NC;
+
+#ifdef WOLFSSL_SILABS_HOST_TEST
+    return 0;
+#endif
+
+    for (i = 0; ret == 0 && i < 2; i++) {
+        blobSz = (word32)sizeof(blob);
+        if (wc_SilabsSe_AesGenerateWrappedKey(128, aesFlags[i], (byte*)blob,
+                &blobSz) != 0)
+            return WC_TEST_RET_ENC_I(i);
+        if (wc_AesInit(&aes, HEAP_HINT, WOLFSSL_SILABS_DEVID) != 0)
+            return WC_TEST_RET_ENC_I(i);
+        if (wc_SilabsSe_AesUseWrappedKey(&aes, (byte*)blob, blobSz, 128,
+                aesFlags[i]) != 0)
+            ret = WC_TEST_RET_ENC_I(i);
+        if (ret == 0 && wc_AesEcbEncrypt(&aes, ct, pt, WC_AES_BLOCK_SIZE) != 0)
+            ret = WC_TEST_RET_ENC_I(i);
+        if (ret == 0 && wc_AesEcbDecrypt(&aes, dec, ct, WC_AES_BLOCK_SIZE) != 0)
+            ret = WC_TEST_RET_ENC_I(i);
+        if (ret == 0 && (XMEMCMP(dec, pt, WC_AES_BLOCK_SIZE) != 0 ||
+                XMEMCMP(ct, pt, WC_AES_BLOCK_SIZE) == 0))
+            ret = WC_TEST_RET_ENC_I(i);
+        /* The AES bind only records the descriptor, so with the other
+         * entry's flags it succeeds and the SE refuses the first operation. */
+        if (ret == 0 && wc_SilabsSe_AesUseWrappedKey(&aes, (byte*)blob,
+                blobSz, 128, aesFlags[1 - i]) != 0)
+            ret = WC_TEST_RET_ENC_I(i);
+        if (ret == 0 && wc_AesEcbEncrypt(&aes, dec, pt, WC_AES_BLOCK_SIZE) == 0)
+            ret = WC_TEST_RET_ENC_I(i);
+        wc_AesFree(&aes);
+    }
+    return ret;
+}
+#endif
+
 WOLFSSL_TEST_SUBROUTINE wc_test_ret_t cryptocb_test(void)
 {
     wc_test_ret_t ret = 0;
@@ -95831,7 +96147,9 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t cryptocb_test(void)
             XMEMSET(wrapped, 0, sizeof(wrapped));
             XMEMSET(after, 0, sizeof(after));
             bindRet = wc_SilabsSe_EccUseWrappedKey(&vaultEcc, wrapped,
-                sizeof(wrapped), ECC_SECP256R1);
+                sizeof(wrapped), ECC_SECP256R1,
+                SL_SE_KEY_FLAG_NON_EXPORTABLE |
+                SL_SE_KEY_FLAG_ASYMMETRIC_SIGNING_ONLY);
             exportRet = wc_ecc_export_private_only(&vaultEcc, after, &afterSz);
 
             if (bindRet == 0) {
@@ -95872,14 +96190,17 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t cryptocb_test(void)
         byte   blob[64];
 
         /* NULL out-size, and key sizes the SE has no type for. */
-        if (wc_SilabsSe_AesGetWrappedKeySize(256, NULL) !=
+        if (wc_SilabsSe_AesGetWrappedKeySize(256, 0, NULL) !=
                 WC_NO_ERR_TRACE(BAD_FUNC_ARG))
             ret = WC_TEST_RET_ENC_NC;
-        if (ret == 0 && wc_SilabsSe_AesGetWrappedKeySize(0, &wrappedSz) == 0)
+        if (ret == 0 &&
+                wc_SilabsSe_AesGetWrappedKeySize(0, 0, &wrappedSz) == 0)
             ret = WC_TEST_RET_ENC_NC;
-        if (ret == 0 && wc_SilabsSe_AesGetWrappedKeySize(64, &wrappedSz) == 0)
+        if (ret == 0 &&
+                wc_SilabsSe_AesGetWrappedKeySize(64, 0, &wrappedSz) == 0)
             ret = WC_TEST_RET_ENC_NC;
-        if (ret == 0 && wc_SilabsSe_AesGetWrappedKeySize(255, &wrappedSz) == 0)
+        if (ret == 0 &&
+                wc_SilabsSe_AesGetWrappedKeySize(255, 0, &wrappedSz) == 0)
             ret = WC_TEST_RET_ENC_NC;
 
         /* Binding rejects NULL arguments and an implausible blob length
@@ -95887,15 +96208,15 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t cryptocb_test(void)
         if (ret == 0 && wc_AesInit(&vaultAes, HEAP_HINT, devId) != 0)
             ret = WC_TEST_RET_ENC_NC;
         if (ret == 0) {
-            if (wc_SilabsSe_AesUseWrappedKey(NULL, blob, sizeof(blob), 256)
-                    != WC_NO_ERR_TRACE(BAD_FUNC_ARG))
+            if (wc_SilabsSe_AesUseWrappedKey(NULL, blob, sizeof(blob), 256,
+                    0) != WC_NO_ERR_TRACE(BAD_FUNC_ARG))
                 ret = WC_TEST_RET_ENC_NC;
             if (ret == 0 &&
                 wc_SilabsSe_AesUseWrappedKey(&vaultAes, NULL, sizeof(blob),
-                    256) != WC_NO_ERR_TRACE(BAD_FUNC_ARG))
+                    256, 0) != WC_NO_ERR_TRACE(BAD_FUNC_ARG))
                 ret = WC_TEST_RET_ENC_NC;
             if (ret == 0 &&
-                wc_SilabsSe_AesUseWrappedKey(&vaultAes, blob, 1, 256) == 0)
+                wc_SilabsSe_AesUseWrappedKey(&vaultAes, blob, 1, 256, 0) == 0)
                 ret = WC_TEST_RET_ENC_NC;
             /* A rejected bind must not have marked the object resident. */
             if (ret == 0 && vaultAes.ctx.keySet != 0)
@@ -95903,6 +96224,19 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t cryptocb_test(void)
             wc_AesFree(&vaultAes);
         }
     }
+#endif
+
+#ifdef SILABS_RESIDENT_ECC_TEST
+    if (ret == 0)
+        ret = silabs_wrapped_ecc_test();
+#endif
+#ifdef SILABS_ATTESTATION_TEST
+    if (ret == 0)
+        ret = silabs_attestation_test();
+#endif
+#ifdef SILABS_WRAPPED_AES_TEST
+    if (ret == 0)
+        ret = silabs_wrapped_aes_test();
 #endif
 
 #ifndef NO_SHA256
@@ -96474,11 +96808,11 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t cryptocb_test(void)
             ret = WC_TEST_RET_ENC_NC;
     #endif
         /* The pre-hash arms are reached only by the HashML-DSA round trip in
-         * mldsa_param_test(), so they need !NO_MAKE_KEY and SHA-256 too. */
+         * mldsa_param_test(), so they need !NO_MAKE_KEY and SHAKE256 too. */
     #if !defined(WOLFSSL_MLDSA_NO_MAKE_KEY) && \
         !defined(WOLFSSL_MLDSA_NO_SIGN) && \
         !defined(WOLFSSL_MLDSA_NO_VERIFY) && \
-        !defined(WOLFSSL_MLDSA_NO_CTX) && !defined(NO_SHA256) && \
+        !defined(WOLFSSL_MLDSA_NO_CTX) && defined(WOLFSSL_SHAKE256) && \
         !defined(HAVE_FIPS)
         if ((ret == 0) && (myCtx.mldsaSignHashCount == 0))
             ret = WC_TEST_RET_ENC_NC;
