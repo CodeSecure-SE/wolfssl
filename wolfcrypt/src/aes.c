@@ -6035,6 +6035,11 @@ static void AesSetKey_C(Aes* aes, const byte* key, word32 keySz, int dir)
             }
             /* CRYPTOCB_UNAVAILABLE: fall through to software setup */
         #endif /* WOLF_CRYPTO_CB_SETKEY */
+            /* A device may generate its own key from a NULL request above;
+             * software has nothing to copy. */
+            if (userKey == NULL) {
+                return BAD_FUNC_ARG;
+            }
             /* Standard CryptoCB path - copy key to devKey */
             if (keylen > sizeof(aes->devKey)) {
                 return BAD_FUNC_ARG;
@@ -6042,6 +6047,9 @@ static void AesSetKey_C(Aes* aes, const byte* key, word32 keySz, int dir)
             XMEMCPY(aes->devKey, userKey, keylen);
         }
     #endif
+        if (userKey == NULL) {
+            return BAD_FUNC_ARG;
+        }
 
     #ifdef WOLFSSL_MAXQ10XX_CRYPTO
         if (wc_MAXQ10XX_AesSetKey(aes, userKey, keylen) != 0) {
@@ -6110,10 +6118,10 @@ static void AesSetKey_C(Aes* aes, const byte* key, word32 keySz, int dir)
         (defined(WOLFSSL_DEVCRYPTO_AES) || defined(WOLFSSL_DEVCRYPTO_CBC))) || \
         (defined(WOLFSSL_ASYNC_CRYPT) && defined(WC_ASYNC_ENABLE_AES)) || \
         defined(WOLFSSL_NXP_HASHCRYPT_AES)
-        #ifdef WOLF_CRYPTO_CB
-        #ifndef WOLF_CRYPTO_CB_FIND
+        /* HashCrypt always loads the key from devKey, regardless of devId */
+        #if defined(WOLF_CRYPTO_CB) && !defined(WOLF_CRYPTO_CB_FIND) && \
+            !defined(WOLFSSL_NXP_HASHCRYPT_AES)
         if (aes->devId != INVALID_DEVID)
-        #endif
         #endif
         {
             if (keylen > sizeof(aes->devKey)) {
