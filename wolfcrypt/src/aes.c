@@ -133,7 +133,7 @@ block cipher mechanism that uses n-bit binary string parameter key with 128-bits
 /* Tip: Locate the software cipher modes by searching for "Software AES" */
 
 #if FIPS_VERSION3_GE(2,0,0)
-    #ifdef USE_WINDOWS_API
+    #if defined(USE_WINDOWS_API) && defined(_MSC_VER)
         #pragma code_seg(".fipsA$b")
         #pragma const_seg(".fipsB$b")
     #endif
@@ -6713,6 +6713,19 @@ int wc_AesSetIV(Aes* aes, const byte* iv)
 
             if (aes == NULL || out == NULL || in == NULL)
                 return BAD_FUNC_ARG;
+        #ifdef WC_AES_DIRECT_CRYPTO_CB
+            /* Let a device run it first, as a one-block ECB request. */
+            #ifndef WOLF_CRYPTO_CB_FIND
+            if (aes->devId != INVALID_DEVID)
+            #endif
+            {
+                ret = wc_CryptoCb_AesEcbEncrypt(aes, out, in,
+                                                WC_AES_BLOCK_SIZE);
+                if (ret != WC_NO_ERR_TRACE(CRYPTOCB_UNAVAILABLE))
+                    return ret;
+                /* fall-through when unavailable */
+            }
+        #endif
             if (!WC_AES_KEY_IS_SET(aes)) {
                 WOLFSSL_MSG("AES key not set");
                 return MISSING_KEY;
@@ -6736,8 +6749,21 @@ int wc_AesSetIV(Aes* aes, const byte* iv)
         {
             int ret;
 
-            if (aes == NULL)
+            if (aes == NULL || out == NULL || in == NULL)
                 return BAD_FUNC_ARG;
+        #ifdef WC_AES_DIRECT_CRYPTO_CB
+            /* Let a device run it first, as a one-block ECB request. */
+            #ifndef WOLF_CRYPTO_CB_FIND
+            if (aes->devId != INVALID_DEVID)
+            #endif
+            {
+                ret = wc_CryptoCb_AesEcbDecrypt(aes, out, in,
+                                                WC_AES_BLOCK_SIZE);
+                if (ret != WC_NO_ERR_TRACE(CRYPTOCB_UNAVAILABLE))
+                    return ret;
+                /* fall-through when unavailable */
+            }
+        #endif
             if (!WC_AES_KEY_IS_SET(aes)) {
                 WOLFSSL_MSG("AES key not set");
                 return MISSING_KEY;

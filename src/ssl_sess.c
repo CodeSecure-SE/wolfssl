@@ -1314,7 +1314,7 @@ static int GetSessionFromCache(WOLFSSL* ssl, WOLFSSL_SESSION* output,
 
 #ifdef HAVE_EXT_CACHE
     if (!internalOnly && ssl->ctx->get_sess_cb != NULL) {
-        int copy = 0;
+        int copy = 1;
         int found = 0;
         WOLFSSL_SESSION* extSess;
         /* Attempt to retrieve the session from the external cache. */
@@ -1338,7 +1338,6 @@ static int GetSessionFromCache(WOLFSSL* ssl, WOLFSSL_SESSION* output,
                 ssl->session->sessionIDSz = bogusIDSz;
             }
         }
-        /* If copy not set then free immediately */
         if (extSess != NULL && !copy)
             wolfSSL_FreeSession(ssl->ctx, extSess);
         if (found)
@@ -4197,19 +4196,6 @@ static int wolfSSL_DupSessionEx(const WOLFSSL_SESSION* input,
     if (output->type != WOLFSSL_SESSION_TYPE_CACHE)
         output->cacheRow = INVALID_SESSION_ROW;
 #endif
-#if defined(SESSION_CERTS) && defined(OPENSSL_EXTRA)
-    if (input->peer != NULL && input->peer->dynamicMemory) {
-        if (wolfSSL_X509_up_ref(input->peer) != WOLFSSL_SUCCESS) {
-            WOLFSSL_MSG("Can't increase peer cert ref count");
-            output->peer = NULL;
-        }
-    }
-    else if (!avoidSysCalls)
-        output->peer = wolfSSL_X509_dup(input->peer);
-    else
-        /* output->peer is not that important to copy */
-        output->peer = NULL;
-#endif
 #ifdef HAVE_SESSION_TICKET
     if (input->ticketLen > SESSION_TICKET_LEN) {
         /* Need dynamic buffer */
@@ -4286,9 +4272,8 @@ static int wolfSSL_DupSessionEx(const WOLFSSL_SESSION* input,
             output->ticket = output->staticTicket;
             output->ticketLenAlloc = 0;
         }
-        if (input->ticketLenAlloc > 0 && ret == WOLFSSL_SUCCESS) {
-            /* Shouldn't happen as session should have placed this in
-             * the static buffer */
+        if (input->ticketLen > 0 && ret == WOLFSSL_SUCCESS) {
+            /* Output may be a reused buffer, not a copy of input's */
             XMEMCPY(output->ticket, input->ticket,
                     input->ticketLen);
         }
@@ -4341,8 +4326,28 @@ static int wolfSSL_DupSessionEx(const WOLFSSL_SESSION* input,
 
 #endif /* HAVE_SESSION_TICKET */
 
+#if defined(SESSION_CERTS) && defined(OPENSSL_EXTRA)
+    /* After the ticket so a failure here can't leave it aliasing input's */
+    if (input->peer != NULL && input->peer->dynamicMemory) {
+        if (wolfSSL_X509_up_ref(input->peer) != WOLFSSL_SUCCESS) {
+            WOLFSSL_MSG("Can't increase peer cert ref count");
+            output->peer = NULL;
+            ret = WOLFSSL_FAILURE;
+        }
+    }
+    else if (!avoidSysCalls) {
+        output->peer = wolfSSL_X509_dup(input->peer);
+        if (input->peer != NULL && output->peer == NULL)
+            ret = WOLFSSL_FAILURE;
+    }
+    else
+        /* output->peer is not that important to copy */
+        output->peer = NULL;
+#endif
+
 #ifdef HAVE_EX_DATA_CRYPTO
-    if (transferExData && input->type != WOLFSSL_SESSION_TYPE_CACHE &&
+    if (ret == WOLFSSL_SUCCESS && transferExData &&
+            input->type != WOLFSSL_SESSION_TYPE_CACHE &&
             output->type != WOLFSSL_SESSION_TYPE_CACHE) {
         /* Not called with cache as that passes ownership of ex_data */
         ret = crypto_ex_cb_dup_data(&input->ex_data, &output->ex_data,
